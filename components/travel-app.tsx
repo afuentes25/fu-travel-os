@@ -38,6 +38,8 @@ const currentParams = () =>
   typeof window === "undefined" ? new URLSearchParams() : new URLSearchParams(window.location.search);
 const dateLabel = (date: string, long = false) =>
   new Date(date).toLocaleDateString("es-MX", long ? { day: "numeric", month: "long", year: "numeric" } : { day: "2-digit", month: "short" });
+const explorerPrice = (amount: number, currency: "MXN" | "USD") =>
+  formatMoney(amount, currency).replace(/^USD\s*/u, "$");
 const travelUrl = (trip: TravelProduct) => `/viajes/${trip.slug}`;
 const available = (trip: TravelProduct) =>
   trip.departures.find((departure) => departure.saleStatus !== "sold_out" && departure.availableSpaces > 0) ??
@@ -182,9 +184,11 @@ function ExplorerCard({ trip, onOpen }: CardProps) {
       <button className="explorer-card-body" onClick={() => onOpen(trip)}>
         <span>{trip.cities[0]} · {trip.countries[0]}</span>
         <h3>{trip.title}</h3>
-        <div>
-          <b>{formatMoney(trip.basePrice.amount, trip.basePrice.currency)}</b>
-          <small>{dateLabel(departure.startDate)} · {departure.availableSpaces} lugares</small>
+        <p>{trip.summary}</p>
+        <div className="explorer-card-meta"><span>{trip.durationDays} días</span><span>{trip.transportTypes[0]}</span><span>{dateLabel(departure.startDate)}</span><span>{departure.availableSpaces} lugares</span></div>
+        <div className="explorer-card-commercial">
+          <span><small>{trip.basePrice.displayFrom ? "Desde" : "Precio"}</small><b>{explorerPrice(trip.basePrice.amount, trip.basePrice.currency)}</b></span>
+          <em>Ver más</em>
         </div>
       </button>
     </article>
@@ -280,10 +284,19 @@ function ExplorerHome({ agency, trips, onOpen, onNavigate }: HomeProps) {
   const places = destinations.filter((item) => item.agencyId === agency.id).slice(0, 5);
   const slides = trips.slice(0, 4);
   const [slide, setSlide] = useState(0);
+  const [paused, setPaused] = useState(false);
+  const touchStart = useRef<number | null>(null);
   const active = slides[slide];
   const departure = available(active);
-  const next = () => setSlide((slide + 1) % slides.length);
-  const previous = () => setSlide((slide - 1 + slides.length) % slides.length);
+  const next = () => { setPaused(true); setSlide((current) => (current + 1) % slides.length); };
+  const previous = () => { setPaused(true); setSlide((current) => (current - 1 + slides.length) % slides.length); };
+  useEffect(() => {
+    if (paused || matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const timer = window.setInterval(() => {
+      if (!document.hidden) setSlide((current) => (current + 1) % slides.length);
+    }, 7000);
+    return () => window.clearInterval(timer);
+  }, [paused, slides.length]);
   const categories = [
     ["Fin de semana", "Escapadas breves", "/images/destination-town.webp"],
     ["Pueblos mágicos", "Calles con historia", "/images/destination-europe.webp"],
@@ -296,33 +309,49 @@ function ExplorerHome({ agency, trips, onOpen, onNavigate }: HomeProps) {
   ];
   return (
     <main className="explorer-home">
-      <section className="explorer-hero">
+      <section
+        className="explorer-hero"
+        tabIndex={0}
+        aria-label={`Viaje destacado ${slide + 1} de ${slides.length}: ${active.title}`}
+        onMouseEnter={() => setPaused(true)}
+        onMouseLeave={() => setPaused(false)}
+        onFocusCapture={() => setPaused(true)}
+        onBlurCapture={() => setPaused(false)}
+        onKeyDown={(event) => { if (event.key === "ArrowRight") next(); if (event.key === "ArrowLeft") previous(); }}
+        onTouchStart={(event) => { touchStart.current = event.touches[0]?.clientX ?? null; setPaused(true); }}
+        onTouchEnd={(event) => { const end = event.changedTouches[0]?.clientX; if (touchStart.current !== null && end !== undefined && Math.abs(end - touchStart.current) > 45) { if (end < touchStart.current) next(); else previous(); } touchStart.current = null; }}
+      >
         <Image key={active.id} src={active.featuredImage} alt={`Paisaje de ${active.cities[0]}`} fill priority sizes="100vw" />
         <div className="explorer-hero-grain" />
-        <div className="explorer-hero-copy">
-          <span className="explorer-kicker">RUTA {String(slide + 1).padStart(2, "0")} · {active.productType.replaceAll("_", " ")}</span>
-          <h1>{active.cities[0]}<br /><em>{active.title}</em></h1>
-          <p>{active.summary} Una ruta para mirar el paisaje con tiempo y viajar acompañado.</p>
-          <div><button onClick={() => onOpen(active)}>Ver viaje</button><a href={`https://wa.me/${agency.contact.whatsapp}`} target="_blank" rel="noreferrer">Consultar por WhatsApp ↗</a></div>
+        <div className="explorer-hero-identity">
+          <strong>{String(slide + 1).padStart(2, "0")}</strong>
+          <span>{active.productType.replaceAll("_", " ")}<small>{active.region.replaceAll("_", " ")}</small></span>
         </div>
-        <aside className="explorer-hero-summary" aria-label="Resumen del viaje">
+        <div className="explorer-hero-copy">
+          <span className="explorer-kicker">{active.cities[0]} · {active.countries[0]}</span>
+          <h1>{active.title}</h1>
+          <p>{active.summary}</p>
+        </div>
+        <aside className="explorer-hero-summary" aria-label="Precio y salida del viaje">
+          <span className="explorer-hero-price"><small>{active.basePrice.displayFrom ? "Desde" : "Precio"}</small><b>{explorerPrice(active.basePrice.amount, active.basePrice.currency)}</b></span>
           <span><small>Duración</small><b>{active.durationDays} días</b></span>
           <span><small>Próxima salida</small><b>{dateLabel(departure.startDate, true)}</b></span>
-          <span><small>Desde</small><b>{formatMoney(active.basePrice.amount, active.basePrice.currency)}</b></span>
         </aside>
-        <div className="explorer-slider-controls">
+        <div className="explorer-hero-actions"><button onClick={() => onOpen(active)}>Ver más</button><a href={`https://wa.me/${agency.contact.whatsapp}`} target="_blank" rel="noreferrer">Consultar por WhatsApp</a></div>
+        <div className="explorer-slider-controls" aria-label="Controles del slider">
           <button onClick={previous} aria-label="Viaje anterior">←</button>
-          <div>{slides.map((item, index) => <button key={item.id} className={index === slide ? "active" : ""} onClick={() => setSlide(index)} aria-label={`Mostrar viaje ${index + 1}: ${item.title}`} aria-current={index === slide ? "true" : undefined}>{String(index + 1).padStart(2, "0")}</button>)}</div>
+          <strong>{String(slide + 1).padStart(2, "0")} <i>/</i> {String(slides.length).padStart(2, "0")}</strong>
+          <div>{slides.map((item, index) => <button key={item.id} className={index === slide ? "active" : ""} onClick={() => { setPaused(true); setSlide(index); }} aria-label={`Mostrar viaje ${index + 1}: ${item.title}`} aria-current={index === slide ? "true" : undefined}><span /></button>)}</div>
           <button onClick={next} aria-label="Viaje siguiente">→</button>
         </div>
         <ExplorerSearch onNavigate={onNavigate} />
       </section>
       <section className="explorer-categories">
-        <header><span>OCHO FORMAS DE PARTIR</span><h2>¿Qué clase de ruta<br />te mueve hoy?</h2></header>
+        <header><span>TIPOS DE VIAJE</span><h2>Elige cómo quieres viajar</h2></header>
         <div>{categories.map(([name, copy, image]) => <button key={name} onClick={() => onNavigate(`/viajes?q=${encodeURIComponent(name)}`)}><Image src={image} alt="" fill sizes="(max-width: 720px) 50vw, 25vw" /><span><small>{copy}</small><b>{name}</b><i>↗</i></span></button>)}</div>
       </section>
       <section className="explorer-destinations">
-        <header><span>COORDENADAS FAVORITAS</span><h2>Destinos que piden<br />un poco más de ti.</h2><p>Rutas elegidas por su paisaje, su carácter y la historia que cuentan cuando cae el sol.</p><button onClick={() => onNavigate("/destinos")}>Explorar destinos →</button></header>
+        <header><span>DESTINOS</span><h2>Coordenadas favoritas</h2><p>Rutas elegidas por su paisaje, su carácter y la historia que cuentan.</p><button onClick={() => onNavigate("/destinos")}>Explorar destinos →</button></header>
         <div className="explorer-mosaic">
           {places.map((place, index) => (
             <button key={place.id} className={`mosaic-${index + 1}`} onClick={() => onNavigate(`/viajes?q=${encodeURIComponent(place.name)}`)}>
@@ -333,7 +362,7 @@ function ExplorerHome({ agency, trips, onOpen, onNavigate }: HomeProps) {
         </div>
       </section>
       <section className="explorer-featured">
-        <header><span>VIAJES PARA SALIR DE LO CONOCIDO</span><h2>Próximas expediciones</h2><button onClick={() => onNavigate("/viajes")}>Ver calendario completo →</button></header>
+        <header><span>VIAJES POPULARES</span><h2>Próximas expediciones</h2><button onClick={() => onNavigate("/viajes")}>Ver calendario completo →</button></header>
         <div className="explorer-card-grid">{trips.slice(0, 4).map((trip) => <ExplorerCard key={trip.id} trip={trip} onOpen={onOpen} />)}</div>
       </section>
       <section className="explorer-benefits">
@@ -604,12 +633,12 @@ function ExplorerBookingPanel({ agency, trip }: { agency: Agency; trip: TravelPr
   }, [sheet]);
   const fields = (
     <>
-      <header className="explorer-booking-head"><span>Precio desde</span><strong>{formatMoney(trip.basePrice.amount, trip.basePrice.currency)}</strong><small>por persona · anticipo {formatMoney(trip.basePrice.depositAmount ?? 0, trip.basePrice.currency)}</small></header>
+      <header className="explorer-booking-head"><span>{trip.basePrice.displayFrom ? "Precio desde" : "Precio"}</span><strong>{explorerPrice(trip.basePrice.amount, trip.basePrice.currency)}</strong><small>por persona · anticipo {explorerPrice(trip.basePrice.depositAmount ?? 0, trip.basePrice.currency)}</small></header>
       <label>Fecha y salida<select value={departureId} onChange={(event) => changeDeparture(event.target.value)}>{trip.departures.map((item) => <option key={item.id} value={item.id} disabled={item.saleStatus === "sold_out"}>{dateLabel(item.startDate, true)} · {item.saleStatus === "sold_out" ? "Agotada" : `${item.availableSpaces} lugares`}</option>)}</select></label>
-      <fieldset><legend>Punto de abordaje</legend>{boarding.map((option) => { const point = departurePoints.find((item) => item.id === option.agencyDeparturePointId)!; return <label className={boardingId === option.id ? "selected" : ""} key={option.id}><input type="radio" name="explorer-boarding" checked={boardingId === option.id} onChange={() => setBoardingId(option.id)} /><span><b>{point.name}</b><small>{point.city} · salida {option.departureTime}</small><em>{option.surchargeAmount ? `+ ${formatMoney(option.surchargeAmount, option.currency ?? trip.basePrice.currency)}` : "Sin suplemento"}</em></span></label>; })}</fieldset>
+      <fieldset><legend>Punto de abordaje</legend>{boarding.map((option) => { const point = departurePoints.find((item) => item.id === option.agencyDeparturePointId)!; return <label className={boardingId === option.id ? "selected" : ""} key={option.id}><input type="radio" name="explorer-boarding" checked={boardingId === option.id} onChange={() => setBoardingId(option.id)} /><span><b>{point.name}</b><small>{point.city} · salida {option.departureTime}</small><em>{option.surchargeAmount ? `+ ${explorerPrice(option.surchargeAmount, option.currency ?? trip.basePrice.currency)}` : "Sin suplemento"}</em></span></label>; })}</fieldset>
       <div className="explorer-booking-pair"><label>Viajeros<input type="number" min="1" max={8} value={travelers} onChange={(event) => setTravelers(Number(event.target.value))} /></label><label>Tarifa<select value={rateId} onChange={(event) => setRateId(event.target.value)}>{trip.pricingOptions.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label></div>
-      <fieldset className="explorer-booking-extras"><legend>Extras opcionales</legend>{trip.extras.map((extra) => <label key={extra.id}><input type="checkbox" checked={extraIds.includes(extra.id)} onChange={() => setExtraIds((items) => items.includes(extra.id) ? items.filter((item) => item !== extra.id) : [...items, extra.id])} /><span>{extra.name}<b>{formatMoney(extra.price, extra.currency)}</b></span></label>)}</fieldset>
-      {priced && <div className="explorer-booking-total"><span>Subtotal <b>{formatMoney(priced.subtotal, trip.basePrice.currency)}</b></span><span>Impuestos y abordaje <b>{formatMoney(priced.taxes + priced.surcharge, trip.basePrice.currency)}</b></span><strong>Total estimado <b>{formatMoney(priced.total, trip.basePrice.currency)}</b></strong><small>Anticipo para apartar: {formatMoney(priced.deposit, trip.basePrice.currency)}</small></div>}
+      <fieldset className="explorer-booking-extras"><legend>Extras opcionales</legend>{trip.extras.map((extra) => <label key={extra.id}><input type="checkbox" checked={extraIds.includes(extra.id)} onChange={() => setExtraIds((items) => items.includes(extra.id) ? items.filter((item) => item !== extra.id) : [...items, extra.id])} /><span>{extra.name}<b>{explorerPrice(extra.price, extra.currency)}</b></span></label>)}</fieldset>
+      {priced && <div className="explorer-booking-total"><span>Subtotal <b>{explorerPrice(priced.subtotal, trip.basePrice.currency)}</b></span><span>Impuestos y abordaje <b>{explorerPrice(priced.taxes + priced.surcharge, trip.basePrice.currency)}</b></span><strong>Total estimado <b>{explorerPrice(priced.total, trip.basePrice.currency)}</b></strong><small>Anticipo para apartar: {explorerPrice(priced.deposit, trip.basePrice.currency)}</small></div>}
       <button className="explorer-booking-add" disabled={!priced} onClick={add}>Reservar este viaje</button>
       {priced && mounted && <a className="explorer-booking-wa" href={whatsappUrl(agency, priced)} target="_blank" rel="noreferrer">Consultar por WhatsApp ↗</a>}
       <p className="explorer-booking-help">No se realiza ningún cobro en esta demo. Revisarás el resumen antes de continuar.</p>
@@ -618,7 +647,7 @@ function ExplorerBookingPanel({ agency, trip }: { agency: Agency; trip: TravelPr
   return <>
     <aside className="explorer-booking-panel" id="reserva">{fields}</aside>
     <div className="explorer-mobile-booking">
-      <span><small>Desde</small><b>{formatMoney(trip.basePrice.amount, trip.basePrice.currency)}</b><em>{dateLabel(departure.startDate)}</em></span>
+      <span><small>{trip.basePrice.displayFrom ? "Desde" : "Precio"}</small><b>{explorerPrice(trip.basePrice.amount, trip.basePrice.currency)}</b><em>{dateLabel(departure.startDate)}</em></span>
       <button ref={triggerRef} onClick={() => setSheet(true)} aria-haspopup="dialog">Reservar</button>
       {priced && mounted && <a href={whatsappUrl(agency, priced)} target="_blank" rel="noreferrer" aria-label="Consultar por WhatsApp">WA</a>}
     </div>
@@ -653,18 +682,18 @@ function ExplorerDetail({ agency, trip, onNavigate }: { agency: Agency; trip: Tr
       <div className="explorer-detail-cover-shade" />
       <button className="explorer-breadcrumb" onClick={() => onNavigate("/viajes")}>Inicio / Viajes / {trip.cities[0]}</button>
       <div className="explorer-detail-title"><span>{trip.productType.replaceAll("_", " ")} · {trip.countries.join(", ")}</span><h1>{trip.title}</h1><p>{trip.subtitle}</p><button onClick={() => document.getElementById("reserva")?.scrollIntoView({ behavior: "smooth" })}>Reservar esta ruta</button></div>
-      <div className="explorer-detail-price"><small>Desde</small><strong>{formatMoney(trip.basePrice.amount, trip.basePrice.currency)}</strong><span>{trip.durationDays} días · {dateLabel(departure.startDate, true)}</span></div>
+      <div className="explorer-detail-price"><small>{trip.basePrice.displayFrom ? "Desde" : "Precio"}</small><strong>{explorerPrice(trip.basePrice.amount, trip.basePrice.currency)}</strong><span>{trip.durationDays} días · {dateLabel(departure.startDate, true)}</span></div>
     </section>
     <nav className="explorer-detail-nav" aria-label="Secciones del viaje">{["Resumen","Programa","Incluye","Salidas","Tarifas","Políticas"].map((item) => <a key={item} href={`#${item.toLowerCase()}`}>{item}</a>)}</nav>
     <section className="explorer-detail-intro" id="resumen"><div><span className="section-label">{trip.code} · LA RUTA</span><h2>Un viaje que se cuenta<br />mejor por etapas.</h2><p>{trip.description} {trip.summary}</p></div><div className="explorer-quick-facts">{[[trip.durationDays,"días"],[trip.durationNights,"noches"],[departure.availableSpaces,"lugares"],[trip.departures.length,"salidas"]].map(([value,label])=><span key={label}><b>{value}</b><small>{label}</small></span>)}</div></section>
     <ExplorerGallery trip={trip} />
     <div className="explorer-detail-grid">
       <article className="explorer-detail-content">
-        <section id="programa" className="explorer-program"><span className="section-label">PROGRAMA POR ETAPAS</span><h2>El camino, día a día.</h2>{trip.itinerary.map((day, index)=><details key={day.day} open={index===0}><summary><b>{String(day.day).padStart(2,"0")}</b><span><small>DÍA {day.day}</small>{day.title}</span><i>+</i></summary><div><p>{day.description}</p>{index % 2 === 0 && <div className="explorer-program-image"><Image src={index ? "/images/destination-mountain.webp" : trip.featuredImage} alt="" fill sizes="50vw" /></div>}</div></details>)}</section>
+        <section id="programa" className="explorer-program"><span className="section-label">PROGRAMA POR ETAPAS</span><h2>El camino, día a día.</h2>{trip.itinerary.map((day, index)=><details key={day.day} open={index===0}><summary><b>{String(day.day).padStart(2,"0")}</b><span><small>DÍA {day.day}</small>{day.title}</span><i>+</i></summary><div><p>{day.description}</p>{index === 0 && <div className="explorer-program-image"><Image src={trip.featuredImage} alt="" fill sizes="50vw" /></div>}</div></details>)}</section>
         <section id="incluye" className="explorer-includes-refined"><div><span className="section-label">INCLUIDO</span><h2>Viaja con claridad.</h2>{trip.includes.map((item)=><p key={item}><i>✓</i>{item}</p>)}</div><div><span className="section-label">NO INCLUIDO</span><h2>Considera aparte.</h2>{trip.excludes.map((item)=><p key={item}><i>×</i>{item}</p>)}</div></section>
         <section id="salidas" className="explorer-departures-refined"><span className="section-label">FECHAS DISPONIBLES</span><h2>Elige cuándo partir.</h2>{trip.departures.map((item)=><div key={item.id}><time>{dateLabel(item.startDate,true)}</time><span>{item.availableSpaces} lugares disponibles</span><b>{item.saleStatus==="sold_out"?"Agotada":item.saleStatus==="limited"?"Disponibilidad limitada":"Programada"}</b></div>)}</section>
         <section className="explorer-boarding"><span className="section-label">PUNTOS DE ABORDAJE</span><h2>Nos encontramos aquí.</h2>{pointNames.map((point,index)=><div key={String(point)}><b>0{index+1}</b><span><strong>{point}</strong><small>Ubicación exacta y hora final al confirmar.</small></span></div>)}</section>
-        <section id="tarifas" className="explorer-rates"><span className="section-label">TARIFAS Y EXTRAS</span><h2>Un precio que se entiende.</h2>{trip.pricingOptions.map((rate)=><div key={rate.id}><span><b>{rate.label}</b><small>{rate.occupancy}</small></span><strong>{formatMoney(rate.amount,rate.currency)}</strong></div>)}<h3>Experiencias opcionales</h3>{trip.extras.map((extra)=><div key={extra.id}><span><b>{extra.name}</b><small>Se agrega durante la reserva</small></span><strong>{formatMoney(extra.price,extra.currency)}</strong></div>)}</section>
+        <section id="tarifas" className="explorer-rates"><span className="section-label">TARIFAS Y EXTRAS</span><h2>Un precio que se entiende.</h2>{trip.pricingOptions.map((rate)=><div key={rate.id}><span><b>{rate.label}</b><small>{rate.occupancy}</small></span><strong>{explorerPrice(rate.amount,rate.currency)}</strong></div>)}<h3>Experiencias opcionales</h3>{trip.extras.map((extra)=><div key={extra.id}><span><b>{extra.name}</b><small>Se agrega durante la reserva</small></span><strong>{explorerPrice(extra.price,extra.currency)}</strong></div>)}</section>
         <section id="políticas" className="explorer-policies"><span className="section-label">ANTES DE PARTIR</span><h2>Políticas y preguntas.</h2>{Object.entries(trip.policies).map(([key,value])=><details key={key}><summary>{key==="cancellation"?"Cambios y cancelaciones":key==="payment"?"Pagos y anticipo":"Responsabilidad de operación"}<i>+</i></summary><p>{value}</p></details>)}{[["¿Cómo recibo la confirmación?","Después de apartar recibirás el resumen de salida y los datos de seguimiento."],["¿Puedo cambiar de punto de abordaje?","Sí, mientras exista capacidad en el punto elegido y antes del cierre operativo."]].map(([question,answer])=><details key={question}><summary>{question}<i>+</i></summary><p>{answer}</p></details>)}</section>
       </article>
       <ExplorerBookingPanel agency={agency} trip={trip} />
