@@ -1,9 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { agencies, travels } from "../data/demo/index";
+import { agencies, departurePoints, travels } from "../data/demo/index";
 import { filterCatalog } from "../lib/catalog/index";
-import { formatMoney, priceLine, validateCart } from "../lib/pricing/index";
+import { confirmBoardingPoint, formatMoney, priceLine, priceLinePending, validateCart } from "../lib/pricing/index";
 import { normalizeHostname, resolveTenant, resolveTheme } from "../lib/tenancy/index";
+import { whatsappUrl } from "../lib/whatsapp/index";
+import type { CartLine } from "../types/index";
 
 test("resuelve tenant por hostname, query demo y fallback local",()=>{
   assert.equal(resolveTenant("FURIVER.TRAVEL.FU.LAND:443").slug,"furiver");
@@ -34,4 +36,77 @@ test("carrito bloquea mezcla de agencias y precios manipulados no forman parte d
 test("punto de otra salida y punto agotado se rechazan",()=>{
   const t=travels[0]; const invalid={id:"bad",agencyId:t.agencyId,travelId:t.id,departureId:t.departures[0].id,boardingOptionId:"otro",pricingOptionId:t.pricingOptions[0].id,travelers:1,extraIds:[]};
   assert.throws(()=>priceLine(invalid),/punto/);
+});
+
+const pendingLine=():CartLine=>{
+  const travel=travels[0];
+  return {id:"pending",agencyId:travel.agencyId,travelId:travel.id,departureId:travel.departures[0].id,boardingOptionId:null,pricingOptionId:travel.pricingOptions[0].id,travelers:2,extraIds:[]};
+};
+test("no se asigna automáticamente el primer punto",()=>{
+  const line=pendingLine();
+  assert.equal(line.boardingOptionId,null);
+  assert.doesNotThrow(()=>priceLinePending(line));
+});
+test("no se puede cotizar definitivamente sin confirmar abordaje",()=>{
+  assert.throws(()=>priceLine(pendingLine()),/seleccionar y confirmar/);
+});
+test("un único punto se muestra pero requiere confirmación explícita",()=>{
+  const line=pendingLine();
+  const travel=travels.find(item=>item.id===line.travelId)!;
+  assert.equal(travel.departures.find(item=>item.id===line.departureId)!.boardingOptions.length,1);
+  assert.equal(line.boardingOptionId,null);
+});
+test("una salida sin puntos bloquea la confirmación en línea",()=>{
+  const travel=travels.find(item=>item.title==="Santuario de Mariposas")!;
+  const departure=travel.departures.find(item=>item.boardingOptions.length===0)!;
+  const line:CartLine={id:"none",agencyId:travel.agencyId,travelId:travel.id,departureId:departure.id,boardingOptionId:null,pricingOptionId:travel.pricingOptions[0].id,travelers:1,extraIds:[]};
+  assert.throws(()=>confirmBoardingPoint(line,"inexistente"),/no es válido/);
+  assert.throws(()=>priceLine(line),/seleccionar y confirmar/);
+});
+test("varios puntos permiten elegir exactamente uno",()=>{
+  const travel=travels.find(item=>item.agencyId===agencies[0].id&&item.departures.some(departure=>departure.boardingOptions.length>1))!;
+  const departure=travel.departures.find(item=>item.boardingOptions.length>1)!;
+  const line:CartLine={id:"multi",agencyId:travel.agencyId,travelId:travel.id,departureId:departure.id,boardingOptionId:null,pricingOptionId:travel.pricingOptions[0].id,travelers:1,extraIds:[]};
+  const selected=confirmBoardingPoint(line,departure.boardingOptions[1].id);
+  assert.equal(selected.boardingOptionId,departure.boardingOptions[1].id);
+});
+test("cambiar de salida invalida un punto incompatible",()=>{
+  const travel=travels.find(item=>item.departures.length>1&&item.departures[0].boardingOptions.length)!;
+  const selected=confirmBoardingPoint({...pendingLine(),travelId:travel.id,agencyId:travel.agencyId,departureId:travel.departures[0].id,pricingOptionId:travel.pricingOptions[0].id},travel.departures[0].boardingOptions[0].id);
+  assert.throws(()=>confirmBoardingPoint({...selected,departureId:travel.departures[1].id,boardingOptionId:null,boardingSnapshot:undefined},selected.boardingOptionId!),/no es válido/);
+});
+test("el suplemento respeta modalidad por reserva o persona",()=>{
+  const travel=travels.find(item=>item.departures.some(departure=>departure.boardingOptions.some(option=>option.surchargeAmount)))!;
+  const departure=travel.departures.find(item=>item.boardingOptions.some(option=>option.surchargeAmount))!;
+  const option=departure.boardingOptions.find(item=>item.surchargeAmount)!;
+  const line:CartLine={id:"surcharge",agencyId:travel.agencyId,travelId:travel.id,departureId:departure.id,boardingOptionId:option.id,pricingOptionId:travel.pricingOptions[0].id,travelers:3,extraIds:[]};
+  const priced=priceLine(line);
+  assert.equal(priced.surcharge,(option.surchargeAmount??0)*(option.surchargeType==="per_booking"?1:3));
+  assert.equal(priced.total,priced.subtotal+priced.taxes+priced.extrasTotal+priced.surcharge);
+});
+test("la selección guarda un snapshot completo",()=>{
+  const line=pendingLine();
+  const travel=travels.find(item=>item.id===line.travelId)!;
+  const option=travel.departures[0].boardingOptions[0];
+  const selected=confirmBoardingPoint(line,option.id);
+  const point=departurePoints.find(item=>item.id===option.agencyDeparturePointId)!;
+  assert.equal(selected.boardingSnapshot?.boardingPointId,point.id);
+  assert.equal(selected.boardingSnapshot?.pointName,point.name);
+  assert.equal(selected.boardingSnapshot?.meetingTime,option.meetingTime);
+});
+test("WhatsApp incluye el punto después de seleccionarlo",()=>{
+  const line=pendingLine();
+  const travel=travels.find(item=>item.id===line.travelId)!;
+  const priced=priceLine(confirmBoardingPoint(line,travel.departures[0].boardingOptions[0].id));
+  const message=decodeURIComponent(whatsappUrl(agencies[0],priced).split("text=")[1]);
+  assert.match(message,/Punto de abordaje:/);
+  assert.match(message,new RegExp(priced.boarding.pointName));
+});
+test("el resumen de confirmación conserva punto, hora y dirección",()=>{
+  const line=pendingLine();
+  const travel=travels.find(item=>item.id===line.travelId)!;
+  const priced=priceLine(confirmBoardingPoint(line,travel.departures[0].boardingOptions[0].id));
+  assert.ok(priced.boarding.pointName);
+  assert.ok(priced.boarding.meetingTime);
+  assert.ok(priced.boarding.reference??priced.boarding.address);
 });
