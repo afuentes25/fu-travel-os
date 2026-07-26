@@ -44,6 +44,8 @@ import {
   DEFAULT_TRIP_SECTIONS,
   TRIP_SECTION_RENDERER_KEYS,
   formatTripDuration,
+  getEffectiveRateAmount,
+  getEffectiveTaxesPerTraveler,
   getInitialItineraryOpenDays,
   getOrderedRouteStops,
   getPublicDeparturePoints,
@@ -182,6 +184,119 @@ test("información importante y FAQ solo existen con contenido útil", () => {
 test("cada tema conserva una clave de renderer diferenciada", () => {
   assert.notEqual(TRIP_SECTION_RENDERER_KEYS.explorer, TRIP_SECTION_RENDERER_KEYS.boutique);
   assert.notEqual(TRIP_SECTION_RENDERER_KEYS.boutique, TRIP_SECTION_RENDERER_KEYS.marketplace);
+});
+
+const barrancasTrip = () => travels.find((trip) => trip.slug === "barrancas-del-cobre")!;
+test("viaje de cinco días usa secciones configurables", () => {
+  const trip = barrancasTrip();
+  assert.equal(trip.durationDays, 5);
+  assert.ok(resolveTripSections(trip).length >= 12);
+});
+test("viaje de un día sigue usando secciones configurables", () => {
+  const trip = travels.find((item) => item.slug === "bosque-de-luciernagas")!;
+  assert.equal(trip.durationDays, 1);
+  assert.ok(resolveTripSections(trip).some((section) => section.type === "itinerary"));
+});
+test("el número de días no controla el orquestador modular", () => {
+  const oneDay = travels.find((item) => item.slug === "bosque-de-luciernagas")!;
+  const multiday = barrancasTrip();
+  assert.ok(oneDay.pageConfiguration);
+  assert.ok(multiday.pageConfiguration);
+  assert.equal(typeof resolveTripSections(oneDay)[0].order, typeof resolveTripSections(multiday)[0].order);
+});
+test("Barrancas contiene cinco días con identificadores estables", () => {
+  const days = barrancasTrip().itinerary;
+  assert.equal(days.length, 5);
+  assert.deepEqual(days.map((day) => day.day), [1, 2, 3, 4, 5]);
+  assert.equal(new Set(days.map((day) => day.id)).size, 5);
+});
+test("Barrancas extrae destinos desde los cinco días sin duplicados", () => {
+  assert.deepEqual(getVisitedDestinations(barrancasTrip().itinerary), ["Chihuahua", "Creel", "Divisadero", "Barrancas del Cobre"]);
+});
+test("precio desde de Barrancas usa la base doble", () => {
+  const result = getTripDisplayStartingPrice({ trip: barrancasTrip() });
+  assert.equal(result.amount, 14990);
+  assert.equal(result.basis, "adult_double");
+});
+test("la misma salida activa alimenta resumen y panel", () => {
+  const trip = barrancasTrip();
+  const selected = trip.departures[1];
+  assert.equal(getTripDisplayStartingPrice({ trip, departure: selected }).amount, selected.pricing?.pricingOverrides?.adultDouble);
+});
+test("cambiar fecha conserva viajeros y actualiza el texto de WhatsApp", () => {
+  const trip = barrancasTrip();
+  const first = explorerBookingMessage({ agencyName: "Furiver", trip, departureLabel: "10 de agosto", adults: 2, children: 0, occupancyLabel: "Doble", totalLabel: "$29,980 MXN", depositLabel: "$2,000 MXN", url: "https://demo.test" });
+  const second = explorerBookingMessage({ agencyName: "Furiver", trip, departureLabel: "7 de septiembre", adults: 2, children: 0, occupancyLabel: "Doble", totalLabel: "$32,378 MXN", depositLabel: "$2,000 MXN", url: "https://demo.test" });
+  assert.match(first, /10 de agosto/);
+  assert.match(second, /7 de septiembre/);
+  assert.match(second, /2 adultos/);
+});
+test("override de salida aplica a la tarifa doble efectiva", () => {
+  const trip = barrancasTrip();
+  const departure = trip.departures[1];
+  const rate = trip.pricingOptions.find((item) => item.occupancy === "double")!;
+  assert.equal(getEffectiveRateAmount({ trip, departure, rate }), departure.pricing!.pricingOverrides!.adultDouble);
+});
+test("dos adultos no duplican la tarifa más de una vez", () => {
+  const trip = barrancasTrip();
+  const departure = trip.departures[0];
+  const rate = trip.pricingOptions.find((item) => item.occupancy === "double")!;
+  const priced = priceLinePending({ id: "barrancas-double", agencyId: trip.agencyId, travelId: trip.id, departureId: departure.id, boardingOptionId: null, pricingOptionId: rate.id, travelers: 2, extraIds: [] });
+  assert.equal(priced.subtotal, 29980);
+});
+test("impuestos de Barrancas se aplican una sola vez por viajero", () => {
+  const trip = barrancasTrip();
+  const departure = trip.departures[0];
+  const rate = trip.pricingOptions.find((item) => item.occupancy === "double")!;
+  const perTraveler = getEffectiveTaxesPerTraveler({ trip, departure, rate });
+  const priced = priceLinePending({ id: "barrancas-tax", agencyId: trip.agencyId, travelId: trip.id, departureId: departure.id, boardingOptionId: null, pricingOptionId: rate.id, travelers: 2, extraIds: [] });
+  assert.equal(priced.taxes, perTraveler * 2);
+  assert.equal(priced.total, priced.subtotal + priced.taxes);
+});
+test("cargos adicionales permanecen separados del subtotal e impuestos", () => {
+  const trip = barrancasTrip();
+  const rate = trip.pricingOptions.find((item) => item.occupancy === "double")!;
+  const priced = priceLinePending({ id: "barrancas-extra", agencyId: trip.agencyId, travelId: trip.id, departureId: trip.departures[0].id, boardingOptionId: null, pricingOptionId: rate.id, travelers: 2, extraIds: [trip.extras[0].id] });
+  assert.equal(priced.total, priced.subtotal + priced.taxes + priced.extrasTotal);
+});
+test("capacidad hotelera continúa activa para Barrancas", () => {
+  const result = validateRoomCapacity({ adults: 2, minors: 2, maxGuestsPerRoom: 4, adultCountsTowardCapacity: true, minorCountsTowardCapacity: true });
+  assert.equal(result.valid, true);
+});
+test("menores no cambian la base adulta de Barrancas", () => {
+  const trip = barrancasTrip();
+  assert.equal(explorerAdultRateOccupancy(trip, 2), "double");
+  assert.equal(explorerAdultRateOccupancy(trip, 3), "triple");
+});
+test("viaje sin hospedaje no expone tarifas hoteleras", () => {
+  const trip = travels.find((item) => item.slug === "bosque-de-luciernagas")!;
+  assert.ok(trip.pricingOptions.every((rate) => !["single", "double", "triple", "quadruple"].includes(rate.occupancy)));
+});
+test("sticky nav multiday refleja contenido y orden", () => {
+  const nav = getStickyTripSections(barrancasTrip());
+  assert.ok(nav.some((section) => section.type === "rates"));
+  assert.deepEqual(nav, [...nav].sort((a, b) => a.order - b.order));
+});
+test("descarga de Barrancas usa su documento específico", () => {
+  assert.equal(barrancasTrip().itineraryDownload?.fileUrl, "/documents/itinerario-barrancas-del-cobre-demo.txt");
+});
+test("mapa de Barrancas conserva días del itinerario", () => {
+  const stops = getOrderedRouteStops(barrancasTrip().mapSettings);
+  assert.deepEqual([...new Set(stops.map((stop) => stop.dayNumber))], [1, 2, 3, 4, 5]);
+});
+test("Explorer conserva renderer y Lavella queda reservado sin habilitarse", () => {
+  assert.equal(TRIP_SECTION_RENDERER_KEYS.explorer, "explorer-cinematic");
+  assert.equal("lavella" in TRIP_SECTION_RENDERER_KEYS, false);
+});
+test("configuración de Boutique no se altera por Barrancas", () => {
+  const trip = travels.find((item) => item.agencyId === agencies[2].id && item.pageConfiguration)!;
+  assert.equal(trip.agencyId, agencies[2].id);
+  assert.equal(TRIP_SECTION_RENDERER_KEYS.boutique, "boutique-editorial");
+});
+test("configuración de Marketplace no se altera por Barrancas", () => {
+  const trip = travels.find((item) => item.agencyId === agencies[1].id && item.pageConfiguration)!;
+  assert.equal(trip.agencyId, agencies[1].id);
+  assert.equal(TRIP_SECTION_RENDERER_KEYS.marketplace, "marketplace-operational");
 });
 
 test("resuelve tenant por hostname, query demo y fallback local", () => {

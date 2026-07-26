@@ -8,6 +8,8 @@ import type {
   TravelDeparture,
   TravelItineraryDay,
   TravelProduct,
+  TravelPricingOption,
+  TravelTheme,
   TripMapSettings,
   TripRecommendationItem,
   TripSectionConfig,
@@ -18,7 +20,7 @@ import type {
 export const DEFAULT_TRIP_SECTIONS: TripSectionConfig[] = [
   ["summary", "Resumen"], ["video", "Video"], ["gallery", "Galería"],
   ["itinerary", "Itinerario"], ["included", "Incluye"], ["map", "Ruta"],
-  ["departures", "Fechas"], ["recommendations", "Recomendaciones"],
+  ["departures", "Fechas"], ["rates", "Tarifas"], ["recommendations", "Recomendaciones"],
   ["departure_points", "Puntos de salida"], ["important_information", "Información importante"],
   ["faq", "Preguntas frecuentes"], ["related_trips", "Viajes relacionados"],
 ].map(([type, label], order) => ({
@@ -38,6 +40,7 @@ export function hasTripSectionContent(trip: TravelProduct, type: TripSectionType
     case "included": return validItems(trip.inclusionsContent?.included ?? trip.includes) || validItems(trip.inclusionsContent?.excluded ?? trip.excludes);
     case "map": return Boolean(trip.mapSettings?.enabled && trip.mapSettings.mode !== "none" && (trip.mapSettings.mainDestination || trip.mapSettings.routeStops?.length));
     case "departures": return validItems(trip.departures);
+    case "rates": return validItems(trip.pricingOptions);
     case "recommendations": return validItems(getRecommendationItems(trip));
     case "departure_points": return validItems(trip.publicDeparturePoints);
     case "important_information": return validItems(trip.importantInformation?.items);
@@ -75,6 +78,27 @@ export function resolveDeparturePricing(trip: TravelProduct, departure?: TravelD
   return departure?.pricing?.mode === "custom" ? departure.pricing.pricingOverrides : undefined;
 }
 
+const pricingOverrideKey: Partial<Record<TravelPricingOption["occupancy"], keyof NonNullable<ScheduledDeparturePricing["pricingOverrides"]>>> = {
+  general: "adultGeneral", single: "adultSingle", double: "adultDouble",
+  triple: "adultTriple", quadruple: "adultQuadruple", child: "minor", infant: "infant",
+};
+
+export function getEffectiveRateAmount(input: {
+  trip: TravelProduct; departure?: TravelDeparture; rate: TravelPricingOption;
+}): number {
+  const overrides = resolveDeparturePricing(input.trip, input.departure);
+  const key = pricingOverrideKey[input.rate.occupancy];
+  return key && overrides?.[key] !== undefined ? Number(overrides[key]) : input.rate.amount;
+}
+
+export function getEffectiveTaxesPerTraveler(input: {
+  trip: TravelProduct; departure?: TravelDeparture; rate: TravelPricingOption;
+}): number {
+  if (input.trip.basePrice.taxesIncluded) return 0;
+  const overrides = resolveDeparturePricing(input.trip, input.departure);
+  return overrides?.taxes ?? input.rate.taxesAmount ?? input.trip.basePrice.taxesAmount ?? 0;
+}
+
 export function getTripDisplayStartingPrice(input: { trip: TravelProduct; departure?: TravelDeparture }): {
   amount: number; currency: Currency; label: string; basis: "adult_double" | "adult_general" | "package" | "custom";
 } {
@@ -84,7 +108,7 @@ export function getTripDisplayStartingPrice(input: { trip: TravelProduct; depart
   const occupancy = hotel ? "double" : "general";
   const option = trip.pricingOptions.find((item) => item.occupancy === occupancy);
   const override = hotel ? overrides?.adultDouble : overrides?.adultGeneral;
-  const amount = override ?? departure?.priceOverride?.amount ?? option?.amount ?? trip.basePrice.amount;
+  const amount = override ?? departure?.priceOverride?.amount ?? (option ? getEffectiveRateAmount({ trip, departure, rate: option }) : trip.basePrice.amount);
   return {
     amount,
     currency: option?.currency ?? trip.basePrice.currency,
@@ -168,6 +192,14 @@ export const localItineraryLeadCaptureService: ItineraryLeadCaptureService = {
   },
 };
 
+export const TRIP_SECTION_RENDERERS = {
+  explorer: { id: "explorer-cinematic" },
+  boutique: { id: "boutique-editorial" },
+  marketplace: { id: "marketplace-operational" },
+} as const satisfies Record<TravelTheme, { id: string }>;
+
 export const TRIP_SECTION_RENDERER_KEYS = {
-  explorer: "explorer-cinematic", boutique: "boutique-editorial", marketplace: "marketplace-operational",
+  explorer: TRIP_SECTION_RENDERERS.explorer.id,
+  boutique: TRIP_SECTION_RENDERERS.boutique.id,
+  marketplace: TRIP_SECTION_RENDERERS.marketplace.id,
 } as const;

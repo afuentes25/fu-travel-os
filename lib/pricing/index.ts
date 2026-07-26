@@ -1,5 +1,6 @@
 import { agencies, departurePoints, travels } from "@/data/demo";
 import { resolveRoomCapacityPolicy, validateRoomCapacity } from "@/lib/room-capacity";
+import { getEffectiveRateAmount, getEffectiveTaxesPerTraveler } from "@/lib/trip-sections";
 import type { BookingBoardingSnapshot, CartLine, PricedCartLine } from "@/types";
 
 export function formatMoney(amount:number,currency:"MXN"|"USD"){return new Intl.NumberFormat("es-MX",{style:"currency",currency,maximumFractionDigits:0}).format(amount)+" "+currency}
@@ -15,8 +16,8 @@ export function priceLine(line: CartLine): PricedCartLine {
   const rate=travel.pricingOptions.find(p=>p.id===line.pricingOptionId);
   if(!point||!rate||rate.currency!==travel.basePrice.currency) throw new Error("Configuración de tarifa inválida.");
   const selectedExtras=travel.extras.filter(e=>line.extraIds.includes(e.id));
-  const subtotal=rate.amount*line.travelers;
-  const taxes=(travel.basePrice.taxesIncluded?0:(rate.taxesAmount??travel.basePrice.taxesAmount??0))*line.travelers;
+  const subtotal=getEffectiveRateAmount({trip:travel,departure,rate})*line.travelers;
+  const taxes=getEffectiveTaxesPerTraveler({trip:travel,departure,rate})*line.travelers;
   const surcharge=(option.surchargeAmount??0)*(option.surchargeType==="per_booking"?1:line.travelers);
   const extrasTotal=selectedExtras.reduce((sum,e)=>sum+e.price*(e.pricingMode==="per_person"?line.travelers:1),0);
   const boarding:BookingBoardingSnapshot={boardingOptionId:option.id,boardingPointId:point.id,pointName:point.name,address:point.address,reference:point.reference,city:point.city,meetingTime:option.meetingTime,departureTime:option.departureTime,surchargeAmount:option.surchargeAmount??0,surchargeType:option.surchargeType??"per_person",currency:option.currency??travel.basePrice.currency,instructions:option.instructionsOverride??point.instructions};
@@ -29,8 +30,8 @@ export function priceLinePending(line:CartLine){
   const rate=travel.pricingOptions.find(p=>p.id===line.pricingOptionId);
   if(!departure||!rate||rate.currency!==travel.basePrice.currency)throw new Error("Configuración de reserva inválida.");
   const extras=travel.extras.filter(e=>line.extraIds.includes(e.id));
-  const subtotal=rate.amount*line.travelers;
-  const taxes=(travel.basePrice.taxesIncluded?0:(rate.taxesAmount??travel.basePrice.taxesAmount??0))*line.travelers;
+  const subtotal=getEffectiveRateAmount({trip:travel,departure,rate})*line.travelers;
+  const taxes=getEffectiveTaxesPerTraveler({trip:travel,departure,rate})*line.travelers;
   const extrasTotal=extras.reduce((sum,e)=>sum+e.price*(e.pricingMode==="per_person"?line.travelers:1),0);
   return {travel,departure,subtotal,taxes,extrasTotal,total:subtotal+taxes+extrasTotal,deposit:(travel.basePrice.depositAmount??subtotal)*line.travelers};
 }

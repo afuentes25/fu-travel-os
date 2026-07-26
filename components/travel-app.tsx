@@ -43,6 +43,7 @@ import {
 import { whatsappUrl } from "@/lib/whatsapp";
 import {
   formatTripDuration,
+  getEffectiveRateAmount,
   getInitialItineraryOpenDays,
   getOrderedRouteStops,
   getPublicDeparturePoints,
@@ -2451,6 +2452,7 @@ function ExplorerBookingPanel({
   const childRate = trip.pricingOptions.find(
     (item) => item.occupancy === "child",
   );
+  const startingPrice = getTripDisplayStartingPrice({ trip, departure });
   const roomPolicy = resolveRoomCapacityPolicy(agency, trip, adultRate);
   const roomCapacity = validateRoomCapacity({
     adults,
@@ -2509,6 +2511,9 @@ function ExplorerBookingPanel({
     pricedChild = undefined;
   }
   const total = (pricedAdult?.total ?? 0) + (pricedChild?.total ?? 0);
+  const subtotal = (pricedAdult?.subtotal ?? 0) + (pricedChild?.subtotal ?? 0);
+  const taxes = (pricedAdult?.taxes ?? 0) + (pricedChild?.taxes ?? 0);
+  const additionalCharges = (pricedAdult?.extrasTotal ?? 0) + (pricedChild?.extrasTotal ?? 0);
   const policy = departure.depositPolicy ?? trip.depositPolicy;
   const deposit = depositAmount(
     policy,
@@ -2524,8 +2529,8 @@ function ExplorerBookingPanel({
     roomCapacityValid,
   );
   const mobilePrice = explorerPrice(
-    trip.basePrice.amount,
-    trip.basePrice.currency,
+    startingPrice.amount,
+    startingPrice.currency,
   ).replace(/\s+(MXN|USD)$/u, "");
   const changeDeparture = (id: string) => {
     setInternalDepartureId(id);
@@ -2671,7 +2676,7 @@ function ExplorerBookingPanel({
             {trip.basePrice.displayFrom ? "Precio desde" : "Precio"}
           </small>
           <strong>
-            {explorerPrice(trip.basePrice.amount, trip.basePrice.currency)}
+            {explorerPrice(startingPrice.amount, startingPrice.currency)}
           </strong>
         </span>
         <span>
@@ -2791,6 +2796,27 @@ function ExplorerBookingPanel({
       )}
       <div className="explorer-booking-footer">
         <div className="explorer-booking-total">
+          <span className="explorer-total-line">
+            <span>Subtotal</span>
+            <b>{explorerPrice(subtotal, trip.basePrice.currency)}</b>
+          </span>
+          {taxes > 0 ? (
+            <span className="explorer-total-line">
+              <span>{trip.basePrice.taxesLabel ?? "Impuestos"}</span>
+              <b>{explorerPrice(taxes, trip.basePrice.currency)}</b>
+            </span>
+          ) : !trip.basePrice.taxesIncluded ? (
+            <span className="explorer-total-line is-pending">
+              <span>Impuestos</span>
+              <b>Por confirmar</b>
+            </span>
+          ) : null}
+          {additionalCharges > 0 && (
+            <span className="explorer-total-line">
+              <span>Cargos adicionales</span>
+              <b>{explorerPrice(additionalCharges, trip.basePrice.currency)}</b>
+            </span>
+          )}
           <strong>
             <span>Total</span>
             <b>
@@ -2802,7 +2828,9 @@ function ExplorerBookingPanel({
           <small>
             {trip.basePrice.taxesIncluded
               ? "Impuestos incluidos"
-              : "Pueden aplicar impuestos adicionales"}
+              : taxes > 0
+                ? "Impuestos desglosados en el total"
+                : "Impuestos por confirmar"}
           </small>
         </div>
         <button
@@ -3026,6 +3054,9 @@ function ConfigurableTripSection({
   if (section.type === "departures") {
     return <section id={section.id} className="trip-section explorer-departures-refined"><span className="section-label">FECHAS DISPONIBLES</span><h2>{title ?? "Elige cuándo partir"}</h2>{trip.departures.map((item)=>{const price=getTripDisplayStartingPrice({trip,departure:item});return <div className={item.id===departure.id?"active":""} key={item.id}><time>{dateLabel(item.startDate,true)}</time><span>Desde {explorerPrice(price.amount,price.currency)} <small>{price.label}</small></span><b>{item.saleStatus==="sold_out"?"Agotada":item.saleStatus==="limited"?"Últimos lugares":"Programada"}</b><button disabled={item.saleStatus==="sold_out"} onClick={()=>onDepartureChange(item.id)}>Elegir fecha</button></div>})}</section>;
   }
+  if (section.type === "rates") {
+    return <section id={section.id} className="trip-section explorer-rates"><span className="section-label">TARIFAS</span><h2>{title ?? "Tarifas por ocupación"}</h2><div className={`explorer-rate-grid ${trip.accommodationMode === "none" ? "is-traveler-rates" : ""}`}>{trip.pricingOptions.filter((rate)=>explorerVisibleRateOccupancies(trip).includes(rate.occupancy)).map((rate)=><div className={rate.occupancy==="double"?"is-reference":""} key={rate.id}><span><b>{rate.occupancy==="general"?"Adulto":occupancyName(rate.occupancy)}</b><small>{rate.occupancy==="double"&&trip.accommodationMode==="hotel_occupancy"?"Base usada para “precio desde”":trip.accommodationMode==="none"?`Tarifa por ${rate.occupancy==="general"?"adulto":occupancyName(rate.occupancy).toLowerCase()}`:`Precio por adulto en base ${occupancyName(rate.occupancy).toLowerCase()}`}</small></span><strong>{explorerPrice(getEffectiveRateAmount({trip,departure,rate}),rate.currency)}</strong></div>)}</div></section>;
+  }
   if (section.type === "recommendations") {
     const items=getRecommendationItems(trip); return <section id={section.id} className="trip-section trip-recommendations"><header><span className="section-label">RECOMENDACIONES</span><h2>{title ?? "Prepárate para la ruta"}</h2></header>{trip.recommendationsContent?.difficulty&&<aside><b>{trip.recommendationsContent.difficulty.label}</b><p>{trip.recommendationsContent.difficulty.description}</p></aside>}<ul>{items.map((item)=><li key={item.id}>{item.title&&<b>{item.title}</b>}{item.text}</li>)}</ul></section>;
   }
@@ -3041,7 +3072,7 @@ function ConfigurableItinerary({ section, agency, trip }: { section: TripSection
   const settings = trip.itinerarySettings!;
   const [openDays, setOpenDays] = useState(() => getInitialItineraryOpenDays(settings.displayMode, trip.itinerary.length));
   const toggle = (index: number) => setOpenDays((current) => current.includes(index) ? current.filter((item)=>item!==index) : [...current,index]);
-  return <section id={section.id} className="trip-section explorer-program"><header><span className="section-label">PROGRAMA POR ETAPAS</span><h2>{section.title ?? "El camino, día a día"}</h2><div className="itinerary-actions">{settings.allowExpandAll&&<button onClick={()=>setOpenDays(trip.itinerary.map((_,index)=>index))}>Desplegar todo</button>}{settings.allowCollapseAll&&<button onClick={()=>setOpenDays([])}>Contraer todo</button>}</div></header>{trip.itinerary.map((day,index)=><article className={openDays.includes(index)?"open":""} key={day.id??day.day}><button className="itinerary-trigger" aria-expanded={openDays.includes(index)} onClick={()=>toggle(index)}><b>{String(day.day).padStart(2,"0")}</b><span><small>DÍA {day.day}</small>{day.title}</span><i>+</i></button>{openDays.includes(index)&&<div className="itinerary-body"><p>{day.description}</p>{settings.showTimes&&day.startTime&&<small>{day.startTime}{day.endTime?` – ${day.endTime}`:""}</small>}{settings.showStops&&Boolean(day.stops?.length)&&<p><b>Paradas:</b> {day.stops!.sort((a,b)=>a.order-b.order).map((stop)=>stop.name).join(" · ")}</p>}{settings.showHighlights&&Boolean(day.highlights?.length)&&<ul>{day.highlights!.map((item)=><li key={item}>{item}</li>)}</ul>}{settings.showImages&&day.images?.[0]&&<div className="explorer-program-image"><Image src={day.images[0].url} alt={day.images[0].alt} fill sizes="50vw" /></div>}</div>}</article>)}<ItineraryDownload agency={agency} trip={trip} /></section>;
+  return <section id={section.id} className="trip-section explorer-program"><header><span className="section-label">PROGRAMA POR ETAPAS</span><h2>{section.title ?? "El camino, día a día"}</h2><div className="itinerary-actions">{settings.allowExpandAll&&<button onClick={()=>setOpenDays(trip.itinerary.map((_,index)=>index))}>Desplegar todo</button>}{settings.allowCollapseAll&&<button onClick={()=>setOpenDays([])}>Contraer todo</button>}</div></header>{trip.itinerary.map((day,index)=><article className={openDays.includes(index)?"open":""} key={day.id??`day-${day.day}`}><button className="itinerary-trigger" aria-expanded={openDays.includes(index)} onClick={()=>toggle(index)}><b>{String(day.day).padStart(2,"0")}</b><span><small>DÍA {day.day}</small>{day.title}</span><i>+</i></button>{openDays.includes(index)&&<div className="itinerary-body"><p>{day.description}</p>{settings.showTimes&&day.startTime&&<small>{day.startTime}{day.endTime?` – ${day.endTime}`:""}</small>}{settings.showStops&&Boolean(day.stops?.length)&&<p><b>Paradas:</b> {day.stops!.sort((a,b)=>a.order-b.order).map((stop)=>stop.name).join(" · ")}</p>}{settings.showMeals&&Boolean(day.meals?.length)&&<p><b>Alimentos:</b> {day.meals!.join(" · ")}</p>}{settings.showAccommodation&&day.accommodation&&<p><b>Hospedaje:</b> {day.accommodation}</p>}{settings.showHighlights&&Boolean(day.highlights?.length)&&<ul>{day.highlights!.map((item)=><li key={item}>{item}</li>)}</ul>}{settings.showImages&&day.images?.[0]&&<div className="explorer-program-image"><Image src={day.images[0].url} alt={day.images[0].alt} fill sizes="50vw" /></div>}</div>}</article>)}<ItineraryDownload agency={agency} trip={trip} /></section>;
 }
 
 function ConfigurableTripContent({ agency, trip, related, departureId, onDepartureChange, onNavigate }: { agency: Agency; trip: TravelProduct; related: TravelProduct[]; departureId: string; onDepartureChange: (id:string)=>void; onNavigate:(path:string)=>void }) {
@@ -3062,6 +3093,8 @@ function ExplorerDetail({
 }) {
   const departure = available(trip);
   const [selectedDepartureId, setSelectedDepartureId] = useState(departure.id);
+  const selectedDeparture = trip.departures.find((item) => item.id === selectedDepartureId) ?? departure;
+  const selectedStartingPrice = getTripDisplayStartingPrice({ trip, departure: selectedDeparture });
   const related = travels
     .filter((item) => item.agencyId === agency.id && item.id !== trip.id)
     .slice(0, 3);
@@ -3107,10 +3140,10 @@ function ExplorerDetail({
         <div className="explorer-detail-price">
           <small>{trip.basePrice.displayFrom ? "Desde" : "Precio"}</small>
           <strong>
-            {explorerPrice(trip.basePrice.amount, trip.basePrice.currency)}
+            {explorerPrice(selectedStartingPrice.amount, selectedStartingPrice.currency)}
           </strong>
           <span>
-            {trip.durationDays} días · {dateLabel(departure.startDate, true)}
+            {formatTripDuration(trip.durationDays, trip.durationNights)} · {dateLabel(selectedDeparture.startDate, true)}
           </span>
         </div>
       </section>
@@ -3393,6 +3426,7 @@ function SharedConfigurableSections({ trip, theme }: { trip: TravelProduct; them
       if(section.type==="included")return <section id={section.id} key={section.id} className="v2-includes"><div><h3>Incluye</h3>{trip.inclusionsContent?.included.map((item)=><p key={item.id}>✓ {item.text}</p>)}</div><div><h3>No incluye</h3>{trip.inclusionsContent?.excluded.map((item)=><p key={item.id}>— {item.text}</p>)}</div></section>;
       if(section.type==="map")return <section id={section.id} key={section.id}><span className="section-label">RUTA</span><h2>{heading}</h2><div className="shared-route">{getOrderedRouteStops(trip.mapSettings).map((stop)=><span key={stop.id}><b>{stop.dayNumber}</b>{stop.name}</span>)}</div></section>;
       if(section.type==="departures")return <section id={section.id} key={section.id} className="v2-date-list"><span className="section-label">FECHAS</span><h2>{heading}</h2>{trip.departures.map((item)=><div key={item.id}><time>{dateLabel(item.startDate,true)}</time><span>{formatMoney(getTripDisplayStartingPrice({trip,departure:item}).amount,trip.basePrice.currency)}</span><b>{item.saleStatus.replace("_"," ")}</b></div>)}</section>;
+      if(section.type==="rates")return <section id={section.id} key={section.id} className="v2-rate-section"><span className="section-label">TARIFAS</span><h2>{heading}</h2>{trip.pricingOptions.map((rate)=><div key={rate.id}><span><b>{rate.label}</b><small>{rate.occupancy==="double"?"Precio de referencia":rate.occupancy}</small></span><strong>{formatMoney(rate.amount,rate.currency)}</strong></div>)}</section>;
       if(section.type==="recommendations")return <section id={section.id} key={section.id}><span className="section-label">RECOMENDACIONES</span><h2>{heading}</h2><ul>{getRecommendationItems(trip).map((item)=><li key={item.id}>{item.text}</li>)}</ul></section>;
       if(section.type==="departure_points")return <section id={section.id} key={section.id}><span className="section-label">PUNTOS DE SALIDA</span><h2>{heading}</h2>{getPublicDeparturePoints(trip.publicDeparturePoints).map((point)=><article className="shared-point" key={point.id}><b>{point.name}{point.airportCode?` · ${point.airportCode}`:""}</b><p>{[point.city,point.reference,point.meetingTime].filter(Boolean).join(" · ")}</p></article>)}</section>;
       if(section.type==="important_information")return <section id={section.id} key={section.id}><span className="section-label">INFORMACIÓN IMPORTANTE</span><h2>{heading}</h2>{trip.importantInformation?.items.map((item)=><article className="shared-information" key={item.id}><h3>{item.title}</h3><p>{item.description}</p></article>)}</section>;

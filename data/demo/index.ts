@@ -193,12 +193,12 @@ demoExpansion.forEach((spec, offset) => {
 });
 
 const sectionOrder = [
-  "summary", "video", "gallery", "itinerary", "included", "map", "departures",
+  "summary", "video", "gallery", "itinerary", "included", "map", "departures", "rates",
   "recommendations", "departure_points", "important_information", "faq", "related_trips",
 ] as const;
 const sectionLabels: Record<(typeof sectionOrder)[number], string> = {
   summary: "Resumen", video: "Video", gallery: "Galería", itinerary: "Itinerario",
-  included: "Incluye", map: "Ruta", departures: "Fechas", recommendations: "Recomendaciones",
+  included: "Incluye", map: "Ruta", departures: "Fechas", rates: "Tarifas", recommendations: "Recomendaciones",
   departure_points: "Puntos de salida", important_information: "Información importante",
   faq: "Preguntas frecuentes", related_trips: "Viajes relacionados",
 };
@@ -208,7 +208,7 @@ function configureTripPage(trip: TravelProduct, options: { video?: boolean; lead
     sections: sectionOrder.map((type, index) => ({
       id: `${trip.id}-${type}`, type, enabled: type !== "video" || Boolean(options.video),
       order: index + 1, anchorLabel: sectionLabels[type],
-      showInStickyNavigation: !["video", "gallery", "related_trips"].includes(type),
+      showInStickyNavigation: !["video", "related_trips"].includes(type),
       themeVariant: type === "video" ? "dark" : "light",
     })),
   };
@@ -296,6 +296,99 @@ const configurableDemos = [
 for (const demo of configurableDemos) {
   const trip = travels.find((item) => item.agencyId === demo.agency && (item.accommodationMode === "hotel_occupancy") === demo.hotel && !item.pageConfiguration);
   if (trip) configureTripPage(trip, demo.options);
+}
+
+const barrancas = travels.find((trip) => trip.slug === "barrancas-del-cobre" && trip.agencyId === "a-furiver");
+if (barrancas) {
+  configureTripPage(barrancas, { video: true, lead: true, airport: false, route: true });
+  barrancas.featuredImage = "/images/destination-canyon.webp";
+  barrancas.heroMedia = {
+    type: "image", imageUrl: barrancas.featuredImage,
+    imageAlt: "Paisaje serrano demostrativo de Barrancas del Cobre",
+    focalPoint: { x: 50, y: 48 }, overlay: .58,
+  };
+  barrancas.summary = "Circuito demostrativo por paisajes serranos, pueblos de montaña y miradores del norte.";
+  barrancas.description = "Una ruta demostrativa de cinco días que conecta Chihuahua, Creel y la zona de barrancas con tiempos claros, acompañamiento y pausas panorámicas.";
+  barrancas.gallery = [
+    "/images/destination-canyon.webp",
+    "/images/destination-mountain.webp",
+    "/images/destination-town.webp",
+    "/images/explorer-hero.webp",
+  ];
+  barrancas.galleryImages = [barrancas.featuredImage, ...barrancas.gallery].map((url, index) => ({
+    id: `${barrancas.id}-gallery-${index + 1}`, url,
+    alt: `${barrancas.title}, paisaje demostrativo ${index + 1}`,
+    order: index + 1, featured: index === 0,
+  }));
+  const days = [
+    {
+      title: "Llegada a Chihuahua y recorrido inicial",
+      description: "Recepción demostrativa en Chihuahua, orientación del circuito y paseo introductorio por espacios representativos del centro.",
+      startTime: "15:00", stops: ["Chihuahua"], highlights: ["Orientación de la ruta", "Tiempo de adaptación"],
+      meals: [], accommodation: "Hospedaje demostrativo en Chihuahua",
+    },
+    {
+      title: "Camino serrano hacia Creel",
+      description: "Traslado por carretera hacia Creel con pausas panorámicas y tiempo para reconocer el ritmo de la Sierra Tarahumara.",
+      startTime: "08:00", stops: ["Chihuahua", "Creel"], highlights: ["Paradas panorámicas", "Llegada a Creel"],
+      meals: ["Desayuno demostrativo"], accommodation: "Hospedaje demostrativo en Creel",
+    },
+    {
+      title: "Ruta escénica hacia Divisadero",
+      description: "Jornada demostrativa por una ruta escénica con vistas amplias, tramos ferroviarios sujetos a operación y llegada a Divisadero.",
+      startTime: "07:30", stops: ["Creel", "Divisadero"], highlights: ["Paisaje ferroviario", "Miradores serranos"],
+      meals: ["Desayuno demostrativo"], accommodation: "Hospedaje demostrativo en la zona de barrancas",
+    },
+    {
+      title: "Miradores y comunidades serranas",
+      description: "Recorrido interpretativo y respetuoso por miradores y comunidades de la región, con horarios ajustables por clima y operación.",
+      startTime: "09:00", stops: ["Divisadero", "Barrancas del Cobre"], highlights: ["Miradores", "Contexto cultural de la sierra"],
+      meals: ["Desayuno demostrativo"], accommodation: "Hospedaje demostrativo en la zona de barrancas",
+    },
+    {
+      title: "Regreso y cierre del circuito",
+      description: "Salida de regreso, pausas operativas y cierre acompañado del circuito. El horario final se confirma antes de viajar.",
+      startTime: "08:00", stops: ["Barrancas del Cobre", "Chihuahua"], highlights: ["Regreso acompañado", "Cierre de ruta"],
+      meals: ["Desayuno demostrativo"], accommodation: undefined,
+    },
+  ];
+  barrancas.itinerary = days.map((day, index) => ({
+    id: `${barrancas.id}-day-${index + 1}`, day: index + 1, dayNumber: index + 1,
+    order: index + 1, title: day.title, shortDescription: day.description.slice(0, 120),
+    description: day.description, startTime: day.startTime,
+    stops: day.stops.map((name, stopIndex) => ({
+      id: `${barrancas.id}-day-${index + 1}-stop-${stopIndex + 1}`,
+      name, order: stopIndex + 1,
+    })),
+    highlights: day.highlights, meals: day.meals, accommodation: day.accommodation,
+    images: [{
+      id: `${barrancas.id}-day-${index + 1}-image`, url: barrancas.galleryImages![index % barrancas.galleryImages!.length].url,
+      alt: `${day.title}, imagen demostrativa`, order: 1,
+    }],
+  }));
+  barrancas.summaryContent = {
+    shortDescription: barrancas.summary, showDuration: true, showUpcomingDepartures: true,
+    showVisitedDestinations: true, showStartingPrice: true, maxUpcomingDepartures: 2,
+    maxVisitedDestinations: 6,
+  };
+  barrancas.itineraryDownload = {
+    enabled: true, fileUrl: "/documents/itinerario-barrancas-del-cobre-demo.txt",
+    fileName: "itinerario-barrancas-del-cobre-demo.txt", fileType: "other",
+    fileSizeLabel: "4 KB", requireLeadForm: true, leadFormFields: ["name", "whatsapp"],
+    title: "Descarga la ruta de Barrancas", description: "Consulta el programa demostrativo de cinco días y sus notas operativas.",
+  };
+  barrancas.mapSettings = {
+    enabled: true, mode: "route", generatedFromItinerary: true,
+    mainDestination: { name: "Barrancas del Cobre" },
+    routeStops: barrancas.itinerary.flatMap((day) => (day.stops ?? []).map((stop) => ({
+      id: `map-${stop.id}`, dayNumber: day.day, name: stop.name, order: stop.order,
+    }))),
+  };
+  barrancas.videoContent = {
+    enabled: true, provider: "youtube", url: "https://www.youtube.com/watch?v=Scxs7L0vhZ4",
+    title: "Paisajes de una ruta serrana", caption: "Material ilustrativo para esta demostración; la operación final puede variar.",
+    aspectRatio: "16:9",
+  };
 }
 
 export const destinations: TravelDestination[] = travels.map(t=>({id:t.destinationIds[0],agencyId:t.agencyId,slug:t.cities[0].toLowerCase().replaceAll(" ","-"),name:t.cities[0],region:t.region,country:t.countries[0],city:t.cities[0],summary:`Ideas para descubrir ${t.cities[0]}`,description:t.description,featuredImage:t.featuredImage,gallery:[],featured:true,status:"published"}));
