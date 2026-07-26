@@ -239,6 +239,7 @@ export type TravelDeparture = {
   coordinator?: string;
   priceOverride?: TravelPrice;
   depositPolicy?: DepositPolicy;
+  pricing?: ScheduledDeparturePricing;
 };
 export type TravelExtra = {
   id: string;
@@ -252,12 +253,124 @@ export type TravelExtra = {
 };
 export type TravelItineraryDay = {
   day: number;
+  id?: string;
+  dayNumber?: number;
+  order?: number;
   title: string;
+  shortDescription?: string;
   description: string;
+  startTime?: string;
+  endTime?: string;
+  stops?: ItineraryStop[];
+  highlights?: string[];
   meals?: string[];
   accommodation?: string;
   activities?: string[];
+  notes?: string[];
+  images?: TripGalleryImage[];
+  optionalActivities?: string[];
 };
+export type TripSectionType =
+  | "summary" | "video" | "gallery" | "itinerary" | "included" | "map"
+  | "departures" | "recommendations" | "departure_points"
+  | "important_information" | "faq" | "related_trips" | "custom";
+export type TripSectionConfig = {
+  id: string;
+  type: TripSectionType;
+  enabled: boolean;
+  order: number;
+  title?: string;
+  subtitle?: string;
+  anchorLabel?: string;
+  showInStickyNavigation?: boolean;
+  themeVariant?: "default" | "light" | "dark" | "accent";
+};
+export type TripPageConfiguration = { sections: TripSectionConfig[] };
+export type TripHeroMedia =
+  | { type: "image"; imageUrl: string; imageAlt: string; focalPoint?: { x: number; y: number }; overlay?: number; mobilePosterUrl?: string }
+  | { type: "video"; videoUrl: string; posterUrl?: string; autoplay: boolean; muted: boolean; loop: boolean };
+export type TripSummaryContent = {
+  shortDescription: string;
+  showDuration: boolean;
+  showUpcomingDepartures: boolean;
+  showVisitedDestinations: boolean;
+  showStartingPrice: boolean;
+  maxUpcomingDepartures?: number;
+  maxVisitedDestinations?: number;
+  visitedDestinationsOverride?: string[];
+};
+export type ItineraryStop = {
+  id: string;
+  name: string;
+  destinationId?: string;
+  order: number;
+  coordinates?: { latitude: number; longitude: number };
+};
+export type TripGalleryImage = {
+  id: string; url: string; alt: string; caption?: string; destinationId?: string;
+  itineraryDayId?: string; order: number; featured?: boolean;
+};
+export type TripVideoProvider = "youtube" | "vimeo" | "tiktok" | "instagram" | "html5";
+export type TripVideoContent = {
+  enabled: boolean; provider: TripVideoProvider; url: string; title?: string;
+  caption?: string; posterUrl?: string; aspectRatio?: "16:9" | "9:16" | "4:3" | "1:1";
+};
+export type ItineraryDisplayMode = "all_open" | "first_open" | "all_closed";
+export type TripItinerarySettings = {
+  displayMode: ItineraryDisplayMode; allowExpandAll: boolean; allowCollapseAll: boolean;
+  showTimes: boolean; showImages: boolean; showStops: boolean; showHighlights: boolean;
+  showMeals: boolean; showAccommodation: boolean;
+};
+export type ItineraryDownloadSettings = {
+  enabled: boolean; fileUrl?: string; fileName?: string; fileType?: "pdf" | "docx" | "xlsx" | "other";
+  fileSizeLabel?: string; requireLeadForm: boolean; leadFormFields?: Array<"name" | "whatsapp">;
+  title?: string; description?: string;
+};
+export type ItineraryLeadInput = {
+  agencyId: string; tripId: string; name: string; whatsapp: string; documentUrl: string;
+  pageUrl?: string; capturedAt: string;
+};
+export interface ItineraryLeadCaptureService { capture(input: ItineraryLeadInput): Promise<void> }
+export type TripFeatureIcon = "check" | "transport" | "hotel" | "meal" | "guide" | "ticket" | "insurance" | "activity" | "flight" | "baggage" | "custom";
+export type TripFeatureItem = { id: string; text: string; icon: TripFeatureIcon; customIconUrl?: string; order: number };
+export type TripInclusionsContent = { included: TripFeatureItem[]; excluded: TripFeatureItem[] };
+export type TripMapMode = "none" | "main_destination" | "route";
+export type TripMapSettings = {
+  enabled: boolean; mode: TripMapMode;
+  mainDestination?: { name: string; latitude?: number; longitude?: number };
+  routeStops?: Array<{ id: string; dayNumber: number; name: string; latitude?: number; longitude?: number; order: number }>;
+  generatedFromItinerary?: boolean;
+};
+export interface ItineraryMapGenerator { generate(input: { itinerary: TravelItineraryDay[] }): Promise<TripMapSettings> }
+export type DeparturePricingMode = "inherit_trip" | "custom";
+export type ScheduledDeparturePricing = {
+  mode: DeparturePricingMode;
+  pricingOverrides?: {
+    adultGeneral?: number; adultSingle?: number; adultDouble?: number; adultTriple?: number;
+    adultQuadruple?: number; minor?: number; infant?: number; packagePrice?: number;
+    taxes?: number; depositPolicy?: DepositPolicy;
+  };
+};
+export type TripRecommendationItem = { id: string; title?: string; text: string; icon?: string; order: number };
+export type TripRecommendationsContent = {
+  mode: "items" | "bulleted_text"; items?: TripRecommendationItem[]; bulletedText?: string;
+  difficulty?: { level: "muy_facil" | "facil" | "moderado" | "exigente"; label: string; description?: string };
+};
+export type DeparturePointType = "city_boarding" | "airport" | "bus_terminal" | "hotel" | "port" | "custom";
+export type PublicDeparturePoint = {
+  id: string; type: DeparturePointType; name: string; address?: string; reference?: string;
+  city?: string; state?: string; airportCode?: string; meetingTime?: string; departureTime?: string;
+  instructions?: string; mapUrl?: string; enabled: boolean; order: number;
+};
+export type DeparturePointsDisplayMode = "general" | "selected_departure" | "all_departures";
+export type ImportantInformationItem = {
+  id: string; title: string; description: string;
+  icon?: "info" | "pricing" | "security" | "documents" | "operation" | "terms" | "baggage" | "custom";
+  severity?: "info" | "warning" | "critical"; order: number;
+};
+export type ImportantInformationContent = { introduction?: string; items: ImportantInformationItem[] };
+export type TripFaqItem = { id: string; question: string; answer: string; category?: string; order: number };
+export type TripFaqContent = { introduction?: string; items: TripFaqItem[]; displayMode: "accordion" | "list" };
 export type TravelPolicies = {
   cancellation: string;
   payment: string;
@@ -305,6 +418,20 @@ export type TravelProduct = {
   travelerCategories?: TravelerCategory[];
   extraVisibility?: ExtraVisibility;
   allowManualOccupancy?: boolean;
+  pageConfiguration?: TripPageConfiguration;
+  heroMedia?: TripHeroMedia;
+  summaryContent?: TripSummaryContent;
+  videoContent?: TripVideoContent;
+  galleryImages?: TripGalleryImage[];
+  itinerarySettings?: TripItinerarySettings;
+  itineraryDownload?: ItineraryDownloadSettings;
+  inclusionsContent?: TripInclusionsContent;
+  mapSettings?: TripMapSettings;
+  recommendationsContent?: TripRecommendationsContent;
+  publicDeparturePoints?: PublicDeparturePoint[];
+  departurePointsDisplayMode?: DeparturePointsDisplayMode;
+  importantInformation?: ImportantInformationContent;
+  faqContent?: TripFaqContent;
 };
 export type BookingBoardingSnapshot = {
   boardingOptionId: string;

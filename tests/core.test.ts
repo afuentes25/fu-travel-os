@@ -40,7 +40,149 @@ import {
   resolveTheme,
 } from "../lib/tenancy/index";
 import { whatsappUrl } from "../lib/whatsapp/index";
+import {
+  DEFAULT_TRIP_SECTIONS,
+  TRIP_SECTION_RENDERER_KEYS,
+  formatTripDuration,
+  getInitialItineraryOpenDays,
+  getOrderedRouteStops,
+  getPublicDeparturePoints,
+  getSafeVideoPresentation,
+  getStickyTripSections,
+  getTripDisplayStartingPrice,
+  getVisitedDestinations,
+  isSafeCustomIconUrl,
+  isSafeDownloadUrl,
+  parseBulletedRecommendations,
+  resolveTripSections,
+  validateLead,
+} from "../lib/trip-sections/index";
 import type { CartLine, TravelerDraft } from "../types/index";
+
+const configuredTrip = () => travels.find((trip) => trip.pageConfiguration)!;
+
+test("secciones configurables se ordenan, ocultan desactivadas y omiten contenido vacío", () => {
+  const trip = structuredClone(configuredTrip());
+  trip.pageConfiguration!.sections = [
+    { id: "faq", type: "faq", enabled: true, order: 2, showInStickyNavigation: true },
+    { id: "summary", type: "summary", enabled: true, order: 1, showInStickyNavigation: true },
+    { id: "off", type: "video", enabled: false, order: 0 },
+  ];
+  trip.faqContent = { displayMode: "accordion", items: [] };
+  assert.deepEqual(resolveTripSections(trip).map((item) => item.type), ["summary"]);
+});
+test("sticky nav refleja orden y visibilidad reales", () => {
+  const trip = configuredTrip();
+  const sticky = getStickyTripSections(trip);
+  assert.ok(sticky.length > 1);
+  assert.deepEqual(sticky, [...sticky].sort((a, b) => a.order - b.order));
+  assert.ok(sticky.every((item) => item.enabled && item.showInStickyNavigation));
+});
+test("la configuración predeterminada tiene identificadores y orden estable", () => {
+  assert.equal(DEFAULT_TRIP_SECTIONS[0].type, "summary");
+  assert.equal(new Set(DEFAULT_TRIP_SECTIONS.map((item) => item.id)).size, DEFAULT_TRIP_SECTIONS.length);
+});
+test("duración singular y con noches se formatea sin cero noches", () => {
+  assert.equal(formatTripDuration(1, 0), "1 día");
+  assert.equal(formatTripDuration(2, 1), "2 días · 1 noche");
+});
+test("destinos del itinerario se ordenan, deduplican y limitan", () => {
+  const days = [
+    { day: 2, order: 2, title: "B", description: "", stops: [{ id: "3", name: "Aculco", order: 1 }] },
+    { day: 1, order: 1, title: "A", description: "", stops: [{ id: "1", name: "Amealco", order: 1 }, { id: "2", name: "Aculco", order: 2 }] },
+  ];
+  assert.deepEqual(getVisitedDestinations(days, 2), ["Amealco", "Aculco"]);
+});
+test("precio con hospedaje usa adulto doble", () => {
+  const trip = travels.find((item) => item.accommodationMode === "hotel_occupancy")!;
+  assert.equal(getTripDisplayStartingPrice({ trip }).amount, trip.pricingOptions.find((item) => item.occupancy === "double")!.amount);
+  assert.equal(getTripDisplayStartingPrice({ trip }).basis, "adult_double");
+});
+test("precio sin hospedaje usa adulto general", () => {
+  const trip = travels.find((item) => item.accommodationMode === "none")!;
+  assert.equal(getTripDisplayStartingPrice({ trip }).amount, trip.pricingOptions.find((item) => item.occupancy === "general")!.amount);
+  assert.equal(getTripDisplayStartingPrice({ trip }).basis, "adult_general");
+});
+test("override de salida sustituye el precio sin mutar el viaje", () => {
+  const trip = travels.find((item) => item.departures.some((departure) => departure.pricing?.mode === "custom"))!;
+  const departure = trip.departures.find((item) => item.pricing?.mode === "custom")!;
+  const base = trip.basePrice.amount;
+  assert.notEqual(getTripDisplayStartingPrice({ trip, departure }).amount, base);
+  assert.equal(trip.basePrice.amount, base);
+});
+test("modos del itinerario producen estados de apertura correctos", () => {
+  assert.deepEqual(getInitialItineraryOpenDays("all_open", 3), [0, 1, 2]);
+  assert.deepEqual(getInitialItineraryOpenDays("first_open", 3), [0]);
+  assert.deepEqual(getInitialItineraryOpenDays("all_closed", 3), []);
+});
+test("video vacío y proveedor desconocido se rechazan", () => {
+  assert.equal(getSafeVideoPresentation({ enabled: true, provider: "html5", url: "" }), null);
+  assert.equal(getSafeVideoPresentation({ enabled: true, provider: "youtube", url: "https://evil.example/watch?v=abcdef" }), null);
+});
+test("YouTube, Vimeo, TikTok, Instagram y HTML5 usan presentaciones controladas", () => {
+  assert.equal(getSafeVideoPresentation({ enabled: true, provider: "youtube", url: "https://youtube.com/watch?v=abcdef1" })?.mode, "iframe");
+  assert.equal(getSafeVideoPresentation({ enabled: true, provider: "vimeo", url: "https://vimeo.com/123456" })?.mode, "iframe");
+  assert.equal(getSafeVideoPresentation({ enabled: true, provider: "tiktok", url: "https://www.tiktok.com/@demo/video/123" })?.mode, "link");
+  assert.equal(getSafeVideoPresentation({ enabled: true, provider: "instagram", url: "https://instagram.com/reel/demo" })?.mode, "link");
+  assert.equal(getSafeVideoPresentation({ enabled: true, provider: "html5", url: "https://cdn.example/demo.mp4" })?.mode, "html5");
+});
+test("URLs y archivos peligrosos se rechazan", () => {
+  assert.equal(isSafeDownloadUrl("javascript:alert(1)"), false);
+  assert.equal(isSafeDownloadUrl("https://example.com/payload.exe"), false);
+  assert.equal(isSafeDownloadUrl("/documents/itinerario-demo.txt"), true);
+});
+test("icono personalizado solo admite imágenes seguras", () => {
+  assert.equal(isSafeCustomIconUrl("https://example.com/icon.webp"), true);
+  assert.equal(isSafeCustomIconUrl("https://example.com/icon.svg"), false);
+});
+test("parser de recomendaciones elimina viñetas y líneas vacías", () => {
+  assert.deepEqual(parseBulletedRecommendations("• Calzado\n\n- Agua\n* Bloqueador").map((item) => item.text), ["Calzado", "Agua", "Bloqueador"]);
+});
+test("ruta mantiene orden por día y orden interno", () => {
+  assert.deepEqual(getOrderedRouteStops({ enabled: true, mode: "route", routeStops: [
+    { id: "b", dayNumber: 2, name: "B", order: 1 },
+    { id: "a2", dayNumber: 1, name: "A2", order: 2 },
+    { id: "a1", dayNumber: 1, name: "A1", order: 1 },
+  ] }).map((item) => item.id), ["a1", "a2", "b"]);
+});
+test("puntos públicos filtran desactivados y conservan orden", () => {
+  assert.deepEqual(getPublicDeparturePoints([
+    { id: "2", type: "airport", name: "Aeropuerto", enabled: true, order: 2 },
+    { id: "off", type: "hotel", name: "Oculto", enabled: false, order: 0 },
+    { id: "1", type: "city_boarding", name: "Centro", enabled: true, order: 1 },
+  ]).map((item) => item.id), ["1", "2"]);
+});
+test("formulario de descarga valida nombre, WhatsApp y consentimiento", () => {
+  assert.deepEqual(Object.keys(validateLead({ name: " ", whatsapp: "55", consent: false })).sort(), ["consent", "name", "whatsapp"]);
+  assert.deepEqual(validateLead({ name: "Ana", whatsapp: "+525512345678", consent: true }), {});
+});
+test("demos incluyen descarga directa y descarga con formulario", () => {
+  const configured = travels.filter((trip) => trip.itineraryDownload?.enabled);
+  assert.ok(configured.some((trip) => !trip.itineraryDownload?.requireLeadForm));
+  assert.ok(configured.some((trip) => trip.itineraryDownload?.requireLeadForm));
+});
+test("día sin imagen no requiere hueco estructural", () => {
+  const trip = configuredTrip();
+  assert.ok(trip.itinerary.some((day) => !day.images?.length) || trip.itinerary.length <= 2);
+});
+test("demos incluyen mapa destino y mapa de ruta", () => {
+  assert.ok(travels.some((trip) => trip.mapSettings?.mode === "main_destination"));
+  assert.ok(travels.some((trip) => trip.mapSettings?.mode === "route"));
+});
+test("demos incluyen punto terrestre y aeropuerto", () => {
+  const points = travels.flatMap((trip) => trip.publicDeparturePoints ?? []);
+  assert.ok(points.some((point) => point.type === "city_boarding"));
+  assert.ok(points.some((point) => point.type === "airport" && point.airportCode));
+});
+test("información importante y FAQ solo existen con contenido útil", () => {
+  const trip = configuredTrip();
+  assert.ok(trip.importantInformation!.items.length > 0);
+  assert.ok(trip.faqContent!.items.every((item) => item.question && item.answer));
+});
+test("cada tema conserva una clave de renderer diferenciada", () => {
+  assert.notEqual(TRIP_SECTION_RENDERER_KEYS.explorer, TRIP_SECTION_RENDERER_KEYS.boutique);
+  assert.notEqual(TRIP_SECTION_RENDERER_KEYS.boutique, TRIP_SECTION_RENDERER_KEYS.marketplace);
+});
 
 test("resuelve tenant por hostname, query demo y fallback local", () => {
   assert.equal(resolveTenant("FURIVER.TRAVEL.FU.LAND:443").slug, "furiver");

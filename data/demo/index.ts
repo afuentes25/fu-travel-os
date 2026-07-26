@@ -191,4 +191,111 @@ demoExpansion.forEach((spec, offset) => {
     promotion: spec.promotion,
   });
 });
+
+const sectionOrder = [
+  "summary", "video", "gallery", "itinerary", "included", "map", "departures",
+  "recommendations", "departure_points", "important_information", "faq", "related_trips",
+] as const;
+const sectionLabels: Record<(typeof sectionOrder)[number], string> = {
+  summary: "Resumen", video: "Video", gallery: "Galería", itinerary: "Itinerario",
+  included: "Incluye", map: "Ruta", departures: "Fechas", recommendations: "Recomendaciones",
+  departure_points: "Puntos de salida", important_information: "Información importante",
+  faq: "Preguntas frecuentes", related_trips: "Viajes relacionados",
+};
+
+function configureTripPage(trip: TravelProduct, options: { video?: boolean; lead?: boolean; airport?: boolean; route?: boolean }) {
+  trip.pageConfiguration = {
+    sections: sectionOrder.map((type, index) => ({
+      id: `${trip.id}-${type}`, type, enabled: type !== "video" || Boolean(options.video),
+      order: index + 1, anchorLabel: sectionLabels[type],
+      showInStickyNavigation: !["video", "gallery", "related_trips"].includes(type),
+      themeVariant: type === "video" ? "dark" : "light",
+    })),
+  };
+  trip.heroMedia = { type: "image", imageUrl: trip.featuredImage, imageAlt: `Vista de ${trip.cities[0]}`, focalPoint: { x: 50, y: 45 }, overlay: .55 };
+  trip.summaryContent = {
+    shortDescription: trip.summary, showDuration: true, showUpcomingDepartures: true,
+    showVisitedDestinations: true, showStartingPrice: true, maxUpcomingDepartures: 3, maxVisitedDestinations: 5,
+  };
+  trip.galleryImages = [trip.featuredImage, ...trip.gallery].filter(Boolean).slice(0, 5).map((url, index) => ({
+    id: `${trip.id}-gallery-${index + 1}`, url, alt: `${trip.title}, escena ${index + 1}`,
+    order: index + 1, featured: index === 0,
+  }));
+  trip.itinerary = trip.itinerary.map((day, index) => ({
+    ...day, id: `${trip.id}-day-${day.day}`, dayNumber: day.day, order: index + 1,
+    shortDescription: day.description.slice(0, 115),
+    startTime: index === 0 ? "07:00" : "09:00",
+    stops: [
+      { id: `${trip.id}-stop-${index}-1`, name: trip.cities[index % trip.cities.length] ?? trip.cities[0], order: 1 },
+      ...(trip.cities[index + 1] ? [{ id: `${trip.id}-stop-${index}-2`, name: trip.cities[index + 1], order: 2 }] : []),
+    ],
+    highlights: day.activities?.slice(0, 3) ?? ["Acompañamiento durante la ruta"],
+    images: index < 2 ? [{ id: `${trip.id}-day-image-${index}`, url: trip.gallery[index] ?? trip.featuredImage, alt: day.title, order: 1 }] : [],
+  }));
+  trip.itinerarySettings = {
+    displayMode: trip.agencyId === "a-boutique" ? "all_open" : "first_open",
+    allowExpandAll: true, allowCollapseAll: true, showTimes: true, showImages: true,
+    showStops: true, showHighlights: true, showMeals: true, showAccommodation: true,
+  };
+  trip.itineraryDownload = {
+    enabled: true, fileUrl: "/documents/itinerario-demo.txt", fileName: `itinerario-${trip.slug}.txt`,
+    fileType: "other", fileSizeLabel: "3 KB", requireLeadForm: Boolean(options.lead),
+    leadFormFields: options.lead ? ["name", "whatsapp"] : [], title: "Lleva la ruta contigo",
+    description: options.lead ? "Recibe el itinerario después de compartir tus datos." : "Descarga el programa para consultarlo sin conexión.",
+  };
+  trip.inclusionsContent = {
+    included: trip.includes.map((text, index) => ({ id: `${trip.id}-in-${index}`, text, icon: index ? "check" : "transport", order: index + 1 })),
+    excluded: trip.excludes.map((text, index) => ({ id: `${trip.id}-out-${index}`, text, icon: "custom", order: index + 1 })),
+  };
+  trip.videoContent = options.video
+    ? { enabled: true, provider: "youtube", url: "https://www.youtube.com/watch?v=Scxs7L0vhZ4", title: `Una mirada a ${trip.cities[0]}`, caption: "Video ilustrativo de la atmósfera del destino.", aspectRatio: "16:9" }
+    : { enabled: false, provider: "html5", url: "" };
+  trip.mapSettings = options.route
+    ? { enabled: true, mode: "route", routeStops: trip.itinerary.flatMap((day) => (day.stops ?? []).map((stop) => ({ id: stop.id, dayNumber: day.day, name: stop.name, order: stop.order }))), generatedFromItinerary: true }
+    : { enabled: true, mode: "main_destination", mainDestination: { name: trip.cities[0] } };
+  trip.recommendationsContent = {
+    mode: "bulleted_text", bulletedText: "• Lleva calzado cómodo\n• Conserva una batería externa\n• Considera efectivo para comercios locales",
+    difficulty: { level: trip.durationDays > 4 ? "moderado" : "facil", label: trip.durationDays > 4 ? "Ritmo moderado" : "Ruta fácil", description: "Adecuada para viajeros con movilidad cotidiana." },
+  };
+  trip.publicDeparturePoints = options.airport
+    ? [{ id: `${trip.id}-airport`, type: "airport", name: "Aeropuerto de salida", airportCode: "MEX", city: "Ciudad de México", meetingTime: "3 horas antes", instructions: "La terminal se confirma en los documentos finales.", enabled: true, order: 1 }]
+    : [{ id: `${trip.id}-ground`, type: "city_boarding", name: "Punto centro", city: "Ciudad de México", reference: "Frente al acceso principal", meetingTime: "06:30", departureTime: "07:00", instructions: "Llega 15 minutos antes.", enabled: true, order: 1 }];
+  trip.departurePointsDisplayMode = "selected_departure";
+  trip.importantInformation = {
+    introduction: "Consulta estas condiciones antes de reservar.",
+    items: [
+      { id: `${trip.id}-important-1`, title: "Operación de la ruta", description: "Los horarios pueden ajustarse por clima, tránsito o seguridad.", icon: "operation", severity: "info", order: 1 },
+      { id: `${trip.id}-important-2`, title: "Documentación", description: options.airport ? "Verifica vigencia y requisitos migratorios antes de viajar." : "Conserva tu confirmación y una identificación vigente.", icon: "documents", severity: "warning", order: 2 },
+    ],
+  };
+  trip.faqContent = {
+    introduction: "Respuestas breves para preparar tu salida.",
+    displayMode: "accordion",
+    items: [
+      { id: `${trip.id}-faq-1`, question: "¿Cuándo recibo la confirmación?", answer: "Al concluir la reserva demo verás el resumen y el folio de seguimiento.", category: "pagos", order: 1 },
+      { id: `${trip.id}-faq-2`, question: "¿Qué equipaje conviene llevar?", answer: "Recomendamos equipaje compacto y adecuado a la duración y clima de la ruta.", category: "equipaje", order: 2 },
+    ],
+  };
+  if (trip.departures[1]) {
+    trip.departures[1].pricing = {
+      mode: "custom",
+      pricingOverrides: trip.accommodationMode === "hotel_occupancy"
+        ? { adultDouble: Math.round(trip.basePrice.amount * 1.08), depositPolicy: trip.departures[1].depositPolicy }
+        : { adultGeneral: Math.round(trip.basePrice.amount * 1.08), depositPolicy: trip.departures[1].depositPolicy },
+    };
+  }
+}
+
+const configurableDemos = [
+  { agency: "a-furiver", hotel: false, options: { video: false, lead: false, airport: false, route: false } },
+  { agency: "a-furiver", hotel: true, options: { video: false, lead: true, airport: false, route: true } },
+  { agency: "a-crisenix", hotel: false, options: { video: false, lead: false, airport: false, route: false } },
+  { agency: "a-crisenix", hotel: true, options: { video: false, lead: true, airport: true, route: true } },
+  { agency: "a-boutique", hotel: true, options: { video: true, lead: true, airport: true, route: true } },
+] as const;
+for (const demo of configurableDemos) {
+  const trip = travels.find((item) => item.agencyId === demo.agency && (item.accommodationMode === "hotel_occupancy") === demo.hotel && !item.pageConfiguration);
+  if (trip) configureTripPage(trip, demo.options);
+}
+
 export const destinations: TravelDestination[] = travels.map(t=>({id:t.destinationIds[0],agencyId:t.agencyId,slug:t.cities[0].toLowerCase().replaceAll(" ","-"),name:t.cities[0],region:t.region,country:t.countries[0],city:t.cities[0],summary:`Ideas para descubrir ${t.cities[0]}`,description:t.description,featuredImage:t.featuredImage,gallery:[],featured:true,status:"published"}));

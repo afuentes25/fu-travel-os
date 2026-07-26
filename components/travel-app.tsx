@@ -1,6 +1,7 @@
 "use client";
 
 import Image from "next/image";
+import Link from "next/link";
 import {
   useEffect,
   useMemo,
@@ -40,6 +41,21 @@ import {
   reconcileTravelerDrafts,
 } from "@/lib/travelers";
 import { whatsappUrl } from "@/lib/whatsapp";
+import {
+  formatTripDuration,
+  getInitialItineraryOpenDays,
+  getOrderedRouteStops,
+  getPublicDeparturePoints,
+  getRecommendationItems,
+  getSafeVideoPresentation,
+  getStickyTripSections,
+  getTripDisplayStartingPrice,
+  getVisitedDestinations,
+  isSafeDownloadUrl,
+  localItineraryLeadCaptureService,
+  resolveTripSections,
+  validateLead,
+} from "@/lib/trip-sections";
 import type {
   Agency,
   AvailabilityDisplayMode,
@@ -49,6 +65,7 @@ import type {
   SocialNetwork,
   TravelProduct,
   TravelTheme,
+  TripSectionConfig,
 } from "@/types";
 import { TravelApp as LegacyTravelApp } from "./legacy-travel-app";
 
@@ -2406,12 +2423,17 @@ function SharedBookingPanel({
 function ExplorerBookingPanel({
   agency,
   trip,
+  selectedDepartureId,
+  onDepartureChange,
 }: {
   agency: Agency;
   trip: TravelProduct;
+  selectedDepartureId?: string;
+  onDepartureChange?: (id: string) => void;
 }) {
   const initialDeparture = available(trip);
-  const [departureId, setDepartureId] = useState(initialDeparture.id);
+  const [internalDepartureId, setInternalDepartureId] = useState(initialDeparture.id);
+  const departureId = selectedDepartureId ?? internalDepartureId;
   const departure = trip.departures.find((item) => item.id === departureId)!;
   const [boardingId, setBoardingId] = useState<string | null>(null);
   const [adults, setAdults] = useState(2);
@@ -2506,7 +2528,8 @@ function ExplorerBookingPanel({
     trip.basePrice.currency,
   ).replace(/\s+(MXN|USD)$/u, "");
   const changeDeparture = (id: string) => {
-    setDepartureId(id);
+    setInternalDepartureId(id);
+    onDepartureChange?.(id);
     setBoardingId(null);
   };
   const add = () => {
@@ -2876,13 +2899,9 @@ function ExplorerBookingPanel({
 }
 
 function ExplorerGallery({ trip }: { trip: TravelProduct }) {
-  const images = [
-    trip.featuredImage,
-    "/images/destination-mountain.webp",
-    "/images/destination-town.webp",
-    "/images/destination-canyon.webp",
-    "/images/destination-beach.webp",
-  ];
+  const images = trip.galleryImages?.length
+    ? [...trip.galleryImages].sort((a, b) => a.order - b.order).map((item) => item.url)
+    : [trip.featuredImage, ...trip.gallery];
   const [selected, setSelected] = useState<string | null>(null);
   useEffect(() => {
     if (!selected) return;
@@ -2935,6 +2954,103 @@ function ExplorerGallery({ trip }: { trip: TravelProduct }) {
   );
 }
 
+function ItineraryDownload({ agency, trip }: { agency: Agency; trip: TravelProduct }) {
+  const settings = trip.itineraryDownload;
+  const [name, setName] = useState("");
+  const [whatsapp, setWhatsapp] = useState("");
+  const [consent, setConsent] = useState(false);
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  if (!settings?.enabled || !isSafeDownloadUrl(settings.fileUrl)) return null;
+  const download = async () => {
+    if (settings.requireLeadForm) {
+      const next = validateLead({ name, whatsapp, consent });
+      setErrors(next);
+      if (Object.keys(next).length) return;
+      await localItineraryLeadCaptureService.capture({
+        agencyId: agency.id, tripId: trip.id, name: name.trim(),
+        whatsapp: whatsapp.replace(/[^\d+]/g, ""), documentUrl: settings.fileUrl!,
+        pageUrl: window.location.href, capturedAt: new Date().toISOString(),
+      });
+    }
+    const anchor = document.createElement("a");
+    anchor.href = settings.fileUrl!;
+    anchor.download = settings.fileName ?? "";
+    anchor.click();
+  };
+  return (
+    <aside className="trip-download">
+      <div><span className="section-label">ITINERARIO DESCARGABLE</span><h3>{settings.title ?? "Lleva la ruta contigo"}</h3><p>{settings.description}</p></div>
+      {settings.requireLeadForm && (
+        <div className="trip-download-form">
+          <label>Nombre<input value={name} onChange={(event) => setName(event.target.value)} aria-describedby={errors.name ? "lead-name-error" : undefined} /></label>
+          {errors.name && <small id="lead-name-error" role="alert">{errors.name}</small>}
+          <label>WhatsApp<input inputMode="tel" value={whatsapp} onChange={(event) => setWhatsapp(event.target.value)} aria-describedby={errors.whatsapp ? "lead-phone-error" : undefined} /></label>
+          {errors.whatsapp && <small id="lead-phone-error" role="alert">{errors.whatsapp}</small>}
+          <label className="trip-consent"><input type="checkbox" checked={consent} onChange={(event) => setConsent(event.target.checked)} /> Acepto el uso de mis datos para recibir el itinerario. <Link href="/aviso-de-privacidad">Aviso de privacidad</Link>.</label>
+          {errors.consent && <small role="alert">{errors.consent}</small>}
+        </div>
+      )}
+      <button onClick={download}>Descargar itinerario {settings.fileSizeLabel ? `· ${settings.fileSizeLabel}` : ""}</button>
+    </aside>
+  );
+}
+
+function ConfigurableTripSection({
+  section, agency, trip, departure, onDepartureChange,
+}: {
+  section: TripSectionConfig; agency: Agency; trip: TravelProduct; departure: NonNullable<TravelProduct["departures"][number]>;
+  onDepartureChange: (id: string) => void;
+}) {
+  const title = section.title ?? section.anchorLabel;
+  if (section.type === "summary") {
+    const content = trip.summaryContent!;
+    const destinations = content.visitedDestinationsOverride ?? getVisitedDestinations(trip.itinerary, content.maxVisitedDestinations);
+    const price = getTripDisplayStartingPrice({ trip, departure });
+    return <section id={section.id} className="trip-section trip-summary"><header><span className="section-label">{trip.code} · RESUMEN</span><h2>{title ?? "Todo lo esencial"}</h2></header><p>{content.shortDescription}</p><div className="trip-summary-facts">{content.showDuration && <span><b>{formatTripDuration(trip.durationDays, trip.durationNights)}</b><small>Duración</small></span>}{content.showStartingPrice && <span><b>{explorerPrice(price.amount, price.currency)}</b><small>{price.label}</small></span>}</div>{content.showVisitedDestinations && destinations.length > 0 && <p className="trip-visited"><b>Visitando:</b> {destinations.join(" · ")}</p>}{content.showUpcomingDepartures && <div className="explorer-next-dates"><b>Próximas salidas:</b>{trip.departures.filter((item) => item.saleStatus !== "sold_out").slice(0, content.maxUpcomingDepartures ?? 3).map((item) => <button className={item.id === departure.id ? "active" : ""} key={item.id} onClick={() => onDepartureChange(item.id)}>{dateLabel(item.startDate)}</button>)}</div>}</section>;
+  }
+  if (section.type === "video") {
+    const presentation = getSafeVideoPresentation(trip.videoContent);
+    if (!presentation) return null;
+    return <section id={section.id} className="trip-section trip-video"><header><span className="section-label">VIDEO</span><h2>{trip.videoContent?.title ?? title}</h2></header><div className={`trip-video-frame ratio-${trip.videoContent?.aspectRatio?.replace(":", "-") ?? "16-9"}`}>{presentation.mode === "iframe" ? <iframe src={presentation.url} title={trip.videoContent?.title ?? "Video del viaje"} loading="lazy" allow="fullscreen; picture-in-picture" /> : presentation.mode === "html5" ? <video controls playsInline poster={trip.videoContent?.posterUrl}><source src={presentation.url} /></video> : <a href={presentation.url} target="_blank" rel="noreferrer">Ver video en {trip.videoContent?.provider}</a>}</div><p>{trip.videoContent?.caption}</p></section>;
+  }
+  if (section.type === "gallery") return <div id={section.id} className="trip-section"><ExplorerGallery trip={trip} /></div>;
+  if (section.type === "itinerary") return <ConfigurableItinerary section={section} agency={agency} trip={trip} />;
+  if (section.type === "included") {
+    const content = trip.inclusionsContent;
+    return <section id={section.id} className="trip-section explorer-includes-refined">{content?.included.length ? <div><h2>Incluye</h2>{content.included.sort((a,b)=>a.order-b.order).map((item)=><p key={item.id}><i>✓</i>{item.text}</p>)}</div>:null}{content?.excluded.length ? <div><h2>No incluye</h2>{content.excluded.sort((a,b)=>a.order-b.order).map((item)=><p key={item.id}><i>×</i>{item.text}</p>)}</div>:null}</section>;
+  }
+  if (section.type === "map") {
+    const stops = getOrderedRouteStops(trip.mapSettings);
+    return <section id={section.id} className="trip-section trip-map"><header><span className="section-label">RUTA</span><h2>{title ?? "El viaje sobre el mapa"}</h2></header><div className="trip-map-canvas" aria-label="Representación de la ruta">{stops.length ? stops.map((stop, index)=><span key={stop.id}><b>{index + 1}</b><small>Día {stop.dayNumber}</small>{stop.name}</span>) : <span><b>1</b>{trip.mapSettings?.mainDestination?.name}</span>}</div><p>Representación informativa. La ruta definitiva se confirma con la operación.</p></section>;
+  }
+  if (section.type === "departures") {
+    return <section id={section.id} className="trip-section explorer-departures-refined"><span className="section-label">FECHAS DISPONIBLES</span><h2>{title ?? "Elige cuándo partir"}</h2>{trip.departures.map((item)=>{const price=getTripDisplayStartingPrice({trip,departure:item});return <div className={item.id===departure.id?"active":""} key={item.id}><time>{dateLabel(item.startDate,true)}</time><span>Desde {explorerPrice(price.amount,price.currency)} <small>{price.label}</small></span><b>{item.saleStatus==="sold_out"?"Agotada":item.saleStatus==="limited"?"Últimos lugares":"Programada"}</b><button disabled={item.saleStatus==="sold_out"} onClick={()=>onDepartureChange(item.id)}>Elegir fecha</button></div>})}</section>;
+  }
+  if (section.type === "recommendations") {
+    const items=getRecommendationItems(trip); return <section id={section.id} className="trip-section trip-recommendations"><header><span className="section-label">RECOMENDACIONES</span><h2>{title ?? "Prepárate para la ruta"}</h2></header>{trip.recommendationsContent?.difficulty&&<aside><b>{trip.recommendationsContent.difficulty.label}</b><p>{trip.recommendationsContent.difficulty.description}</p></aside>}<ul>{items.map((item)=><li key={item.id}>{item.title&&<b>{item.title}</b>}{item.text}</li>)}</ul></section>;
+  }
+  if (section.type === "departure_points") {
+    const points=getPublicDeparturePoints(trip.publicDeparturePoints); return <section id={section.id} className="trip-section trip-points"><header><span className="section-label">PUNTOS DE SALIDA</span><h2>{title ?? "Dónde comienza el viaje"}</h2></header><div>{points.map((point)=><article key={point.id}><span>{point.type==="airport"?"AEROPUERTO":"SALIDA TERRESTRE"}</span><h3>{point.name}{point.airportCode?` · ${point.airportCode}`:""}</h3><p>{[point.address,point.reference,point.city].filter(Boolean).join(" · ")}</p><small>{[point.meetingTime&&`Encuentro ${point.meetingTime}`,point.departureTime&&`Salida ${point.departureTime}`].filter(Boolean).join(" · ")}</small><p>{point.instructions}</p></article>)}</div></section>;
+  }
+  if (section.type === "important_information") return <section id={section.id} className="trip-section trip-important"><header><span className="section-label">INFORMACIÓN IMPORTANTE</span><h2>{title ?? "Antes de reservar"}</h2><p>{trip.importantInformation?.introduction}</p></header><div>{trip.importantInformation?.items.sort((a,b)=>a.order-b.order).map((item)=><article className={item.severity??"info"} key={item.id}><h3>{item.title}</h3><p>{item.description}</p></article>)}</div></section>;
+  if (section.type === "faq") return <section id={section.id} className="trip-section explorer-policies"><span className="section-label">PREGUNTAS FRECUENTES</span><h2>{title ?? "Resolvemos tus dudas"}</h2><p>{trip.faqContent?.introduction}</p>{trip.faqContent?.items.sort((a,b)=>a.order-b.order).map((item)=><details key={item.id}><summary>{item.question}<i>+</i></summary><p>{item.answer}</p></details>)}</section>;
+  return null;
+}
+
+function ConfigurableItinerary({ section, agency, trip }: { section: TripSectionConfig; agency: Agency; trip: TravelProduct }) {
+  const settings = trip.itinerarySettings!;
+  const [openDays, setOpenDays] = useState(() => getInitialItineraryOpenDays(settings.displayMode, trip.itinerary.length));
+  const toggle = (index: number) => setOpenDays((current) => current.includes(index) ? current.filter((item)=>item!==index) : [...current,index]);
+  return <section id={section.id} className="trip-section explorer-program"><header><span className="section-label">PROGRAMA POR ETAPAS</span><h2>{section.title ?? "El camino, día a día"}</h2><div className="itinerary-actions">{settings.allowExpandAll&&<button onClick={()=>setOpenDays(trip.itinerary.map((_,index)=>index))}>Desplegar todo</button>}{settings.allowCollapseAll&&<button onClick={()=>setOpenDays([])}>Contraer todo</button>}</div></header>{trip.itinerary.map((day,index)=><article className={openDays.includes(index)?"open":""} key={day.id??day.day}><button className="itinerary-trigger" aria-expanded={openDays.includes(index)} onClick={()=>toggle(index)}><b>{String(day.day).padStart(2,"0")}</b><span><small>DÍA {day.day}</small>{day.title}</span><i>+</i></button>{openDays.includes(index)&&<div className="itinerary-body"><p>{day.description}</p>{settings.showTimes&&day.startTime&&<small>{day.startTime}{day.endTime?` – ${day.endTime}`:""}</small>}{settings.showStops&&Boolean(day.stops?.length)&&<p><b>Paradas:</b> {day.stops!.sort((a,b)=>a.order-b.order).map((stop)=>stop.name).join(" · ")}</p>}{settings.showHighlights&&Boolean(day.highlights?.length)&&<ul>{day.highlights!.map((item)=><li key={item}>{item}</li>)}</ul>}{settings.showImages&&day.images?.[0]&&<div className="explorer-program-image"><Image src={day.images[0].url} alt={day.images[0].alt} fill sizes="50vw" /></div>}</div>}</article>)}<ItineraryDownload agency={agency} trip={trip} /></section>;
+}
+
+function ConfigurableTripContent({ agency, trip, related, departureId, onDepartureChange, onNavigate }: { agency: Agency; trip: TravelProduct; related: TravelProduct[]; departureId: string; onDepartureChange: (id:string)=>void; onNavigate:(path:string)=>void }) {
+  const departure = trip.departures.find((item)=>item.id===departureId) ?? available(trip);
+  const sections=resolveTripSections(trip);
+  const sticky=getStickyTripSections(trip);
+  return <><nav className="explorer-detail-nav configurable" aria-label="Secciones del viaje">{sticky.map((section)=><a key={section.id} href={`#${section.id}`}>{section.anchorLabel??section.title??section.type}</a>)}</nav><div className="explorer-detail-grid configurable-grid"><article className="explorer-detail-content">{sections.filter((section)=>section.type!=="related_trips").map((section)=><ConfigurableTripSection key={section.id} section={section} agency={agency} trip={trip} departure={departure} onDepartureChange={onDepartureChange}/>)}</article><ExplorerBookingPanel agency={agency} trip={trip} selectedDepartureId={departureId} onDepartureChange={onDepartureChange}/></div>{sections.some((section)=>section.type==="related_trips")&&<section id={sections.find((section)=>section.type==="related_trips")?.id} className="explorer-related"><header><span className="section-label">SIGUE EXPLORANDO</span><h2>Rutas que también podrían llamarte.</h2></header><div>{related.map((item)=><ExplorerCard key={item.id} trip={item} onOpen={(selected)=>onNavigate(travelUrl(selected))}/>)}</div></section>}</>;
+}
+
 function ExplorerDetail({
   agency,
   trip,
@@ -2945,6 +3061,7 @@ function ExplorerDetail({
   onNavigate: (path: string) => void;
 }) {
   const departure = available(trip);
+  const [selectedDepartureId, setSelectedDepartureId] = useState(departure.id);
   const related = travels
     .filter((item) => item.agencyId === agency.id && item.id !== trip.id)
     .slice(0, 3);
@@ -2952,13 +3069,18 @@ function ExplorerDetail({
   return (
     <main className="explorer-detail-refined">
       <section className="explorer-detail-cover">
-        <Image
-          src={trip.featuredImage}
-          alt={`Paisaje de ${trip.cities[0]}`}
-          fill
-          priority
-          sizes="100vw"
-        />
+        {trip.heroMedia?.type === "video" && trip.heroMedia.muted ? (
+          <video className="trip-hero-video" autoPlay={trip.heroMedia.autoplay} muted loop={trip.heroMedia.loop} playsInline poster={trip.heroMedia.posterUrl}>
+            <source src={trip.heroMedia.videoUrl} />
+          </video>
+        ) : (
+          <Image
+            src={trip.heroMedia?.type === "image" ? trip.heroMedia.imageUrl : trip.featuredImage}
+            alt={trip.heroMedia?.type === "image" ? trip.heroMedia.imageAlt : `Paisaje de ${trip.cities[0]}`}
+            fill priority sizes="100vw"
+            style={trip.heroMedia?.type === "image" ? { objectPosition: `${trip.heroMedia.focalPoint?.x ?? 50}% ${trip.heroMedia.focalPoint?.y ?? 50}%` } : undefined}
+          />
+        )}
         <div className="explorer-detail-cover-shade" />
         <button
           className="explorer-breadcrumb"
@@ -2992,6 +3114,10 @@ function ExplorerDetail({
           </span>
         </div>
       </section>
+      {trip.pageConfiguration ? (
+        <ConfigurableTripContent agency={agency} trip={trip} related={related} departureId={selectedDepartureId} onDepartureChange={setSelectedDepartureId} onNavigate={onNavigate} />
+      ) : (
+      <>
       <nav className="explorer-detail-nav" aria-label="Secciones del viaje">
         {[
           "Resumen",
@@ -3225,6 +3351,8 @@ function ExplorerDetail({
           ))}
         </div>
       </section>
+      </>
+      )}
       <section
         className="explorer-detail-final"
         style={{
@@ -3249,6 +3377,29 @@ function ExplorerDetail({
       </section>
     </main>
   );
+}
+
+function SharedConfigurableSections({ trip, theme }: { trip: TravelProduct; theme: Exclude<TravelTheme, "explorer"> }) {
+  const sections = resolveTripSections(trip);
+  const video = getSafeVideoPresentation(trip.videoContent);
+  return <div className={`shared-configurable-sections ${theme}-section-renderer`}>
+    <nav className="shared-trip-nav" aria-label="Contenido del viaje">{getStickyTripSections(trip).map((section)=><a key={section.id} href={`#${section.id}`}>{section.anchorLabel ?? section.type}</a>)}</nav>
+    {sections.filter((section)=>section.type!=="related_trips").map((section)=>{
+      const heading=section.title??section.anchorLabel;
+      if(section.type==="summary"){const price=getTripDisplayStartingPrice({trip});return <section id={section.id} key={section.id}><span className="section-label">RESUMEN</span><h2>{heading}</h2><p>{trip.summaryContent?.shortDescription}</p><div className="shared-summary-row"><b>{formatTripDuration(trip.durationDays,trip.durationNights)}</b><b>{formatMoney(price.amount,price.currency)} <small>{price.label}</small></b></div></section>}
+      if(section.type==="video"&&video)return <section id={section.id} key={section.id} className="shared-video"><span className="section-label">VIDEO</span><h2>{trip.videoContent?.title??heading}</h2>{video.mode==="iframe"?<iframe src={video.url} title={trip.videoContent?.title??"Video del viaje"} loading="lazy"/>:<a href={video.url} target="_blank" rel="noreferrer">Ver video</a>}<p>{trip.videoContent?.caption}</p></section>;
+      if(section.type==="gallery")return <section id={section.id} key={section.id}><span className="section-label">GALERÍA</span><h2>{heading}</h2><div className="shared-gallery">{(trip.galleryImages??[]).slice(0,3).map((image)=><Image key={image.id} src={image.url} alt={image.alt} width={420} height={280}/>)}</div></section>;
+      if(section.type==="itinerary")return <section id={section.id} key={section.id}><span className="section-label">ITINERARIO</span><h2>{heading}</h2>{trip.itinerary.map((day)=><details key={day.id??day.day} open={trip.itinerarySettings?.displayMode==="all_open"||day.day===1&&trip.itinerarySettings?.displayMode==="first_open"}><summary><b>{String(day.day).padStart(2,"0")}</b><span>{day.title}</span><i>+</i></summary><p>{day.description}</p></details>)}</section>;
+      if(section.type==="included")return <section id={section.id} key={section.id} className="v2-includes"><div><h3>Incluye</h3>{trip.inclusionsContent?.included.map((item)=><p key={item.id}>✓ {item.text}</p>)}</div><div><h3>No incluye</h3>{trip.inclusionsContent?.excluded.map((item)=><p key={item.id}>— {item.text}</p>)}</div></section>;
+      if(section.type==="map")return <section id={section.id} key={section.id}><span className="section-label">RUTA</span><h2>{heading}</h2><div className="shared-route">{getOrderedRouteStops(trip.mapSettings).map((stop)=><span key={stop.id}><b>{stop.dayNumber}</b>{stop.name}</span>)}</div></section>;
+      if(section.type==="departures")return <section id={section.id} key={section.id} className="v2-date-list"><span className="section-label">FECHAS</span><h2>{heading}</h2>{trip.departures.map((item)=><div key={item.id}><time>{dateLabel(item.startDate,true)}</time><span>{formatMoney(getTripDisplayStartingPrice({trip,departure:item}).amount,trip.basePrice.currency)}</span><b>{item.saleStatus.replace("_"," ")}</b></div>)}</section>;
+      if(section.type==="recommendations")return <section id={section.id} key={section.id}><span className="section-label">RECOMENDACIONES</span><h2>{heading}</h2><ul>{getRecommendationItems(trip).map((item)=><li key={item.id}>{item.text}</li>)}</ul></section>;
+      if(section.type==="departure_points")return <section id={section.id} key={section.id}><span className="section-label">PUNTOS DE SALIDA</span><h2>{heading}</h2>{getPublicDeparturePoints(trip.publicDeparturePoints).map((point)=><article className="shared-point" key={point.id}><b>{point.name}{point.airportCode?` · ${point.airportCode}`:""}</b><p>{[point.city,point.reference,point.meetingTime].filter(Boolean).join(" · ")}</p></article>)}</section>;
+      if(section.type==="important_information")return <section id={section.id} key={section.id}><span className="section-label">INFORMACIÓN IMPORTANTE</span><h2>{heading}</h2>{trip.importantInformation?.items.map((item)=><article className="shared-information" key={item.id}><h3>{item.title}</h3><p>{item.description}</p></article>)}</section>;
+      if(section.type==="faq")return <section id={section.id} key={section.id}><span className="section-label">PREGUNTAS FRECUENTES</span><h2>{heading}</h2>{trip.faqContent?.items.map((item)=><details key={item.id}><summary>{item.question}<i>+</i></summary><p>{item.answer}</p></details>)}</section>;
+      return null;
+    })}
+  </div>;
 }
 
 function SharedDetail({
@@ -3385,6 +3536,10 @@ function SharedDetail({
               ))}
             </div>
           )}
+          {trip.pageConfiguration && theme !== "explorer" ? (
+            <SharedConfigurableSections trip={trip} theme={theme} />
+          ) : (
+          <>
           <section id="descripción">
             <span className="section-label">
               {theme === "boutique" ? "LA HISTORIA" : "LA EXPERIENCIA"}
@@ -3458,6 +3613,8 @@ function SharedDetail({
             <p>{trip.policies.payment}</p>
             <p>{trip.policies.responsibility}</p>
           </section>
+          </>
+          )}
         </article>
         <div id="reserva">
           <SharedBookingPanel agency={agency} trip={trip} theme={theme} />

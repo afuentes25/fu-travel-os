@@ -24,6 +24,7 @@ import type {
   TravelerDataStatus,
   TravelerDraft,
   TravelProduct,
+  TripSectionConfig,
   TravelTheme,
 } from "@/types";
 
@@ -1735,6 +1736,7 @@ function Admin({
   const menu = [
     "dashboard",
     "viajes",
+    "contenido del viaje",
     "destinos",
     "salidas",
     "puntos de salida",
@@ -1808,6 +1810,7 @@ function Admin({
         </header>
         {section === "dashboard" && <Dashboard agency={agency} own={own} />}{" "}
         {section === "viajes" && <AdminTrips own={own} act={act} />}{" "}
+        {section === "contenido del viaje" && <TripContentManager own={own} act={act} />}{" "}
         {section === "puntos de salida" && (
           <AdminPoints agency={agency} act={act} />
         )}{" "}
@@ -1816,6 +1819,7 @@ function Admin({
         {![
           "dashboard",
           "viajes",
+          "contenido del viaje",
           "puntos de salida",
           "salidas",
           "temas",
@@ -1827,6 +1831,32 @@ function Admin({
         </div>
       )}
     </main>
+  );
+}
+
+function TripContentManager({ own, act }: { own: TravelProduct[]; act: (message: string) => void }) {
+  const configured = own.find((trip) => trip.pageConfiguration);
+  const [tripId, setTripId] = useState(configured?.id ?? own[0]?.id ?? "");
+  const selected = own.find((trip) => trip.id === tripId);
+  const [sections, setSections] = useState<TripSectionConfig[]>(selected?.pageConfiguration?.sections ?? []);
+  useEffect(() => setSections(selected?.pageConfiguration?.sections ?? []), [selected]);
+  const move = (index: number, direction: -1 | 1) => {
+    const nextIndex = index + direction;
+    if (nextIndex < 0 || nextIndex >= sections.length) return;
+    const next = [...sections];
+    [next[index], next[nextIndex]] = [next[nextIndex], next[index]];
+    setSections(next.map((item, order) => ({ ...item, order: order + 1 })));
+  };
+  return (
+    <section className="admin-trip-content">
+      <header className="admin-section-head">
+        <div><small>CONFIGURACIÓN DEMO LOCAL</small><h2>Contenido del viaje</h2><p>Define visibilidad, orden, títulos y comportamiento del itinerario sin duplicar la página.</p></div>
+        <label>Viaje<select value={tripId} onChange={(event) => setTripId(event.target.value)}>{own.map((trip) => <option key={trip.id} value={trip.id}>{trip.title}</option>)}</select></label>
+      </header>
+      {sections.length ? <div className="admin-section-list">{[...sections].sort((a,b)=>a.order-b.order).map((item,index)=><article key={item.id}><label><input type="checkbox" checked={item.enabled} onChange={(event)=>setSections((current)=>current.map((section)=>section.id===item.id?{...section,enabled:event.target.checked}:section))}/> Activa</label><span><b>{item.anchorLabel ?? item.type}</b><input aria-label={`Título de ${item.type}`} value={item.title ?? ""} placeholder="Título personalizado" onChange={(event)=>setSections((current)=>current.map((section)=>section.id===item.id?{...section,title:event.target.value}:section))}/></span><div><button onClick={()=>move(index,-1)} disabled={index===0} aria-label={`Subir ${item.type}`}>↑</button><button onClick={()=>move(index,1)} disabled={index===sections.length-1} aria-label={`Bajar ${item.type}`}>↓</button></div></article>)}</div>:<p>Este viaje usa la estructura predeterminada. Selecciona uno de los viajes demo configurados.</p>}
+      {selected?.itinerarySettings && <fieldset><legend>Itinerario</legend><label>Modo inicial<select value={selected.itinerarySettings.displayMode} onChange={()=>act("El modo se conserva en estado demo durante esta vista.")}><option value="all_open">Todos abiertos</option><option value="first_open">Primer día abierto</option><option value="all_closed">Todos cerrados</option></select></label><label>Video<input defaultValue={selected.videoContent?.url} placeholder="URL segura de video" /></label><label>Documento<input defaultValue={selected.itineraryDownload?.fileUrl} placeholder="/documents/itinerario.pdf" /></label><label><input type="checkbox" defaultChecked={selected.itineraryDownload?.requireLeadForm}/> Solicitar nombre y WhatsApp</label></fieldset>}
+      <button className="primary" onClick={()=>act("Configuración guardada en la demostración local.")}>Guardar configuración demo</button>
+    </section>
   );
 }
 function Dashboard({ agency, own }: { agency: Agency; own: TravelProduct[] }) {
