@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { agencies, departurePoints, travels } from "../data/demo/index";
 import { filterCatalog } from "../lib/catalog/index";
+import { EXPLORER_BOOKING_COLORS, EXPLORER_SLIDER_LABELS, EXPLORER_STICKY_METRICS, explorerAdultRateOccupancy, explorerBookingMessage, explorerBookingOccupancy, explorerSlideIndex, explorerVisibleRateOccupancies } from "../lib/explorer/index";
 import { confirmBoardingPoint, formatMoney, priceLine, priceLinePending, validateCart } from "../lib/pricing/index";
 import { normalizeHostname, resolveTenant, resolveTheme } from "../lib/tenancy/index";
 import { whatsappUrl } from "../lib/whatsapp/index";
@@ -109,4 +110,54 @@ test("el resumen de confirmación conserva punto, hora y dirección",()=>{
   assert.ok(priced.boarding.pointName);
   assert.ok(priced.boarding.meetingTime);
   assert.ok(priced.boarding.reference??priced.boarding.address);
+});
+
+test("slider móvil cambia de slide y conserva navegación circular",()=>{
+  assert.equal(explorerSlideIndex(0,1,4),1);
+  assert.equal(explorerSlideIndex(3,1,4),0);
+  assert.equal(explorerSlideIndex(0,-1,4),3);
+});
+test("controles del slider tienen nombres accesibles",()=>{
+  assert.equal(EXPLORER_SLIDER_LABELS.previous,"Viaje anterior");
+  assert.equal(EXPLORER_SLIDER_LABELS.next,"Viaje siguiente");
+});
+test("viaje sin hospedaje no requiere ni guarda ocupación",()=>{
+  const trip=travels.find(item=>item.agencyId===agencies[0].id&&item.accommodationMode==="none")!;
+  assert.equal(explorerAdultRateOccupancy(trip,2),"general");
+  assert.equal(explorerBookingOccupancy(trip,2),undefined);
+});
+test("WhatsApp omite base para viaje sin hospedaje",()=>{
+  const trip=travels.find(item=>item.agencyId===agencies[0].id&&item.accommodationMode==="none")!;
+  const message=explorerBookingMessage({agencyName:agencies[0].name,trip,departureLabel:"9 de agosto",adults:2,children:1,occupancyLabel:"Doble",totalLabel:"$3,000 MXN",depositLabel:"$900 MXN",url:"https://travel.fu.land/demo"});
+  assert.doesNotMatch(message,/Base de ocupación/);
+});
+test("viaje con hospedaje conserva base automática",()=>{
+  const trip=travels.find(item=>item.agencyId===agencies[0].id&&item.accommodationMode==="hotel_occupancy")!;
+  assert.equal(explorerBookingOccupancy(trip,1),"single");
+  assert.equal(explorerBookingOccupancy(trip,2),"double");
+  assert.equal(explorerBookingOccupancy(trip,3),"triple");
+  assert.equal(explorerBookingOccupancy(trip,4),"quadruple");
+});
+test("tarifas de un día muestran categorías de viajero",()=>{
+  const trip=travels.find(item=>item.agencyId===agencies[0].id&&item.accommodationMode==="none")!;
+  assert.deepEqual([...explorerVisibleRateOccupancies(trip)],["general","child","infant"]);
+  assert.ok(trip.pricingOptions.some(rate=>rate.occupancy==="general"));
+  assert.ok(!trip.pricingOptions.some(rate=>["single","double","triple","quadruple"].includes(rate.occupancy)));
+});
+test("total de viaje de un día usa tarifas adulto y menor",()=>{
+  const trip=travels.find(item=>item.agencyId===agencies[0].id&&item.accommodationMode==="none")!;
+  const departure=trip.departures[0];
+  const adult=trip.pricingOptions.find(rate=>rate.occupancy==="general")!;
+  const child=trip.pricingOptions.find(rate=>rate.occupancy==="child")!;
+  const adultPrice=priceLinePending({id:"day-adult",agencyId:trip.agencyId,travelId:trip.id,departureId:departure.id,boardingOptionId:null,pricingOptionId:adult.id,travelers:2,extraIds:[]});
+  const childPrice=priceLinePending({id:"day-child",agencyId:trip.agencyId,travelId:trip.id,departureId:departure.id,boardingOptionId:null,pricingOptionId:child.id,travelers:1,extraIds:[]});
+  assert.equal(adultPrice.subtotal+childPrice.subtotal,adult.amount*2+child.amount);
+});
+test("submenú Explorer usa offsets de header documentados",()=>{
+  assert.deepEqual(EXPLORER_STICKY_METRICS,{desktopHeader:88,mobileHeader:68,detailNav:58,anchorGap:16});
+});
+test("panel de reserva conserva contraste semántico",()=>{
+  assert.equal(EXPLORER_BOOKING_COLORS.text,"#ffffff");
+  assert.notEqual(EXPLORER_BOOKING_COLORS.background,EXPLORER_BOOKING_COLORS.text);
+  assert.notEqual(EXPLORER_BOOKING_COLORS.surface,EXPLORER_BOOKING_COLORS.text);
 });

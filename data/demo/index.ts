@@ -61,7 +61,11 @@ const makeDeparture = (travelId:string, idx:number, aid:string, currency:"MXN"|"
 export const travels: TravelProduct[] = catalog.map((row,idx) => {
   const [tenant,title,summary,region,type,transport,days,amount,currency,tags,place,promotion] = row;
   const aid=agencyId(tenant); const id=`trip-${idx+1}`; const cur=currency as "MXN"|"USD";
-  return { id, agencyId:aid, code:`FT-${String(idx+1).padStart(3,"0")}`, slug:title.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[^a-z0-9]+/g,"-").replace(/(^-|-$)/g,""), title, subtitle:summary, summary, description:`Una propuesta original para descubrir ${place} con ritmo equilibrado, acompañamiento y tiempos para disfrutar.`, scope:region==="mexico"?"national":"international", productType:type as TravelProduct["productType"], transportTypes:[transport as TravelProduct["transportTypes"][number]], tags:tags as TravelProduct["tags"], region:region as TravelProduct["region"], countries:[countryBy(region,place)], cities:[place], destinationIds:[`dest-${idx+1}`], categoryIds:[type], durationDays:days, durationNights:Math.max(0,days-1), featuredImage:image(["1501785888041-af3ef285b470","1507525428034-b723cf961d3e","1500530855697-b586d89ba3ee","1528127269322-539801943592"][idx%4]), gallery:[], includes:["Coordinación durante el recorrido","Experiencias indicadas","Asistencia antes de la salida"], excludes:["Gastos personales","Servicios no especificados"], requirements:["Identificación vigente","Llegar 20 minutos antes"], recommendations:["Equipaje ligero","Calzado cómodo"], policies:{ cancellation:"Cambios sujetos a disponibilidad. Política demostrativa.", payment:"El anticipo reserva provisionalmente el lugar.", responsibility:"Los horarios pueden ajustarse por operación." }, itinerary:Array.from({length:Math.min(days,4)},(_,d)=>({day:d+1,title:d?"Exploración y tiempo personal":"Bienvenida y primer encuentro",description:"Actividades organizadas con pausas y orientación local."})), basePrice:{amount,currency:cur,taxesAmount:cur==="USD"&&idx===6?899:Math.round(amount*.08),taxesIncluded:idx%3!==0,taxesLabel:"Impuestos y cargos",depositAmount:cur==="MXN"?Math.min(2000,Math.round(amount*.3)):Math.round(amount*.25),priceType:"per_person",displayFrom:true}, pricingOptions:[{id:`${id}-general`,label:"Adulto / ocupación doble",occupancy:"double",amount,currency:cur,inventoryImpact:1},{id:`${id}-single`,label:"Ocupación sencilla",occupancy:"single",amount:Math.round(amount*1.28),currency:cur,inventoryImpact:1},{id:`${id}-child`,label:"Menor",occupancy:"child",amount:Math.round(amount*.78),currency:cur,inventoryImpact:1}], departures:makeDeparture(id,idx,aid,cur), extras:[{id:`${id}-extra-1`,name:"Protección flexible demo",price:cur==="MXN"?390:45,currency:cur,pricingMode:"per_booking",optional:true,visibility:"hidden"},{id:`${id}-extra-2`,name:"Experiencia gastronómica",price:cur==="MXN"?650:75,currency:cur,pricingMode:"per_person",optional:true,visibility:"booking_step"}], status:"published", featured:idx%2===0, promotion, availabilityDisplayMode:tenant==="furiver"?"hidden":"status_only", depositPolicy:{enabled:true,type:"fixed",fixedAmount:cur==="MXN"?Math.min(2000,Math.round(amount*.3)):Math.round(amount*.25)}, travelerCategories:agencies.find((item)=>item.id===aid)?.settings.travelerCategories, extraVisibility:tenant==="furiver"?"hidden":"booking_step", allowManualOccupancy:false };
+  const accommodationMode: TravelProduct["accommodationMode"] = days === 1 ? "none" : "hotel_occupancy";
+  const pricingOptions: TravelProduct["pricingOptions"] = accommodationMode === "none"
+    ? [{id:`${id}-general`,label:"Adulto",occupancy:"general",amount,currency:cur,inventoryImpact:1},{id:`${id}-child`,label:"Menor",occupancy:"child",amount:Math.round(amount*.78),currency:cur,inventoryImpact:1}]
+    : [{id:`${id}-general`,label:"Adulto / ocupación doble",occupancy:"double",amount,currency:cur,inventoryImpact:1},{id:`${id}-single`,label:"Ocupación sencilla",occupancy:"single",amount:Math.round(amount*1.28),currency:cur,inventoryImpact:1},{id:`${id}-child`,label:"Menor",occupancy:"child",amount:Math.round(amount*.78),currency:cur,inventoryImpact:1}];
+  return { id, agencyId:aid, code:`FT-${String(idx+1).padStart(3,"0")}`, slug:title.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[^a-z0-9]+/g,"-").replace(/(^-|-$)/g,""), title, subtitle:summary, summary, description:`Una propuesta original para descubrir ${place} con ritmo equilibrado, acompañamiento y tiempos para disfrutar.`, scope:region==="mexico"?"national":"international", productType:type as TravelProduct["productType"], transportTypes:[transport as TravelProduct["transportTypes"][number]], tags:tags as TravelProduct["tags"], region:region as TravelProduct["region"], countries:[countryBy(region,place)], cities:[place], destinationIds:[`dest-${idx+1}`], categoryIds:[type], durationDays:days, durationNights:Math.max(0,days-1), accommodationMode, featuredImage:image(["1501785888041-af3ef285b470","1507525428034-b723cf961d3e","1500530855697-b586d89ba3ee","1528127269322-539801943592"][idx%4]), gallery:[], includes:["Coordinación durante el recorrido","Experiencias indicadas","Asistencia antes de la salida"], excludes:["Gastos personales","Servicios no especificados"], requirements:["Identificación vigente","Llegar 20 minutos antes"], recommendations:["Equipaje ligero","Calzado cómodo"], policies:{ cancellation:"Cambios sujetos a disponibilidad. Política demostrativa.", payment:"El anticipo reserva provisionalmente el lugar.", responsibility:"Los horarios pueden ajustarse por operación." }, itinerary:Array.from({length:Math.min(days,4)},(_,d)=>({day:d+1,title:d?"Exploración y tiempo personal":"Bienvenida y primer encuentro",description:"Actividades organizadas con pausas y orientación local."})), basePrice:{amount,currency:cur,taxesAmount:cur==="USD"&&idx===6?899:Math.round(amount*.08),taxesIncluded:idx%3!==0,taxesLabel:"Impuestos y cargos",depositAmount:cur==="MXN"?Math.min(2000,Math.round(amount*.3)):Math.round(amount*.25),priceType:"per_person",displayFrom:true}, pricingOptions, departures:makeDeparture(id,idx,aid,cur), extras:[{id:`${id}-extra-1`,name:"Protección flexible demo",price:cur==="MXN"?390:45,currency:cur,pricingMode:"per_booking",optional:true,visibility:"hidden"},{id:`${id}-extra-2`,name:"Experiencia gastronómica",price:cur==="MXN"?650:75,currency:cur,pricingMode:"per_person",optional:true,visibility:"booking_step"}], status:"published", featured:idx%2===0, promotion, availabilityDisplayMode:tenant==="furiver"?"hidden":"status_only", depositPolicy:{enabled:true,type:"fixed",fixedAmount:cur==="MXN"?Math.min(2000,Math.round(amount*.3)):Math.round(amount*.25)}, travelerCategories:agencies.find((item)=>item.id===aid)?.settings.travelerCategories, extraVisibility:tenant==="furiver"?"hidden":"booking_step", allowManualOccupancy:false };
 });
 
 travels.forEach((travel) => {
@@ -147,6 +151,7 @@ demoExpansion.forEach((spec, offset) => {
     categoryIds: [spec.type],
     durationDays: spec.days,
     durationNights: Math.max(0, spec.days - 2),
+    accommodationMode: spec.days === 1 ? "none" : "hotel_occupancy",
     featuredImage: visualLibrary[spec.image],
     basePrice: {
       amount: spec.amount,
@@ -158,12 +163,18 @@ demoExpansion.forEach((spec, offset) => {
       priceType: "per_person",
       displayFrom: true,
     },
-    pricingOptions: source.pricingOptions.map((price, index) => ({
-      ...price,
-      id: `${id}-rate-${index}`,
-      amount: Math.round(spec.amount * (index === 1 ? 1.28 : index === 2 ? 0.78 : 1)),
-      currency: spec.currency,
-    })),
+    pricingOptions: spec.days === 1
+      ? [
+          { id: `${id}-rate-adult`, label: "Adulto", occupancy: "general", amount: spec.amount, currency: spec.currency, inventoryImpact: 1 },
+          { id: `${id}-rate-child`, label: "Menor", occupancy: "child", amount: Math.round(spec.amount * .78), currency: spec.currency, inventoryImpact: 1 },
+        ]
+      : [
+          { id: `${id}-rate-single`, label: "Base sencilla", occupancy: "single", amount: Math.round(spec.amount * 1.28), currency: spec.currency, inventoryImpact: 1 },
+          { id: `${id}-rate-double`, label: "Base doble", occupancy: "double", amount: spec.amount, currency: spec.currency, inventoryImpact: 1 },
+          { id: `${id}-rate-triple`, label: "Base triple", occupancy: "triple", amount: Math.round(spec.amount * .94), currency: spec.currency, inventoryImpact: 1 },
+          { id: `${id}-rate-quadruple`, label: "Base cuádruple", occupancy: "quadruple", amount: Math.round(spec.amount * .9), currency: spec.currency, inventoryImpact: 1 },
+          { id: `${id}-rate-child`, label: "Menor", occupancy: "child", amount: Math.round(spec.amount * .78), currency: spec.currency, inventoryImpact: 1 },
+        ],
     departures,
     extras: source.extras.map((extra, index) => ({
       ...extra,

@@ -4,6 +4,7 @@ import Image from "next/image";
 import { useEffect, useMemo, useRef, useState, type ComponentType } from "react";
 import { agencies, departurePoints, destinations, travels } from "@/data/demo";
 import { filterCatalog, type CatalogFilters } from "@/lib/catalog";
+import { EXPLORER_SLIDER_LABELS, explorerAdultRateOccupancy, explorerBookingMessage, explorerSlideIndex, explorerVisibleRateOccupancies } from "@/lib/explorer";
 import { formatMoney, priceLine, priceLinePending } from "@/lib/pricing";
 import { resolveTenant, resolveTheme } from "@/lib/tenancy";
 import { whatsappUrl } from "@/lib/whatsapp";
@@ -51,7 +52,6 @@ const available = (trip: TravelProduct) =>
   trip.departures[0];
 const availabilityMode = (agency: Agency, trip: TravelProduct): AvailabilityDisplayMode =>
   trip.availabilityDisplayMode ?? agency.settings.availabilityDisplayMode ?? "status_only";
-const occupancyForAdults = (adults: number) => ({ 1: "single", 2: "double", 3: "triple", 4: "quadruple" }[adults] as "single" | "double" | "triple" | "quadruple" | undefined);
 const occupancyName = (occupancy?: string) => ({ single: "Sencilla", double: "Doble", triple: "Triple", quadruple: "Cuádruple", child: "Menor", infant: "Infante", general: "General" }[occupancy ?? ""] ?? "Por confirmar");
 const depositAmount = (policy: DepositPolicy | undefined, total: number, fallback: number, travelers = 1) => {
   if (!policy?.enabled) return fallback;
@@ -78,7 +78,7 @@ function ExplorerWhatsApp({ agency, trip, hidden = false }: { agency: Agency; tr
   const draftTrip = draft ? travels.find((item) => item.id === draft.travelId && item.agencyId === agency.id) : undefined;
   const draftDeparture = draftTrip?.departures.find((item) => item.id === draft?.departureId);
   const message = draft && draftTrip && draftDeparture
-    ? `Hola ${agency.name}, necesito ayuda con mi reserva de “${draftTrip.title}”.\n\nSalida: ${dateLabel(draftDeparture.startDate, true)}.\nAdultos: ${draft.adults}.${draft.children ? `\nMenores: ${draft.children}.` : ""}\nBase de ocupación: ${occupancyName(draft.occupancy)}.${draft.boarding ? `\nPunto de abordaje: ${draft.boarding.pointName}.${draft.boarding.meetingTime ? `\nHora de reunión: ${draft.boarding.meetingTime}.` : ""}` : "\n¿Me pueden compartir o confirmar los puntos de ascenso disponibles?"}\nTotal: ${explorerPrice(draft.total, draftTrip.basePrice.currency)}.\nAnticipo: ${explorerPrice(draft.deposit, draftTrip.basePrice.currency)}.${draft.folio ? `\nFolio: ${draft.folio}.` : ""}\n\nEnlace:\n${page.url}`
+    ? `Hola ${agency.name}, necesito ayuda con mi reserva de “${draftTrip.title}”.\n\nSalida: ${dateLabel(draftDeparture.startDate, true)}.\nAdultos: ${draft.adults}.${draft.children ? `\nMenores: ${draft.children}.` : ""}${draftTrip.accommodationMode === "hotel_occupancy" && draft.occupancy ? `\nBase de ocupación: ${occupancyName(draft.occupancy)}.` : ""}${draft.boarding ? `\nPunto de abordaje: ${draft.boarding.pointName}.${draft.boarding.meetingTime ? `\nHora de reunión: ${draft.boarding.meetingTime}.` : ""}` : "\n¿Me pueden compartir o confirmar los puntos de ascenso disponibles?"}\nTotal: ${explorerPrice(draft.total, draftTrip.basePrice.currency)}.\nAnticipo: ${explorerPrice(draft.deposit, draftTrip.basePrice.currency)}.${draft.folio ? `\nFolio: ${draft.folio}.` : ""}\n\nEnlace:\n${page.url}`
     : trip
     ? `Hola ${agency.name}, estoy revisando el viaje “${trip.title}” y necesito ayuda para reservar.\n\n¿Me pueden compartir los puntos de ascenso disponibles?\n\nEnlace:\n${page.url}`
     : `Hola ${agency.name}, acabo de visitar la página “${page.title}” y necesito ayuda para reservar.\n\n${settings.defaultMessage ? `${settings.defaultMessage}\n\n` : ""}Aquí está el enlace que visité:\n${page.url}`;
@@ -328,10 +328,16 @@ function ExplorerHome({ agency, trips, onOpen, onNavigate }: HomeProps) {
   const [slide, setSlide] = useState(0);
   const [paused, setPaused] = useState(false);
   const touchStart = useRef<number | null>(null);
+  const resumeTimer = useRef<number | null>(null);
   const active = slides[slide];
   const departure = available(active);
-  const next = () => { setPaused(true); setSlide((current) => (current + 1) % slides.length); };
-  const previous = () => { setPaused(true); setSlide((current) => (current - 1 + slides.length) % slides.length); };
+  const pauseTemporarily = () => {
+    setPaused(true);
+    if (resumeTimer.current) window.clearTimeout(resumeTimer.current);
+    resumeTimer.current = window.setTimeout(() => setPaused(false), 9000);
+  };
+  const next = () => { pauseTemporarily(); setSlide((current) => explorerSlideIndex(current, 1, slides.length)); };
+  const previous = () => { pauseTemporarily(); setSlide((current) => explorerSlideIndex(current, -1, slides.length)); };
   useEffect(() => {
     if (paused || matchMedia("(prefers-reduced-motion: reduce)").matches) return;
     const timer = window.setInterval(() => {
@@ -339,6 +345,7 @@ function ExplorerHome({ agency, trips, onOpen, onNavigate }: HomeProps) {
     }, 7000);
     return () => window.clearInterval(timer);
   }, [paused, slides.length]);
+  useEffect(() => () => { if (resumeTimer.current) window.clearTimeout(resumeTimer.current); }, []);
   const categories = [
     ["Fin de semana", "Escapadas breves", "/images/destination-town.webp"],
     ["Pueblos mágicos", "Calles con historia", "/images/destination-europe.webp"],
@@ -360,7 +367,7 @@ function ExplorerHome({ agency, trips, onOpen, onNavigate }: HomeProps) {
         onFocusCapture={() => setPaused(true)}
         onBlurCapture={() => setPaused(false)}
         onKeyDown={(event) => { if (event.key === "ArrowRight") next(); if (event.key === "ArrowLeft") previous(); }}
-        onTouchStart={(event) => { touchStart.current = event.touches[0]?.clientX ?? null; setPaused(true); }}
+        onTouchStart={(event) => { touchStart.current = event.touches[0]?.clientX ?? null; pauseTemporarily(); }}
         onTouchEnd={(event) => { const end = event.changedTouches[0]?.clientX; if (touchStart.current !== null && end !== undefined && Math.abs(end - touchStart.current) > 45) { if (end < touchStart.current) next(); else previous(); } touchStart.current = null; }}
       >
         <Image key={active.id} src={active.featuredImage} alt={`Paisaje de ${active.cities[0]}`} fill priority sizes="100vw" />
@@ -381,10 +388,10 @@ function ExplorerHome({ agency, trips, onOpen, onNavigate }: HomeProps) {
         </aside>
         <div className="explorer-hero-actions"><button onClick={() => onOpen(active)}>Ver más</button><a href={`https://wa.me/${agency.contact.whatsapp}`} target="_blank" rel="noreferrer">Consultar por WhatsApp</a></div>
         <div className="explorer-slider-controls" aria-label="Controles del slider">
-          <button onClick={previous} aria-label="Viaje anterior">←</button>
+          <button onClick={previous} aria-label={EXPLORER_SLIDER_LABELS.previous}>←</button>
           <strong>{String(slide + 1).padStart(2, "0")} <i>/</i> {String(slides.length).padStart(2, "0")}</strong>
-          <div>{slides.map((item, index) => <button key={item.id} className={index === slide ? "active" : ""} onClick={() => { setPaused(true); setSlide(index); }} aria-label={`Mostrar viaje ${index + 1}: ${item.title}`} aria-current={index === slide ? "true" : undefined}><span /></button>)}</div>
-          <button onClick={next} aria-label="Viaje siguiente">→</button>
+          <div>{slides.map((item, index) => <button key={item.id} className={index === slide ? "active" : ""} onClick={() => { pauseTemporarily(); setSlide(index); }} aria-label={`Mostrar viaje ${index + 1}: ${item.title}`} aria-current={index === slide ? "true" : undefined}><span /></button>)}</div>
+          <button onClick={next} aria-label={EXPLORER_SLIDER_LABELS.next}>→</button>
         </div>
         <ExplorerSearch onNavigate={onNavigate} />
       </section>
@@ -640,7 +647,8 @@ function ExplorerBookingPanel({ agency, trip }: { agency: Agency; trip: TravelPr
   const [showMobileBar, setShowMobileBar] = useState(false);
   const sheetRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
-  const occupancy = occupancyForAdults(adults);
+  const requiresOccupancy = trip.accommodationMode === "hotel_occupancy";
+  const occupancy = explorerAdultRateOccupancy(trip, adults);
   const adultRate = trip.pricingOptions.find((item) => item.occupancy === occupancy);
   const childRate = trip.pricingOptions.find((item) => item.occupancy === "child");
   const adultLine: CartLine | undefined = adultRate ? { id: `line-${trip.id}-adultos`, agencyId: agency.id, travelId: trip.id, departureId, boardingOptionId: boardingId, pricingOptionId: adultRate.id, travelers: adults, extraIds: [] } : undefined;
@@ -651,7 +659,7 @@ function ExplorerBookingPanel({ agency, trip }: { agency: Agency; trip: TravelPr
   const total = (pricedAdult?.total ?? 0) + (pricedChild?.total ?? 0);
   const policy = departure.depositPolicy ?? trip.depositPolicy;
   const deposit = depositAmount(policy, total, (trip.basePrice.depositAmount ?? trip.basePrice.amount) * (adults + children), adults + children);
-  const canReserve = Boolean(pricedAdult && occupancy && adults <= 4 && (!children || pricedChild));
+  const canReserve = Boolean(pricedAdult && (!requiresOccupancy || (occupancy && adults <= 4)) && (!children || pricedChild));
   const changeDeparture = (id: string) => {
     setDepartureId(id);
     setBoardingId(null);
@@ -662,10 +670,20 @@ function ExplorerBookingPanel({ agency, trip }: { agency: Agency; trip: TravelPr
     if (existing.length && existing[0].agencyId !== agency.id) { window.alert("El carrito pertenece a otra agencia."); return; }
     const lines = [adultLine, childLine].filter(Boolean) as CartLine[];
     localStorage.setItem("fu-travel-demo-cart", JSON.stringify([...existing.filter((item) => !item.id.startsWith(`line-${trip.id}-`)), ...lines]));
-    localStorage.setItem("fu-travel-booking-draft", JSON.stringify({ travelId: trip.id, departureId, adults, children, occupancy, total, deposit }));
+    localStorage.setItem("fu-travel-booking-draft", JSON.stringify({ travelId: trip.id, departureId, adults, children, ...(requiresOccupancy ? { occupancy } : {}), total, deposit }));
     window.location.assign(`/carrito${window.location.search}`);
   };
-  const bookingMessage = `Hola ${agency.name}, estoy interesado en el viaje “${trip.title}” para la salida del ${dateLabel(departure.startDate, true)}.\n\nSomos ${adults} ${adults === 1 ? "adulto" : "adultos"}${children ? ` y ${children} ${children === 1 ? "menor" : "menores"}` : ""}.\nBase de ocupación: ${occupancyName(occupancy)}.\n\n¿Me pueden compartir los puntos de ascenso disponibles?\n\nTotal estimado: ${explorerPrice(total, trip.basePrice.currency)}\nAnticipo: ${explorerPrice(deposit, trip.basePrice.currency)}\n\nEnlace:\n${mounted ? window.location.href : ""}`;
+  const bookingMessage = explorerBookingMessage({
+    agencyName: agency.name,
+    trip,
+    departureLabel: dateLabel(departure.startDate, true),
+    adults,
+    children,
+    occupancyLabel: occupancy ? occupancyName(occupancy) : undefined,
+    totalLabel: explorerPrice(total, trip.basePrice.currency),
+    depositLabel: explorerPrice(deposit, trip.basePrice.currency),
+    url: mounted ? window.location.href : "",
+  });
   useEffect(() => {
     setMounted(true);
   }, []);
@@ -696,10 +714,10 @@ function ExplorerBookingPanel({ agency, trip }: { agency: Agency; trip: TravelPr
       <header className="explorer-booking-head"><span>{trip.basePrice.displayFrom ? "Precio desde" : "Precio"}</span><strong>{explorerPrice(trip.basePrice.amount, trip.basePrice.currency)}</strong><small>Anticipo estimado: {explorerPrice(deposit, trip.basePrice.currency)}</small></header>
       <label>Fecha<select value={departureId} onChange={(event) => changeDeparture(event.target.value)}>{trip.departures.map((item) => <option key={item.id} value={item.id} disabled={item.saleStatus === "sold_out"}>{dateLabel(item.startDate, true)} · {item.saleStatus === "sold_out" ? "Agotada" : "Programada"}</option>)}</select></label>
       <div className="explorer-traveler-controls">
-        <div><span><b>Adultos</b><small>{trip.travelerCategories?.find((item) => item.pricingRule === "adult")?.minAge ?? 12} años en adelante</small></span><span><button onClick={() => setAdults((value) => Math.max(1, value - 1))} aria-label="Quitar un adulto">−</button><b>{adults}</b><button onClick={() => setAdults((value) => Math.min(5, value + 1))} aria-label="Agregar un adulto">+</button></span></div>
+        <div><span><b>Adultos</b><small>{trip.travelerCategories?.find((item) => item.pricingRule === "adult")?.minAge ?? 12} años en adelante</small></span><span><button onClick={() => setAdults((value) => Math.max(1, value - 1))} aria-label="Quitar un adulto">−</button><b>{adults}</b><button onClick={() => setAdults((value) => Math.min(requiresOccupancy ? 5 : 8, value + 1))} aria-label="Agregar un adulto">+</button></span></div>
         <div><span><b>Menores</b><small>{trip.travelerCategories?.find((item) => item.pricingRule === "child")?.minAge ?? 3} a {trip.travelerCategories?.find((item) => item.pricingRule === "child")?.maxAge ?? 11} años</small></span><span><button onClick={() => setChildren((value) => Math.max(0, value - 1))} aria-label="Quitar un menor">−</button><b>{children}</b><button onClick={() => setChildren((value) => Math.min(4, value + 1))} aria-label="Agregar un menor">+</button></span></div>
       </div>
-      <div className="explorer-occupancy"><span>Base de ocupación</span><strong>{occupancyName(occupancy)}</strong><small>{occupancy ? `Calculada automáticamente para ${adults} ${adults === 1 ? "adulto" : "adultos"}` : "Para 5 adultos se requieren al menos dos habitaciones. Consulta por WhatsApp."}</small></div>
+      {requiresOccupancy && <div className="explorer-occupancy"><span>Base de ocupación</span><strong>{occupancyName(occupancy)}</strong><small>{occupancy ? `Calculada automáticamente para ${adults} ${adults === 1 ? "adulto" : "adultos"}` : "Para 5 adultos se requieren al menos dos habitaciones. Consulta por WhatsApp."}</small></div>}
       <div className="explorer-booking-total"><strong><span>Total</span><b>{canReserve ? explorerPrice(total, trip.basePrice.currency) : "Por confirmar"}</b></strong><small>{trip.basePrice.taxesIncluded ? "Impuestos incluidos" : "Pueden aplicar impuestos adicionales"}</small></div>
       <button className="explorer-booking-add" disabled={!canReserve} onClick={add}>Reservar este viaje</button>
       {mounted && <a className="explorer-booking-wa" href={whatsappLink(agency.settings.whatsapp?.phone ?? agency.contact.whatsapp, bookingMessage)} target="_blank" rel="noreferrer">Consultar por WhatsApp ↗</a>}
@@ -753,7 +771,7 @@ function ExplorerDetail({ agency, trip, onNavigate }: { agency: Agency; trip: Tr
         <section id="programa" className="explorer-program"><span className="section-label">PROGRAMA POR ETAPAS</span><h2>El camino, día a día.</h2>{trip.itinerary.map((day, index)=><details key={day.day} open={index===0}><summary><b>{String(day.day).padStart(2,"0")}</b><span><small>DÍA {day.day}</small>{day.title}</span><i>+</i></summary><div><p>{day.description}</p>{index === 0 && <div className="explorer-program-image"><Image src={trip.featuredImage} alt="" fill sizes="50vw" /></div>}</div></details>)}</section>
         <section id="incluye" className="explorer-includes-refined"><div><h2>Incluye</h2>{trip.includes.map((item)=><p key={item}><i>✓</i>{item}</p>)}</div><div><h2>No incluye</h2>{trip.excludes.map((item)=><p key={item}><i>×</i>{item}</p>)}</div></section>
         <section id="salidas" className="explorer-departures-refined"><span className="section-label">FECHAS DISPONIBLES</span><h2>Elige cuándo partir.</h2>{trip.departures.map((item)=><div key={item.id}><time>{dateLabel(item.startDate,true)}</time><span>Desde {explorerPrice(item.priceOverride?.amount ?? trip.basePrice.amount, item.priceOverride?.currency ?? trip.basePrice.currency)}</span>{mode === "remaining_places" && <small>{item.availableSpaces} lugares disponibles</small>}<b>{item.saleStatus==="sold_out"?"Agotada":item.saleStatus==="limited"?"Últimos lugares":"Programada"}</b><a href="#reserva">Elegir fecha</a></div>)}</section>
-        <section id="tarifas" className="explorer-rates"><span className="section-label">TARIFAS</span><div className="explorer-rate-grid">{trip.pricingOptions.filter((rate) => ["single","double","triple","quadruple","child"].includes(rate.occupancy)).map((rate)=><div key={rate.id}><span><b>{occupancyName(rate.occupancy)}</b><small>{rate.occupancy === "child" ? "Tarifa para menor según rango de edad" : `Precio por adulto en base ${occupancyName(rate.occupancy).toLowerCase()}`}</small></span><strong>{explorerPrice(rate.amount,rate.currency)}</strong></div>)}</div>{trip.extraVisibility !== "hidden" && trip.extras.some((extra) => extra.optional && extra.price > 0 && extra.visibility !== "hidden") && <><h3>Opcionales durante la reserva</h3><div className="explorer-extra-grid">{trip.extras.filter((extra) => extra.optional && extra.price > 0 && extra.visibility !== "hidden").map((extra)=><div key={extra.id}><span><b>{extra.name}</b><small>Selección opcional</small></span><strong>{explorerPrice(extra.price,extra.currency)}</strong></div>)}</div></>}</section>
+        <section id="tarifas" className="explorer-rates"><span className="section-label">TARIFAS</span><div className={`explorer-rate-grid ${trip.accommodationMode === "none" ? "is-traveler-rates" : ""}`}>{trip.pricingOptions.filter((rate) => explorerVisibleRateOccupancies(trip).includes(rate.occupancy)).map((rate)=><div key={rate.id}><span><b>{rate.occupancy === "general" ? "Adulto" : occupancyName(rate.occupancy)}</b><small>{trip.accommodationMode === "none" ? `Tarifa por ${rate.occupancy === "general" ? "adulto" : occupancyName(rate.occupancy).toLowerCase()}` : rate.occupancy === "child" ? "Tarifa para menor según rango de edad" : `Precio por adulto en base ${occupancyName(rate.occupancy).toLowerCase()}`}</small></span><strong>{explorerPrice(rate.amount,rate.currency)}</strong></div>)}</div>{trip.extraVisibility !== "hidden" && trip.extras.some((extra) => extra.optional && extra.price > 0 && extra.visibility !== "hidden") && <><h3>Opcionales durante la reserva</h3><div className="explorer-extra-grid">{trip.extras.filter((extra) => extra.optional && extra.price > 0 && extra.visibility !== "hidden").map((extra)=><div key={extra.id}><span><b>{extra.name}</b><small>Selección opcional</small></span><strong>{explorerPrice(extra.price,extra.currency)}</strong></div>)}</div></>}</section>
         <section id="políticas" className="explorer-policies"><span className="section-label">ANTES DE PARTIR</span><h2>Políticas y preguntas.</h2>{Object.entries(trip.policies).map(([key,value])=><details key={key}><summary>{key==="cancellation"?"Cambios y cancelaciones":key==="payment"?"Pagos y anticipo":"Responsabilidad de operación"}<i>+</i></summary><p>{value}</p></details>)}{[["¿Cómo recibo la confirmación?","Después de apartar recibirás el resumen de salida y los datos de seguimiento."],["¿Puedo cambiar de punto de abordaje?","Sí, mientras exista capacidad en el punto elegido y antes del cierre operativo."]].map(([question,answer])=><details key={question}><summary>{question}<i>+</i></summary><p>{answer}</p></details>)}</section>
       </article>
       <ExplorerBookingPanel agency={agency} trip={trip} />
