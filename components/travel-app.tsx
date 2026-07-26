@@ -2,10 +2,13 @@
 
 import Image from "next/image";
 import { useEffect, useMemo, useRef, useState, type ComponentType } from "react";
+import type { IconType } from "react-icons";
+import { FaFacebookF, FaInstagram, FaLinkedinIn, FaTiktok, FaWhatsapp, FaXTwitter, FaYoutube } from "react-icons/fa6";
 import { agencies, departurePoints, destinations, travels } from "@/data/demo";
 import { filterCatalog, type CatalogFilters } from "@/lib/catalog";
 import { EXPLORER_SLIDER_LABELS, explorerAdultRateOccupancy, explorerBookingMessage, explorerSlideIndex, explorerVisibleRateOccupancies } from "@/lib/explorer";
 import { formatMoney, priceLine, priceLinePending } from "@/lib/pricing";
+import { getAgencySocialLinks } from "@/lib/social";
 import { resolveTenant, resolveTheme } from "@/lib/tenancy";
 import { whatsappUrl } from "@/lib/whatsapp";
 import type {
@@ -14,6 +17,7 @@ import type {
   BookingBoardingSnapshot,
   CartLine,
   DepositPolicy,
+  SocialNetwork,
   TravelProduct,
   TravelTheme,
 } from "@/types";
@@ -59,6 +63,28 @@ const depositAmount = (policy: DepositPolicy | undefined, total: number, fallbac
   return Math.max(policy.minimumAmount ?? 0, calculated);
 };
 const whatsappLink = (phone: string, message: string) => `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
+const socialIcons: Record<SocialNetwork, IconType> = {
+  facebook: FaFacebookF,
+  instagram: FaInstagram,
+  youtube: FaYoutube,
+  tiktok: FaTiktok,
+  linkedin: FaLinkedinIn,
+  x: FaXTwitter,
+  whatsapp: FaWhatsapp,
+};
+const socialNames: Record<SocialNetwork, string> = { facebook: "Facebook", instagram: "Instagram", youtube: "YouTube", tiktok: "TikTok", linkedin: "LinkedIn", x: "X", whatsapp: "WhatsApp" };
+
+function ExplorerSocialLinks({ agency, placement, drawer = false }: { agency: Agency; placement: "header" | "footer"; drawer?: boolean }) {
+  const links = getAgencySocialLinks(agency, placement);
+  if (!links.length) return null;
+  return <div className={`explorer-social-links ${drawer ? "is-drawer" : ""}`} aria-label={`Redes sociales de ${agency.name}`}>
+    {links.map((link) => {
+      const Icon = socialIcons[link.network];
+      const name = link.label ?? socialNames[link.network];
+      return <a key={link.id} href={link.url} target="_blank" rel="noopener noreferrer" aria-label={`Visitar ${name} de ${agency.name}`} title={name}><Icon aria-hidden="true" focusable="false" /></a>;
+    })}
+  </div>;
+}
 
 function ExplorerWhatsApp({ agency, trip, hidden = false }: { agency: Agency; trip?: TravelProduct; hidden?: boolean }) {
   const [page, setPage] = useState({ title: "", url: "" });
@@ -82,7 +108,7 @@ function ExplorerWhatsApp({ agency, trip, hidden = false }: { agency: Agency; tr
     : trip
     ? `Hola ${agency.name}, estoy revisando el viaje “${trip.title}” y necesito ayuda para reservar.\n\n¿Me pueden compartir los puntos de ascenso disponibles?\n\nEnlace:\n${page.url}`
     : `Hola ${agency.name}, acabo de visitar la página “${page.title}” y necesito ayuda para reservar.\n\n${settings.defaultMessage ? `${settings.defaultMessage}\n\n` : ""}Aquí está el enlace que visité:\n${page.url}`;
-  return <a className="explorer-whatsapp-float" href={whatsappLink(settings.phone, message)} target="_blank" rel="noreferrer" aria-label={`Pedir ayuda por WhatsApp a ${agency.name}`} title="Pedir ayuda por WhatsApp"><span aria-hidden="true">◔</span><b>WhatsApp</b></a>;
+  return <a className="explorer-whatsapp-float" href={whatsappLink(settings.phone, message)} target="_blank" rel="noopener noreferrer" aria-label="Contactar por WhatsApp" title={`Contactar por WhatsApp con ${agency.name}`}><FaWhatsapp aria-hidden="true" focusable="false" /></a>;
 }
 
 function Logo({ agency, light = false }: { agency: Agency; light?: boolean }) {
@@ -139,7 +165,7 @@ function ExplorerHeader({ agency, cartCount, onNavigate }: HeaderProps) {
         ))}
       </nav>
       <div className="explorer-header-actions">
-        <a href={`https://wa.me/${agency.contact.whatsapp}`} target="_blank" rel="noreferrer" aria-label="Consultar por WhatsApp">WA</a>
+        <ExplorerSocialLinks agency={agency} placement="header" />
         <button className="outline-cta" onClick={() => onNavigate("/viajes")}>Explorar viajes ↗</button>
         <button className="v2-cart" onClick={() => onNavigate("/carrito")} aria-label={`Carrito, ${cartCount} viajes`}>Carrito <b>{cartCount}</b></button>
         <button ref={triggerRef} className="v2-menu explorer-menu-trigger" onClick={() => setOpen(true)} aria-expanded={open} aria-controls="explorer-mobile-menu">Menú</button>
@@ -151,6 +177,7 @@ function ExplorerHeader({ agency, cartCount, onNavigate }: HeaderProps) {
           <button onClick={() => go("/carrito")}><small>07</small>Carrito ({cartCount})<span>↗</span></button>
           <a href={`https://wa.me/${agency.contact.whatsapp}`} target="_blank" rel="noreferrer"><small>08</small>WhatsApp<span>↗</span></a>
         </nav>
+        <section className="explorer-drawer-social"><span>Síguenos</span><ExplorerSocialLinks agency={agency} placement="header" drawer /></section>
         <button className="explorer-drawer-feature" onClick={() => go("/viajes/barrancas-del-cobre")}>
           <Image src="/images/destination-canyon.webp" alt="" fill sizes="100vw" />
           <span>RUTA DESTACADA <b>Barrancas del Cobre</b></span>
@@ -496,7 +523,7 @@ function MarketplaceHome({ agency, trips, onOpen, onNavigate }: HomeProps) {
 }
 
 function ExplorerFooter({ agency, onNavigate }: FooterProps) {
-  return <footer className="explorer-footer"><Logo agency={agency} light /><h2>La ruta sigue.</h2><div>{navItems.map((item) => <button key={item} onClick={() => onNavigate(`/${item.toLowerCase()}`)}>{item}</button>)}</div><p>{agency.contact.email} · WhatsApp {agency.contact.whatsapp}</p><small>© 2026 · EXPERIENCIAS DEMO · SIN PAGOS REALES</small></footer>;
+  return <footer className="explorer-footer"><Logo agency={agency} light /><h2>La ruta sigue.</h2><div>{navItems.map((item) => <button key={item} onClick={() => onNavigate(`/${item.toLowerCase()}`)}>{item}</button>)}</div><section className="explorer-footer-social"><span>Síguenos</span><ExplorerSocialLinks agency={agency} placement="footer" /></section><p>{agency.contact.email} · WhatsApp {agency.contact.whatsapp}</p><small>© 2026 · EXPERIENCIAS DEMO · SIN PAGOS REALES</small></footer>;
 }
 function BoutiqueFooter({ agency, onNavigate }: FooterProps) {
   return <footer className="boutique-footer"><span>MAISON VOYAGE</span><h2>El mundo, bien mirado.</h2><div><nav>{navItems.slice(0, 4).map((item) => <button key={item} onClick={() => onNavigate(`/${item.toLowerCase()}`)}>{item}</button>)}</nav><p>Concierge<br />{agency.contact.email}<br />{agency.contact.whatsapp}</p></div><small>Ciudad de México · Viajes diseñados individualmente · Demo 2026</small></footer>;
@@ -660,6 +687,7 @@ function ExplorerBookingPanel({ agency, trip }: { agency: Agency; trip: TravelPr
   const policy = departure.depositPolicy ?? trip.depositPolicy;
   const deposit = depositAmount(policy, total, (trip.basePrice.depositAmount ?? trip.basePrice.amount) * (adults + children), adults + children);
   const canReserve = Boolean(pricedAdult && (!requiresOccupancy || (occupancy && adults <= 4)) && (!children || pricedChild));
+  const mobilePrice = explorerPrice(trip.basePrice.amount, trip.basePrice.currency).replace(/\s+(MXN|USD)$/u, "");
   const changeDeparture = (id: string) => {
     setDepartureId(id);
     setBoardingId(null);
@@ -726,9 +754,9 @@ function ExplorerBookingPanel({ agency, trip }: { agency: Agency; trip: TravelPr
   return <>
     <aside className="explorer-booking-panel" id="reserva">{fields}</aside>
     <div className={`explorer-mobile-booking ${showMobileBar ? "is-visible" : ""}`}>
-      <span><small>{trip.basePrice.displayFrom ? "Desde" : "Precio"}</small><b>{explorerPrice(trip.basePrice.amount, trip.basePrice.currency)}</b></span>
+      <span className="explorer-mobile-booking-price"><small>{trip.basePrice.displayFrom ? "Desde" : "Precio"}</small><b>{mobilePrice} <em>{trip.basePrice.currency}</em></b></span>
       <button ref={triggerRef} onClick={() => setSheet(true)} aria-haspopup="dialog">Reservar</button>
-      {mounted && <a href={whatsappLink(agency.settings.whatsapp?.phone ?? agency.contact.whatsapp, bookingMessage)} target="_blank" rel="noreferrer" aria-label="Consultar por WhatsApp">WA</a>}
+      {mounted && <a href={whatsappLink(agency.settings.whatsapp?.phone ?? agency.contact.whatsapp, bookingMessage)} target="_blank" rel="noopener noreferrer" aria-label="Contactar por WhatsApp" title="Contactar por WhatsApp"><FaWhatsapp aria-hidden="true" focusable="false" /></a>}
     </div>
     {sheet && <div className="explorer-sheet-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setSheet(false)}>
       <div className="explorer-booking-sheet" ref={sheetRef} role="dialog" aria-modal="true" aria-label="Configurar reserva">

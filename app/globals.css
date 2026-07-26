@@ -860,3 +860,216 @@
     grid-template-columns:repeat(2,minmax(0,1fr));
   }
 }
+
+/* Explorer social links, WhatsApp icon and mobile booking contrast. */
+.theme-v2-explorer .explorer-social-links{
+  display:flex;
+  align-items:center;
+  gap:10px;
+}
+.theme-v2-explorer .explorer-social-links a{
+  display:grid;
+  place-items:center;
+  width:40px;
+  height:40px;
+  min-width:40px;
+  border:1px solid rgba(255,255,255,.24);
+  border-radius:50%;
+  color:#f4f5f3;
+  background:rgba(17,20,22,.22);
+  text-decoration:none;
+  transition:color .2s ease,border-color .2s ease,background-color .2s ease,transform .2s ease;
+}
+.theme-v2-explorer .explorer-social-links a svg{
+  width:19px;
+  height:19px;
+}
+.theme-v2-explorer .explorer-social-links a:hover{
+  color:#fff;
+  border-color:var(--explorer-accent);
+  background:var(--explorer-accent);
+  transform:translateY(-1px);
+}
+.theme-v2-explorer .explorer-social-links a:active{
+  transform:translateY(0) scale(.96);
+}
+.theme-v2-explorer .explorer-social-links a:focus-visible{
+  outline:3px solid #fff;
+  outline-offset:3px;
+}
+.theme-v2-explorer .explorer-drawer-social{
+  display:none;
+}
+.theme-v2-explorer .explorer-footer-social{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:24px;
+  margin-top:32px;
+  padding-top:28px;
+  border-top:1px solid rgba(255,255,255,.14);
+}
+.theme-v2-explorer .explorer-footer-social>span{
+  color:#c9d0cd;
+  font-size:13px;
+  font-weight:500;
+  letter-spacing:.12em;
+  text-transform:uppercase;
+}
+.theme-v2-explorer .explorer-footer-social .explorer-social-links{
+  flex-wrap:wrap;
+}
+.theme-v2-explorer .explorer-footer-social .explorer-social-links a{
+  width:44px;
+  height:44px;
+}
+.theme-v2-explorer .explorer-footer-social .explorer-social-links a svg{
+  width:23px;
+  height:23px;
+}
+.theme-v2-explorer .explorer-whatsapp-float{
+  right:22px;
+  bottom:22px;
+  width:58px;
+  min-width:58px;
+  height:58px;
+  padding:0;
+  border-radius:50%;
+  justify-content:center;
+  background:#25d366;
+  color:#fff;
+}
+.theme-v2-explorer .explorer-whatsapp-float svg{
+  width:29px;
+  height:29px;
+}
+.theme-v2-explorer .explorer-whatsapp-float:hover{
+  background:#20bd5b;
+  transform:translateY(-2px);
+}
+.theme-v2-explorer .explorer-whatsapp-float:active{
+  transform:translateY(0) scale(.96);
+}
+
+@media(max-width:1180px) and (min-width:721px){
+  .theme-v2-explorer .explorer-header nav{
+    gap:18px;
+    margin-right:18px;
+  }
+  .theme-v2-explorer .explorer-header-actions{
+    gap:8px;
+  }
+  .theme-v2-explorer .explorer-social-links{
+    gap:6px;
+  }
+  .theme-v2-explorer .explorer-social-links a{
+    width:40px;
+    min-width:40px;
+  }
+}
+
+@media(max-width:720px){
+  .theme-v2-explorer .explorer-header-actions .explorer-social-links{
+    display:none;
+  }
+  .theme-v2-explorer .explorer-drawer-social{
+    display:block;
+    margin:4px 20px 18px;
+    padding:18px 0;
+    border-top:1px solid rgba(255,255,255,.14);
+    border-bottom:1px solid rgba(255,255,255,.14);
+  }
+  .theme-v2-explorer .explorer-drawer-social>span{
+    display:block;
+    margin-bottom:12px;
+    color:#c9d0cd;
+    font-size:13px;
+    font-weight:500;
+    letter-spacing:.12em;
+    text-transform:uppercase;
+  }
+  .theme-v2-explorer .explorer-drawer-social .explorer-social-links{
+    display:flex;
+    flex-wrap:wrap;
+    gap:10px;
+  }
+  .theme-v2-explorer .explorer-drawer-social .explorer-social-links a{
+    width:46px;
+    height:46px;
+  }
+  .theme-v2-explorer .explorer-drawer-social .explorer-social-links a svg{
+    width:24px;
+    height:24px;
+  }
+  .theme-v2-explorer .explorer-mobile-booking{
+    color:#fff;
+    background:#111416;
+  }
+  .theme-v2-explorer .explorer-mobile-booking-price{
+    min-width:0;
+    color:#fff;
+  }
+  .theme-v2-explorer .explorer-mobile-booking-price small{
+    color:#c9cdd1;
+    font-size:12px;
+    line-height:1.2;
+  }
+  .theme-v2-explorer .explorer-mobile-booking-price b{
+    color:#fff;
+    font-size:clamp(1.1rem,5vw,1.45rem);
+    font-weight:500;
+    line-height:1;
+    white-space:nowrap;
+  }
+  .theme-v2-explorer .explorer-mobile-booking-price em{
+    display:inline;
+    color:#e5e7e9;
+    font-size:.72em;
+    font-style:normal;
+    font-weight:500;
+  }
+  .theme-v2-explorer .explorer-mobile-booking>a{
+    width:48px;
+    min-width:48px;
+    color:#fff;
+    background:#25d366;
+    border:0;
+    border-radius:50%;
+  }
+  .theme-v2-explorer .explorer-mobile-booking>a svg{
+    width:25px;
+    height:25px;
+  }
+  .theme-v2-explorer .explorer-mobile-booking>a:hover{
+    background:#20bd5b;
+  }
+  .theme-v2-explorer .explorer-mobile-booking>a:focus-visible{
+    outline:3px solid #fff;
+    outline-offset:2px;
+  }
+  .theme-v2-explorer .explorer-whatsapp-float{
+    right:14px;
+    bottom:calc(18px + env(safe-area-inset-bottom));
+    width:54px;
+    min-width:54px;
+    height:54px;
+  }
+  .theme-v2-explorer .explorer-whatsapp-float svg{
+    width:28px;
+    height:28px;
+  }
+  .theme-v2-explorer:has(.explorer-mobile-booking.is-visible) .explorer-whatsapp-float{
+    bottom:calc(88px + env(safe-area-inset-bottom));
+  }
+  .theme-v2-explorer .explorer-sheet-scroll .explorer-booking-head strong,
+  .theme-v2-explorer .explorer-sheet-scroll .explorer-booking-head small,
+  .theme-v2-explorer .explorer-sheet-scroll .explorer-booking-total strong,
+  .theme-v2-explorer .explorer-sheet-scroll .explorer-booking-total b{
+    color:#fff;
+  }
+  .theme-v2-explorer .explorer-footer-social{
+    align-items:flex-start;
+    flex-direction:column;
+    gap:14px;
+  }
+}

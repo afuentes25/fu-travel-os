@@ -16,10 +16,13 @@ export type AccommodationMode = "none" | "hotel_occupancy" | "custom";
 export type DepositPolicy = { enabled: boolean; type: "percentage" | "fixed"; percentage?: number; fixedAmount?: number; minimumAmount?: number; dueDate?: string };
 export type TravelerCategory = { id: string; label: string; minAge?: number; maxAge?: number; pricingRule: "adult" | "child" | "infant" | "custom"; active: boolean; order: number };
 export type AgencyWhatsAppSettings = { enabled: boolean; phone: string; defaultMessage?: string; showOnMobile?: boolean; showOnDesktop?: boolean };
+export type SocialNetwork = "facebook" | "instagram" | "youtube" | "tiktok" | "linkedin" | "x" | "whatsapp";
+export type AgencySocialLink = { id: string; network: SocialNetwork; url: string; enabled: boolean; label?: string; order: number; showInHeader: boolean; showInFooter: boolean };
+export type AgencySocialSettings = { links: AgencySocialLink[] };
 
 export type AgencyContact = { whatsapp: string; email: string; phone?: string; instagram?: string; facebook?: string };
 export type AgencyBranding = { logoText: string; primaryColor: string; accentColor: string; heroImage: string; heroTitle: string; heroDescription: string; buttonStyle: "rounded" | "square" | "pill" };
-export type AgencySettings = { visibleSections: string[]; modules: string[]; legalNotice: string; whatsapp?: AgencyWhatsAppSettings; availabilityDisplayMode?: AvailabilityDisplayMode; travelerCategories?: TravelerCategory[]; extraVisibility?: ExtraVisibility };
+export type AgencySettings = { visibleSections: string[]; modules: string[]; legalNotice: string; whatsapp?: AgencyWhatsAppSettings; socialSettings?: AgencySocialSettings; availabilityDisplayMode?: AvailabilityDisplayMode; travelerCategories?: TravelerCategory[]; extraVisibility?: ExtraVisibility };
 export type Agency = { id: string; slug: string; name: string; legalName?: string; status: AgencyStatus; theme: TravelTheme; plan: AgencyPlan; currency: Currency; timezone: string; locale: string; contact: AgencyContact; branding: AgencyBranding; settings: AgencySettings };
 export type AgencyDomain = { id: string; agencyId: string; hostname: string; type: "subdomain" | "custom_domain"; isPrimary: boolean; status: "pending" | "verified" | "active" };
 export type TravelDestination = { id: string; agencyId: string; slug: string; name: string; region: TravelRegion; country: string; state?: string; city?: string; summary: string; description: string; featuredImage: string; gallery: string[]; featured: boolean; status: "draft" | "published" | "archived" };

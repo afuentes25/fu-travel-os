@@ -4,6 +4,7 @@ import { agencies, departurePoints, travels } from "../data/demo/index";
 import { filterCatalog } from "../lib/catalog/index";
 import { EXPLORER_BOOKING_COLORS, EXPLORER_SLIDER_LABELS, EXPLORER_STICKY_METRICS, explorerAdultRateOccupancy, explorerBookingMessage, explorerBookingOccupancy, explorerSlideIndex, explorerVisibleRateOccupancies } from "../lib/explorer/index";
 import { confirmBoardingPoint, formatMoney, priceLine, priceLinePending, validateCart } from "../lib/pricing/index";
+import { getAgencySocialLinks, isValidSocialUrl } from "../lib/social/index";
 import { normalizeHostname, resolveTenant, resolveTheme } from "../lib/tenancy/index";
 import { whatsappUrl } from "../lib/whatsapp/index";
 import type { CartLine } from "../types/index";
@@ -160,4 +161,21 @@ test("panel de reserva conserva contraste semántico",()=>{
   assert.equal(EXPLORER_BOOKING_COLORS.text,"#ffffff");
   assert.notEqual(EXPLORER_BOOKING_COLORS.background,EXPLORER_BOOKING_COLORS.text);
   assert.notEqual(EXPLORER_BOOKING_COLORS.surface,EXPLORER_BOOKING_COLORS.text);
+});
+test("redes sociales solo aceptan URLs HTTPS válidas",()=>{
+  assert.equal(isValidSocialUrl("https://social.example/furiver"),true);
+  assert.equal(isValidSocialUrl("http://social.example/furiver"),false);
+  assert.equal(isValidSocialUrl("javascript:alert(1)"),false);
+  assert.equal(isValidSocialUrl("perfil-sin-protocolo"),false);
+});
+test("redes Explorer respetan activación, orden y ubicación",()=>{
+  const furiver=agencies.find(item=>item.slug==="furiver")!;
+  assert.deepEqual(getAgencySocialLinks(furiver,"header").map(link=>link.network),["facebook","instagram"]);
+  assert.deepEqual(getAgencySocialLinks(furiver,"footer").map(link=>link.network),["facebook","instagram","youtube"]);
+  assert.ok(getAgencySocialLinks(furiver,"footer").every(link=>link.enabled));
+});
+test("agencia sin redes no renderiza enlaces sociales",()=>{
+  const boutique=agencies.find(item=>item.slug==="boutique")!;
+  assert.deepEqual(getAgencySocialLinks(boutique,"header"),[]);
+  assert.deepEqual(getAgencySocialLinks(boutique,"footer"),[]);
 });
