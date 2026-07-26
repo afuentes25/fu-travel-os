@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import { agencies, departurePoints, travels } from "../data/demo/index";
 import { filterCatalog } from "../lib/catalog/index";
 import { EXPLORER_BOOKING_COLORS, EXPLORER_SLIDER_LABELS, EXPLORER_STICKY_METRICS, explorerAdultRateOccupancy, explorerBookingMessage, explorerBookingOccupancy, explorerSlideIndex, explorerVisibleRateOccupancies } from "../lib/explorer/index";
-import { confirmBoardingPoint, formatMoney, priceLine, priceLinePending, validateCart } from "../lib/pricing/index";
+import { confirmBoardingPoint, formatMoney, priceLine, priceLinePending, validateCart, validateCartRoomCapacity } from "../lib/pricing/index";
+import { DEFAULT_ROOM_CAPACITY_POLICY, getRoomCapacity, resolveRoomCapacityPolicy, validateRoomCapacity } from "../lib/room-capacity/index";
 import { getAgencySocialLinks, isValidSocialUrl } from "../lib/social/index";
 import { normalizeHostname, resolveTenant, resolveTheme } from "../lib/tenancy/index";
 import { whatsappUrl } from "../lib/whatsapp/index";
@@ -161,6 +162,74 @@ test("panel de reserva conserva contraste semántico",()=>{
   assert.equal(EXPLORER_BOOKING_COLORS.text,"#ffffff");
   assert.notEqual(EXPLORER_BOOKING_COLORS.background,EXPLORER_BOOKING_COLORS.text);
   assert.notEqual(EXPLORER_BOOKING_COLORS.surface,EXPLORER_BOOKING_COLORS.text);
+});
+test("capacidad de habitación usa fallback global de 4",()=>{
+  assert.equal(DEFAULT_ROOM_CAPACITY_POLICY.defaultMaxGuestsPerRoom,4);
+  assert.equal(getRoomCapacity({}),4);
+});
+test("capacidad respeta prioridad agencia, viaje y tarifa",()=>{
+  assert.equal(getRoomCapacity({agencyMax:5}),5);
+  assert.equal(getRoomCapacity({agencyMax:5,tripMax:3}),3);
+  assert.equal(getRoomCapacity({agencyMax:5,tripMax:3,rateMax:2}),2);
+});
+test("Furiver configura capacidad por agencia",()=>{
+  const furiver=agencies.find(item=>item.slug==="furiver")!;
+  assert.equal(furiver.settings.roomCapacityPolicy?.defaultMaxGuestsPerRoom,4);
+  assert.equal(furiver.settings.roomCapacityPolicy?.allowMultipleRooms,false);
+});
+test("override por viaje y tarifa se resuelve sin alterar la agencia",()=>{
+  const agency=agencies.find(item=>item.slug==="furiver")!;
+  const trip=travels.find(item=>item.agencyId===agency.id&&item.accommodationMode==="hotel_occupancy")!;
+  const policy=resolveRoomCapacityPolicy(agency,{...trip,roomCapacityPolicy:{...DEFAULT_ROOM_CAPACITY_POLICY,defaultMaxGuestsPerRoom:3}},{...trip.pricingOptions[0],maxGuestsPerRoom:2});
+  assert.equal(policy.defaultMaxGuestsPerRoom,2);
+  assert.equal(agency.settings.roomCapacityPolicy?.defaultMaxGuestsPerRoom,4);
+});
+test("2 adultos y 2 menores caben; 2 adultos y 3 menores exceden",()=>{
+  assert.equal(validateRoomCapacity({adults:2,minors:2,maxGuestsPerRoom:4,minorCountsTowardCapacity:true,infantCountsTowardCapacity:false}).valid,true);
+  const invalid=validateRoomCapacity({adults:2,minors:3,maxGuestsPerRoom:4,minorCountsTowardCapacity:true,infantCountsTowardCapacity:false});
+  assert.equal(invalid.valid,false);
+  assert.equal(invalid.excessGuests,1);
+});
+test("menores cuentan para capacidad pero no cambian la base",()=>{
+  const trip=travels.find(item=>item.agencyId===agencies[0].id&&item.accommodationMode==="hotel_occupancy")!;
+  assert.equal(explorerBookingOccupancy(trip,1),"single");
+  assert.equal(validateRoomCapacity({adults:1,minors:3,maxGuestsPerRoom:4,minorCountsTowardCapacity:true,infantCountsTowardCapacity:false}).valid,true);
+  assert.equal(explorerBookingOccupancy(trip,3),"triple");
+  assert.equal(validateRoomCapacity({adults:3,minors:1,maxGuestsPerRoom:4,minorCountsTowardCapacity:true,infantCountsTowardCapacity:false}).valid,true);
+  assert.equal(validateRoomCapacity({adults:4,minors:1,maxGuestsPerRoom:4,minorCountsTowardCapacity:true,infantCountsTowardCapacity:false}).valid,false);
+});
+test("viajes sin hospedaje ignoran la capacidad en carrito",()=>{
+  const trip=travels.find(item=>item.agencyId===agencies[0].id&&item.accommodationMode==="none")!;
+  const rate=trip.pricingOptions.find(item=>item.occupancy==="general")!;
+  const line:CartLine={id:"day-many",agencyId:trip.agencyId,travelId:trip.id,departureId:trip.departures[0].id,boardingOptionId:null,pricingOptionId:rate.id,travelers:7,extraIds:[]};
+  assert.doesNotThrow(()=>validateCartRoomCapacity([line]));
+});
+const hotelCapacityLines=(children:number):CartLine[]=>{
+  const trip=travels.find(item=>item.agencyId===agencies[0].id&&item.accommodationMode==="hotel_occupancy"&&item.pricingOptions.some(rate=>rate.occupancy==="double")&&item.pricingOptions.some(rate=>rate.occupancy==="child"))!;
+  const adult=trip.pricingOptions.find(rate=>rate.occupancy==="double")!;
+  const child=trip.pricingOptions.find(rate=>rate.occupancy==="child")!;
+  return [
+    {id:"hotel-adults",agencyId:trip.agencyId,travelId:trip.id,departureId:trip.departures[0].id,boardingOptionId:null,pricingOptionId:adult.id,travelers:2,extraIds:[]},
+    {id:"hotel-minors",agencyId:trip.agencyId,travelId:trip.id,departureId:trip.departures[0].id,boardingOptionId:null,pricingOptionId:child.id,travelers:children,extraIds:[]},
+  ];
+};
+test("carrito y checkout defensivos rechazan ocupación inválida",()=>{
+  assert.doesNotThrow(()=>validateCartRoomCapacity(hotelCapacityLines(2)));
+  assert.throws(()=>validateCartRoomCapacity(hotelCapacityLines(3)),/excede la capacidad máxima/);
+  assert.throws(()=>validateCart(hotelCapacityLines(3)),/excede la capacidad máxima/);
+});
+test("estado inválido permite bloquear CTA con valores configurados",()=>{
+  const result=validateRoomCapacity({adults:2,minors:3,maxGuestsPerRoom:4,minorCountsTowardCapacity:true,infantCountsTowardCapacity:false});
+  const canReserve=result.valid;
+  assert.equal(canReserve,false);
+  assert.equal(result.totalCountedGuests,5);
+});
+test("WhatsApp solicita más habitaciones cuando se excede capacidad",()=>{
+  const trip=travels.find(item=>item.agencyId===agencies[0].id&&item.accommodationMode==="hotel_occupancy")!;
+  const message=explorerBookingMessage({agencyName:agencies[0].name,trip,departureLabel:"9 de agosto",adults:2,children:3,occupancyLabel:"Doble",totalLabel:"Por confirmar",depositLabel:"Por confirmar",url:"https://travel.fu.land/demo",roomCapacity:{exceeded:true,maxGuestsPerRoom:4,totalGuests:5}});
+  assert.match(message,/Total de personas: 5/);
+  assert.match(message,/Capacidad máxima por habitación: 4/);
+  assert.match(message,/distribución en más habitaciones/);
 });
 test("redes sociales solo aceptan URLs HTTPS válidas",()=>{
   assert.equal(isValidSocialUrl("https://social.example/furiver"),true);

@@ -46,6 +46,7 @@ export function explorerBookingMessage({
   totalLabel,
   depositLabel,
   url,
+  roomCapacity,
 }: {
   agencyName: string;
   trip: TravelProduct;
@@ -56,8 +57,12 @@ export function explorerBookingMessage({
   totalLabel: string;
   depositLabel: string;
   url: string;
+  roomCapacity?: { exceeded: boolean; maxGuestsPerRoom: number; totalGuests: number };
 }) {
   const travelers = `Somos ${adults} ${adults === 1 ? "adulto" : "adultos"}${children ? ` y ${children} ${children === 1 ? "menor" : "menores"}` : ""}.`;
   const occupancy = trip.accommodationMode === "hotel_occupancy" && occupancyLabel ? `\nBase de ocupación: ${occupancyLabel}.` : "";
-  return `Hola ${agencyName}, estoy interesado en el viaje “${trip.title}” para la salida del ${departureLabel}.\n\n${travelers}${occupancy}\n\n¿Me pueden compartir los puntos de ascenso disponibles?\n\nTotal estimado: ${totalLabel}\nAnticipo: ${depositLabel}\n\nEnlace:\n${url}`;
+  const capacity = roomCapacity?.exceeded
+    ? `\nTotal de personas: ${roomCapacity.totalGuests}\nCapacidad máxima por habitación: ${roomCapacity.maxGuestsPerRoom}\n\n¿Me pueden ayudar a cotizar una distribución en más habitaciones?`
+    : "\n¿Me pueden compartir los puntos de ascenso disponibles?";
+  return `Hola ${agencyName}, estoy interesado en el viaje “${trip.title}” para la salida del ${departureLabel}.\n\n${travelers}${occupancy}${capacity}\n\nTotal estimado: ${totalLabel}\nAnticipo: ${depositLabel}\n\nEnlace:\n${url}`;
 }

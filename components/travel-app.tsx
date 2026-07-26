@@ -8,6 +8,7 @@ import { agencies, departurePoints, destinations, travels } from "@/data/demo";
 import { filterCatalog, type CatalogFilters } from "@/lib/catalog";
 import { EXPLORER_SLIDER_LABELS, explorerAdultRateOccupancy, explorerBookingMessage, explorerSlideIndex, explorerVisibleRateOccupancies } from "@/lib/explorer";
 import { formatMoney, priceLine, priceLinePending } from "@/lib/pricing";
+import { resolveRoomCapacityPolicy, validateRoomCapacity } from "@/lib/room-capacity";
 import { getAgencySocialLinks } from "@/lib/social";
 import { resolveTenant, resolveTheme } from "@/lib/tenancy";
 import { whatsappUrl } from "@/lib/whatsapp";
@@ -678,6 +679,10 @@ function ExplorerBookingPanel({ agency, trip }: { agency: Agency; trip: TravelPr
   const occupancy = explorerAdultRateOccupancy(trip, adults);
   const adultRate = trip.pricingOptions.find((item) => item.occupancy === occupancy);
   const childRate = trip.pricingOptions.find((item) => item.occupancy === "child");
+  const roomPolicy = resolveRoomCapacityPolicy(agency, trip, adultRate);
+  const roomCapacity = validateRoomCapacity({ adults, minors: children, maxGuestsPerRoom: roomPolicy.defaultMaxGuestsPerRoom, adultCountsTowardCapacity: roomPolicy.adultCountsTowardCapacity, minorCountsTowardCapacity: roomPolicy.minorCountsTowardCapacity, infantCountsTowardCapacity: roomPolicy.infantCountsTowardCapacity });
+  const roomCapacityApplies = requiresOccupancy && roomPolicy.enabled;
+  const roomCapacityValid = !roomCapacityApplies || roomCapacity.valid;
   const adultLine: CartLine | undefined = adultRate ? { id: `line-${trip.id}-adultos`, agencyId: agency.id, travelId: trip.id, departureId, boardingOptionId: boardingId, pricingOptionId: adultRate.id, travelers: adults, extraIds: [] } : undefined;
   const childLine: CartLine | undefined = children && childRate ? { id: `line-${trip.id}-menores`, agencyId: agency.id, travelId: trip.id, departureId, boardingOptionId: boardingId, pricingOptionId: childRate.id, travelers: children, extraIds: [] } : undefined;
   let pricedAdult: ReturnType<typeof priceLinePending> | undefined;
@@ -686,7 +691,7 @@ function ExplorerBookingPanel({ agency, trip }: { agency: Agency; trip: TravelPr
   const total = (pricedAdult?.total ?? 0) + (pricedChild?.total ?? 0);
   const policy = departure.depositPolicy ?? trip.depositPolicy;
   const deposit = depositAmount(policy, total, (trip.basePrice.depositAmount ?? trip.basePrice.amount) * (adults + children), adults + children);
-  const canReserve = Boolean(pricedAdult && (!requiresOccupancy || (occupancy && adults <= 4)) && (!children || pricedChild));
+  const canReserve = Boolean(pricedAdult && (!requiresOccupancy || (occupancy && adults <= 4)) && (!children || pricedChild) && roomCapacityValid);
   const mobilePrice = explorerPrice(trip.basePrice.amount, trip.basePrice.currency).replace(/\s+(MXN|USD)$/u, "");
   const changeDeparture = (id: string) => {
     setDepartureId(id);
@@ -711,6 +716,7 @@ function ExplorerBookingPanel({ agency, trip }: { agency: Agency; trip: TravelPr
     totalLabel: explorerPrice(total, trip.basePrice.currency),
     depositLabel: explorerPrice(deposit, trip.basePrice.currency),
     url: mounted ? window.location.href : "",
+    roomCapacity: roomCapacityApplies ? { exceeded: !roomCapacity.valid, maxGuestsPerRoom: roomPolicy.defaultMaxGuestsPerRoom, totalGuests: roomCapacity.totalCountedGuests } : undefined,
   });
   useEffect(() => {
     setMounted(true);
@@ -745,9 +751,12 @@ function ExplorerBookingPanel({ agency, trip }: { agency: Agency; trip: TravelPr
         <div><span><b>Adultos</b><small>{trip.travelerCategories?.find((item) => item.pricingRule === "adult")?.minAge ?? 12} años en adelante</small></span><span><button onClick={() => setAdults((value) => Math.max(1, value - 1))} aria-label="Quitar un adulto">−</button><b>{adults}</b><button onClick={() => setAdults((value) => Math.min(requiresOccupancy ? 5 : 8, value + 1))} aria-label="Agregar un adulto">+</button></span></div>
         <div><span><b>Menores</b><small>{trip.travelerCategories?.find((item) => item.pricingRule === "child")?.minAge ?? 3} a {trip.travelerCategories?.find((item) => item.pricingRule === "child")?.maxAge ?? 11} años</small></span><span><button onClick={() => setChildren((value) => Math.max(0, value - 1))} aria-label="Quitar un menor">−</button><b>{children}</b><button onClick={() => setChildren((value) => Math.min(4, value + 1))} aria-label="Agregar un menor">+</button></span></div>
       </div>
+      {roomCapacityApplies && (roomCapacity.valid
+        ? <p className="explorer-room-capacity is-valid"><span aria-hidden="true">✓</span><span>Capacidad máxima por habitación: {roomPolicy.defaultMaxGuestsPerRoom} personas<br /><small>{roomCapacity.totalCountedGuests} de {roomPolicy.defaultMaxGuestsPerRoom} personas por habitación</small></span></p>
+        : <div className="explorer-room-capacity is-invalid" role="alert"><span aria-hidden="true">!</span><span><b>Esta habitación admite hasta {roomPolicy.defaultMaxGuestsPerRoom} personas.</b><small>Seleccionaste {adults} {adults === 1 ? "adulto" : "adultos"} y {children} {children === 1 ? "menor" : "menores"}. Reduce viajeros o solicita una distribución en más habitaciones.</small></span></div>)}
       {requiresOccupancy && <div className="explorer-occupancy"><span>Base de ocupación</span><strong>{occupancyName(occupancy)}</strong><small>{occupancy ? `Calculada automáticamente para ${adults} ${adults === 1 ? "adulto" : "adultos"}` : "Para 5 adultos se requieren al menos dos habitaciones. Consulta por WhatsApp."}</small></div>}
       <div className="explorer-booking-total"><strong><span>Total</span><b>{canReserve ? explorerPrice(total, trip.basePrice.currency) : "Por confirmar"}</b></strong><small>{trip.basePrice.taxesIncluded ? "Impuestos incluidos" : "Pueden aplicar impuestos adicionales"}</small></div>
-      <button className="explorer-booking-add" disabled={!canReserve} onClick={add}>Reservar este viaje</button>
+      <button className="explorer-booking-add" disabled={!canReserve} onClick={add}>{roomCapacityValid ? "Reservar este viaje" : "Ajusta la cantidad de viajeros"}</button>
       {mounted && <a className="explorer-booking-wa" href={whatsappLink(agency.settings.whatsapp?.phone ?? agency.contact.whatsapp, bookingMessage)} target="_blank" rel="noreferrer">Consultar por WhatsApp ↗</a>}
     </>
   );

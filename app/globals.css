@@ -329,7 +329,7 @@
 .theme-v2-explorer .explorer-detail-grid{margin-top:60px;align-items:start}
 .theme-v2-explorer .explorer-detail-grid .explorer-gallery{padding:0 0 70px;background:#fff}
 .theme-v2-explorer .explorer-detail-grid .explorer-gallery header{width:100%}
-.theme-v2-explorer .explorer-booking-panel{top:calc(var(--detail-sticky-offset) - 4px);padding:22px 24px;max-height:calc(100dvh - var(--detail-sticky-offset) - 14px);overflow:visible}
+.theme-v2-explorer .explorer-booking-panel{top:calc(var(--detail-sticky-offset) - 4px);padding:22px 24px;max-height:calc(100dvh - var(--detail-sticky-offset) - 14px);overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin}
 .theme-v2-explorer .explorer-booking-head{padding-bottom:14px}
 .theme-v2-explorer .explorer-booking-head strong{font-size:32px}
 .theme-v2-explorer .explorer-booking-panel>label,.theme-v2-explorer .explorer-sheet-scroll>label{margin:14px 0}
@@ -340,6 +340,15 @@
 .theme-v2-explorer .explorer-traveler-controls small{font-size:12px;color:#9caaa5}
 .theme-v2-explorer .explorer-traveler-controls>div>span:last-child{display:grid;grid-template-columns:38px 26px 38px;align-items:center;text-align:center}
 .theme-v2-explorer .explorer-traveler-controls button{width:38px;height:38px;border:1px solid #ffffff3a;background:#0e171b;color:#fff;font-size:20px}
+.theme-v2-explorer .explorer-room-capacity{display:flex;gap:10px;align-items:flex-start;margin:10px 0;padding:10px 12px;border-radius:10px;font-size:14px;line-height:1.45}
+.theme-v2-explorer .explorer-room-capacity>span:first-child{display:grid;place-items:center;flex:0 0 22px;width:22px;height:22px;border-radius:50%;font-weight:700}
+.theme-v2-explorer .explorer-room-capacity>span:last-child{min-width:0}
+.theme-v2-explorer .explorer-room-capacity b,.theme-v2-explorer .explorer-room-capacity small{display:block;color:inherit;font-size:inherit;line-height:inherit}
+.theme-v2-explorer .explorer-room-capacity.is-valid{background:#ffffff0b;border:1px solid #ffffff20;color:#c9d4cf}
+.theme-v2-explorer .explorer-room-capacity.is-valid>span:first-child{background:#3b7252;color:#fff}
+.theme-v2-explorer .explorer-room-capacity.is-invalid{background:rgba(180,111,69,.16);border:1px solid rgba(180,111,69,.55);color:#ffe3cf}
+.theme-v2-explorer .explorer-room-capacity.is-invalid>span:first-child{background:#b46f45;color:#111416}
+.theme-v2-explorer .explorer-booking-add:disabled{cursor:not-allowed;background:#6f5a4f;color:#e8ddd6;opacity:.9}
 .theme-v2-explorer .explorer-occupancy{background:#0e171b;padding:12px 14px;margin:12px 0}
 .theme-v2-explorer .explorer-occupancy span,.theme-v2-explorer .explorer-occupancy strong,.theme-v2-explorer .explorer-occupancy small{display:block}
 .theme-v2-explorer .explorer-occupancy span{font-size:12px;color:#9caaa5}.theme-v2-explorer .explorer-occupancy strong{font-size:18px;color:#fff}.theme-v2-explorer .explorer-occupancy small{font-size:12px;color:#d5a080;margin-top:2px;line-height:1.35}
@@ -348,6 +357,7 @@
 .theme-v2-explorer .explorer-booking-total small{display:block;margin-top:3px;color:#b8c3bf}
 .theme-v2-explorer .explorer-booking-add{min-height:50px}
 .theme-v2-explorer .explorer-booking-wa{min-height:44px}
+.cart-room-error{margin:0 0 18px;padding:12px 14px;border:1px solid #d7a36d;border-radius:10px;background:#fff3df;color:#6f451f;font-size:15px;line-height:1.5}
 .theme-v2-explorer .explorer-includes-refined{gap:24px}
 .theme-v2-explorer .explorer-includes-refined>div{background:var(--explorer-surface-soft);border:1px solid var(--explorer-border);padding:24px}
 .theme-v2-explorer .explorer-includes-refined h2{font-size:2rem;margin:0 0 14px}
@@ -587,6 +597,22 @@
   align-self:start;
   max-height:calc(100dvh - var(--explorer-header-height-desktop) - var(--explorer-detail-nav-height) - 40px);
   overflow:visible;
+}
+.theme-v2-explorer .explorer-booking-panel:has(.explorer-room-capacity.is-invalid){
+  overflow-y:auto;
+  overscroll-behavior:contain;
+  scrollbar-width:thin;
+}
+.theme-v2-explorer .explorer-booking-panel:has(.explorer-room-capacity.is-invalid) .explorer-booking-total{
+  position:sticky;
+  bottom:50px;
+  z-index:2;
+  box-shadow:0 -10px 20px #172329;
+}
+.theme-v2-explorer .explorer-booking-panel:has(.explorer-room-capacity.is-invalid) .explorer-booking-add{
+  position:sticky;
+  bottom:0;
+  z-index:3;
 }
 .theme-v2-explorer .explorer-rate-grid.is-traveler-rates{
   grid-template-columns:repeat(3,minmax(0,1fr));

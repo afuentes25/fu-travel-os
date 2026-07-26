@@ -1,4 +1,5 @@
-import { departurePoints, travels } from "@/data/demo";
+import { agencies, departurePoints, travels } from "@/data/demo";
+import { resolveRoomCapacityPolicy, validateRoomCapacity } from "@/lib/room-capacity";
 import type { BookingBoardingSnapshot, CartLine, PricedCartLine } from "@/types";
 
 export function formatMoney(amount:number,currency:"MXN"|"USD"){return new Intl.NumberFormat("es-MX",{style:"currency",currency,maximumFractionDigits:0}).format(amount)+" "+currency}
@@ -42,4 +43,25 @@ export function confirmBoardingPoint(line:CartLine,boardingOptionId:string):Cart
   const snapshot:BookingBoardingSnapshot={boardingOptionId:option.id,boardingPointId:point.id,pointName:point.name,address:point.address,reference:point.reference,city:point.city,meetingTime:option.meetingTime,departureTime:option.departureTime,surchargeAmount:option.surchargeAmount??0,surchargeType:option.surchargeType??"per_person",currency:option.currency??travel.basePrice.currency,instructions:option.instructionsOverride??point.instructions};
   return {...line,boardingOptionId:option.id,boardingSnapshot:snapshot};
 }
-export function validateCart(lines:CartLine[]){const priced=lines.map(priceLine);if(new Set(priced.map(x=>x.agencyId)).size>1)throw new Error("No puedes mezclar agencias.");if(new Set(priced.map(x=>x.travel.basePrice.currency)).size>1)throw new Error("No puedes mezclar monedas.");return priced}
+export function validateCartRoomCapacity(lines:CartLine[]){
+  const groups=new Map<string,CartLine[]>();
+  lines.forEach(line=>{const key=`${line.agencyId}:${line.travelId}:${line.departureId}`;groups.set(key,[...(groups.get(key)??[]),line])});
+  groups.forEach(group=>{
+    const first=group[0];
+    const agency=agencies.find(item=>item.id===first.agencyId);
+    const travel=travels.find(item=>item.id===first.travelId&&item.agencyId===first.agencyId);
+    if(!agency||!travel)throw new Error("El viaje no pertenece a la agencia.");
+    if(travel.accommodationMode!=="hotel_occupancy")return;
+    const adultLine=group.find(line=>{const rate=travel.pricingOptions.find(item=>item.id===line.pricingOptionId);return rate&&!["child","infant"].includes(rate.occupancy)});
+    const adultRate=adultLine&&travel.pricingOptions.find(item=>item.id===adultLine.pricingOptionId);
+    const policy=resolveRoomCapacityPolicy(agency,travel,adultRate);
+    if(!policy.enabled)return;
+    const adults=group.filter(line=>{const rate=travel.pricingOptions.find(item=>item.id===line.pricingOptionId);return rate&&!["child","infant"].includes(rate.occupancy)}).reduce((sum,line)=>sum+line.travelers,0);
+    const minors=group.filter(line=>travel.pricingOptions.find(item=>item.id===line.pricingOptionId)?.occupancy==="child").reduce((sum,line)=>sum+line.travelers,0);
+    const infants=group.filter(line=>travel.pricingOptions.find(item=>item.id===line.pricingOptionId)?.occupancy==="infant").reduce((sum,line)=>sum+line.travelers,0);
+    const result=validateRoomCapacity({adults,minors,infants,maxGuestsPerRoom:policy.defaultMaxGuestsPerRoom,adultCountsTowardCapacity:policy.adultCountsTowardCapacity,minorCountsTowardCapacity:policy.minorCountsTowardCapacity,infantCountsTowardCapacity:policy.infantCountsTowardCapacity});
+    if(!result.valid)throw new Error("La cantidad de viajeros excede la capacidad máxima de la habitación.");
+  });
+  return true;
+}
+export function validateCart(lines:CartLine[]){validateCartRoomCapacity(lines);const priced=lines.map(priceLine);if(new Set(priced.map(x=>x.agencyId)).size>1)throw new Error("No puedes mezclar agencias.");if(new Set(priced.map(x=>x.travel.basePrice.currency)).size>1)throw new Error("No puedes mezclar monedas.");return priced}
