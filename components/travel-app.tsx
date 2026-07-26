@@ -69,6 +69,12 @@ import type {
   TripSectionConfig,
 } from "@/types";
 import { TravelApp as LegacyTravelApp } from "./legacy-travel-app";
+import {
+  LavellaCard,
+  LavellaFooter,
+  LavellaHeader,
+  LavellaHome,
+} from "./themes/lavella/lavella-theme";
 
 type OpenTrip = (trip: TravelProduct) => void;
 type HeaderProps = {
@@ -95,6 +101,7 @@ const heroImages: Record<TravelTheme, string> = {
   explorer: "/images/explorer-hero.webp",
   boutique: "/images/boutique-hero.webp",
   marketplace: "/images/marketplace-hero.webp",
+  lavella: "/images/explorer-hero.webp",
 };
 const navItems = ["Viajes", "Destinos", "Promociones", "Nosotros", "Contacto"];
 const currentPath = () =>
@@ -1715,6 +1722,12 @@ const themeRegistry: Record<TravelTheme, ThemeComponents> = {
     Card: MarketplaceCard,
     Footer: MarketplaceFooter,
   },
+  lavella: {
+    Header: LavellaHeader,
+    Home: LavellaHome,
+    Card: LavellaCard,
+    Footer: LavellaFooter,
+  },
 };
 
 function DemoControls({
@@ -1787,6 +1800,7 @@ function DemoControls({
           <option value="explorer">Explorer</option>
           <option value="boutique">Boutique</option>
           <option value="marketplace">Marketplace</option>
+          <option value="lavella">Lavella</option>
         </select>
       </label>
       <label>
@@ -1838,6 +1852,8 @@ function SharedCatalog({
             src={
               theme === "explorer"
                 ? heroImages.explorer
+                : theme === "lavella"
+                  ? heroImages.lavella
                 : heroImages.marketplace
             }
             alt=""
@@ -1850,11 +1866,15 @@ function SharedCatalog({
           <span>
             {theme === "marketplace"
               ? "CATÁLOGO DE PROGRAMAS"
+              : theme === "lavella"
+                ? "VIAJES Y EXPERIENCIAS"
               : "COLECCIÓN DE VIAJES"}
           </span>
           <h1>
             {theme === "explorer"
               ? "Elige tu próxima coordenada."
+              : theme === "lavella"
+                ? "Encuentra una ruta que valga la pena recordar."
               : theme === "boutique"
                 ? "Una colección para viajar distinto."
                 : `${results.length} viajes para comparar`}
@@ -3553,6 +3573,24 @@ function SharedDetail({
           </nav>
         </>
       )}
+      {theme === "lavella" && (
+        <section className="lavella-detail-hero">
+          <Image src={trip.featuredImage} alt="" fill priority sizes="100vw" />
+          <div className="lavella-detail-shade" />
+          <button onClick={() => onNavigate("/viajes")}>← Catálogo</button>
+          <div>
+            <span>{trip.code} · {trip.countries.join(" · ")}</span>
+            <h1>{trip.title}</h1>
+            <p>{trip.subtitle}</p>
+            <div>
+              <small>DESDE</small>
+              <strong>{formatMoney(getTripDisplayStartingPrice({ trip, departure }).amount, trip.basePrice.currency)}</strong>
+              <em>{formatTripDuration(trip.durationDays, trip.durationNights)} · {dateLabel(departure.startDate, true)}</em>
+            </div>
+            <button onClick={() => document.getElementById("reserva")?.scrollIntoView({ behavior: "smooth" })}>Reservar viaje ↗</button>
+          </div>
+        </section>
+      )}
       <div className="v2-detail-layout">
         <article className="v2-detail-story">
           {theme !== "marketplace" && (
@@ -3651,7 +3689,11 @@ function SharedDetail({
           )}
         </article>
         <div id="reserva">
-          <SharedBookingPanel agency={agency} trip={trip} theme={theme} />
+          {theme === "lavella" ? (
+            <ExplorerBookingPanel agency={agency} trip={trip} />
+          ) : (
+            <SharedBookingPanel agency={agency} trip={trip} theme={theme} />
+          )}
         </div>
       </div>
     </main>
@@ -3727,7 +3769,12 @@ export function TravelApp({
   )
     return (
       <>
-        <LegacyTravelApp hostname={hostname} />
+        <LegacyTravelApp
+          hostname={hostname}
+          initialTenant={agency.slug}
+          initialTheme={theme}
+          initialPath={route}
+        />
         {theme === "explorer" &&
           !route.startsWith("/admin") &&
           !route.startsWith("/superadmin") && (

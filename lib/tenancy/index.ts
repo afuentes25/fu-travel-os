@@ -16,5 +16,5 @@ export function resolveTenant(hostname: string, demoTenant?: string | null): Age
   return agencies.find((a) => a.slug === subdomain) ?? agencies[0];
 }
 export function resolveTheme(agency: Agency, requested?: string | null): TravelTheme {
-  return requested === "explorer" || requested === "boutique" || requested === "marketplace" ? requested : agency.theme;
+  return requested === "explorer" || requested === "boutique" || requested === "marketplace" || requested === "lavella" ? requested : agency.theme;
 }

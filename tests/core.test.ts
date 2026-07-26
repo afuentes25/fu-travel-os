@@ -284,9 +284,10 @@ test("mapa de Barrancas conserva días del itinerario", () => {
   const stops = getOrderedRouteStops(barrancasTrip().mapSettings);
   assert.deepEqual([...new Set(stops.map((stop) => stop.dayNumber))], [1, 2, 3, 4, 5]);
 });
-test("Explorer conserva renderer y Lavella queda reservado sin habilitarse", () => {
+test("Lavella queda registrado sin reemplazar el renderer Explorer", () => {
   assert.equal(TRIP_SECTION_RENDERER_KEYS.explorer, "explorer-cinematic");
-  assert.equal("lavella" in TRIP_SECTION_RENDERER_KEYS, false);
+  assert.equal(TRIP_SECTION_RENDERER_KEYS.lavella, "lavella-native");
+  assert.notEqual(TRIP_SECTION_RENDERER_KEYS.lavella, TRIP_SECTION_RENDERER_KEYS.explorer);
 });
 test("configuración de Boutique no se altera por Barrancas", () => {
   const trip = travels.find((item) => item.agencyId === agencies[2].id && item.pageConfiguration)!;
@@ -310,6 +311,10 @@ test("resuelve tenant por hostname, query demo y fallback local", () => {
 });
 test("query válida de tema tiene prioridad", () =>
   assert.equal(resolveTheme(agencies[0], "boutique"), "boutique"));
+test("Lavella es seleccionable y un tema inválido conserva el tema de agencia", () => {
+  assert.equal(resolveTheme(agencies[0], "lavella"), "lavella");
+  assert.equal(resolveTheme(agencies[0], "tema-inexistente"), agencies[0].theme);
+});
 test("catálogo busca, filtra y ordena sin mutar origen", () => {
   const own = travels.filter((t) => t.agencyId === agencies[1].id);
   assert.equal(filterCatalog(own, { q: "Europa" }).length, 1);

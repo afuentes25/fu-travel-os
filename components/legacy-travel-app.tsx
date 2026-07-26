@@ -2095,7 +2095,7 @@ function ThemeManager({
 }) {
   return (
     <div className="theme-grid">
-      {(["explorer", "boutique", "marketplace"] as const).map((t) => (
+      {(["explorer", "boutique", "marketplace", "lavella"] as const).map((t) => (
         <article className={agency.theme === t ? "selected" : ""} key={t}>
           <div className={`theme-preview ${t}`}>
             <i />
@@ -2154,12 +2154,22 @@ function Footer({ agency }: { agency: Agency }) {
     </footer>
   );
 }
-export function TravelApp({ hostname }: { hostname: string }) {
-  const [route, setRoute] = useState("/");
+export function TravelApp({
+  hostname,
+  initialTenant,
+  initialTheme,
+  initialPath = "/",
+}: {
+  hostname: string;
+  initialTenant?: string;
+  initialTheme?: string;
+  initialPath?: string;
+}) {
+  const [route, setRoute] = useState(initialPath);
   const [version, setVersion] = useState(0);
   const params = useMemo(() => qp(), [version]);
-  const agency = resolveTenant(hostname, params.get("tenant"));
-  const theme = resolveTheme(agency, params.get("theme"));
+  const agency = resolveTenant(hostname, params.get("tenant") ?? initialTenant);
+  const theme = resolveTheme(agency, params.get("theme") ?? initialTheme);
   const admin =
     params.get("view") === "admin" ||
     route.startsWith("/admin") ||
@@ -2328,7 +2338,7 @@ export function TravelApp({ hostname }: { hostname: string }) {
   else content = <Home agency={agency} theme={theme} onOpen={open} />;
   return (
     <div
-      className={`app theme-${theme}`}
+      className={`app theme-${theme} ${theme === "lavella" ? "theme-v2-lavella lavella-commerce" : ""}`}
       style={
         {
           "--brand": agency.branding.primaryColor,

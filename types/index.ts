@@ -1,6 +1,5 @@
-export type TravelTheme = "explorer" | "boutique" | "marketplace";
-/** Extensible theme contract. `lavella` is reserved and is not publicly selectable yet. */
-export type ThemeId = TravelTheme | "lavella";
+export type TravelTheme = "explorer" | "boutique" | "marketplace" | "lavella";
+export type ThemeId = TravelTheme;
 export type AgencyPlan = "start" | "commerce" | "growth" | "scale";
 export type AgencyStatus = "draft" | "active" | "suspended";
 export type Currency = "MXN" | "USD";
