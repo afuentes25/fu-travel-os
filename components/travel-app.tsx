@@ -131,7 +131,7 @@ function ExplorerHeader({ agency, cartCount, onNavigate }: HeaderProps) {
   }, [open]);
   const go = (path: string) => { setOpen(false); onNavigate(path); };
   return (
-    <header className={`explorer-header ${scrolled ? "is-scrolled" : ""}`}>
+    <header className={`explorer-header ${scrolled ? "is-scrolled" : ""} ${open ? "is-menu-open" : ""}`}>
       <button onClick={() => onNavigate("/")} aria-label="Inicio"><Logo agency={agency} light /></button>
       <nav aria-label="Navegación principal Explorer">
         {["Viajes", "Próximas salidas", "Destinos", "Promociones", "Nosotros"].map((item) => (
