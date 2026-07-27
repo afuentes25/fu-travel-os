@@ -77,9 +77,71 @@
   color: #3e4559;
 }
 
+.lavella-commerce .fx-cart-summary,
+.lavella-commerce .fx-checkout-disclosure {
+  display: grid;
+  gap: 8px;
+  padding: 16px 18px;
+  border-left: 3px solid #ff7f00;
+  background: #fff8f1;
+  color: #3e4559;
+}
+
+.lavella-commerce .fx-cart-summary span {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.lavella-commerce .fx-cart-summary small,
+.lavella-commerce .fx-checkout-disclosure p {
+  color: #707789;
+  line-height: 1.55;
+}
+
+.lavella-commerce .fx-checkout-disclosure {
+  margin: 18px 0;
+}
+
+.lavella-commerce .fx-checkout-disclosure h3,
+.lavella-commerce .fx-checkout-disclosure p {
+  margin: 0;
+}
+
+.lavella-commerce .fx-checkout-disclosure dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  margin: 4px 0;
+  background: #e6e6e6;
+}
+
+.lavella-commerce .fx-checkout-disclosure dl div {
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+  background: #fff;
+}
+
+.lavella-commerce .fx-checkout-disclosure dt {
+  color: #707789;
+  font-size: 12px;
+}
+
+.lavella-commerce .fx-checkout-disclosure dd {
+  margin: 0;
+  color: #111;
+  font-size: 17px;
+  font-weight: 700;
+}
+
 @media (max-width: 760px) {
   .lavella-commerce .simple-page {
     width: calc(100% - 36px);
     padding: 110px 0 90px;
+  }
+
+  .lavella-commerce .fx-checkout-disclosure dl {
+    grid-template-columns: 1fr;
   }
 }

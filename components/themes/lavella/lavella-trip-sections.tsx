@@ -3,7 +3,7 @@
 import Image from "next/image";
 import { useState } from "react";
 import { FaCheck, FaDownload, FaLocationDot, FaXmark } from "react-icons/fa6";
-import { formatMoney } from "@/lib/pricing";
+import { formatMoney, isDepartureBookable } from "@/lib/pricing";
 import {
   formatTripDuration,
   getEffectiveRateAmount,
@@ -17,7 +17,7 @@ import {
   isSafeDownloadUrl,
   resolveTripSections,
 } from "@/lib/trip-sections";
-import type { TravelProduct } from "@/types";
+import type { TravelProduct, TripSectionType } from "@/types";
 import styles from "./lavella-detail.module.css";
 import { lavellaDate } from "./lavella-utils";
 
@@ -53,14 +53,9 @@ function LavellaItinerary({ trip, sectionId, title }: { trip: TravelProduct; sec
                 <i>+</i>
               </button>
               {open && <div className={styles.itineraryBody}>
-                <p>{day.description}</p>
-                <div className={styles.itineraryMeta}>
-                  {settings?.showTimes && day.startTime && <span><b>Horario</b>{day.startTime}{day.endTime ? ` – ${day.endTime}` : ""}</span>}
-                  {settings?.showStops && day.stops?.length ? <span><b>Paradas</b>{[...day.stops].sort((a,b) => a.order - b.order).map((stop) => stop.name).join(" · ")}</span> : null}
-                  {settings?.showMeals && day.meals?.length ? <span><b>Alimentos</b>{day.meals.join(" · ")}</span> : null}
-                  {settings?.showAccommodation && day.accommodation ? <span><b>Hospedaje</b>{day.accommodation}</span> : null}
-                </div>
-                {settings?.showHighlights && day.highlights?.length ? <ul>{day.highlights.map((highlight) => <li key={highlight}>{highlight}</li>)}</ul> : null}
+                {day.description.split(/\n+/).filter(Boolean).map((paragraph, paragraphIndex) => (
+                  <p key={`${day.id ?? day.day}-paragraph-${paragraphIndex}`}>{paragraph}</p>
+                ))}
                 {settings?.showImages && day.images?.length ? <div className={styles.itineraryImages}>{day.images.slice(0, 3).map((image) => <figure key={image.id}><Image src={image.url} alt={image.alt} fill sizes="240px" /></figure>)}</div> : null}
               </div>}
             </article>
@@ -81,12 +76,18 @@ export function LavellaTripSections({
   trip,
   departureId,
   onDepartureChange,
+  excludeTypes = [],
 }: {
   trip: TravelProduct;
   departureId: string;
   onDepartureChange: (id: string) => void;
+  excludeTypes?: TripSectionType[];
 }) {
-  const sections = resolveTripSections(trip).filter((section) => section.type !== "related_trips");
+  const sections = resolveTripSections(trip).filter(
+    (section) =>
+      section.type !== "related_trips" &&
+      !excludeTypes.includes(section.type),
+  );
   const selected = trip.departures.find((item) => item.id === departureId) ?? trip.departures[0];
   const destinations = getVisitedDestinations(trip.itinerary);
   const video = getSafeVideoPresentation(trip.videoContent);
@@ -104,6 +105,13 @@ export function LavellaTripSections({
               <span><b>{destinations.join(" · ") || trip.cities.join(" · ")}</b><small>Visitando</small></span>
               <span><b>{formatMoney(price.amount, price.currency)}</b><small>{price.label}</small></span>
             </div>
+            {trip.foreignCurrencyPricing?.displayCurrencyMode ===
+              "source_and_estimated_mxn" && (
+              <p className={styles.summaryFxNote}>
+                La tarifa se adeuda en USD. Cada cobro se convierte a MXN con
+                la cotización vigente del intento de pago.
+              </p>
+            )}
           </section>;
         }
         if (section.type === "video" && video) return <section id={section.id} key={section.id}>
@@ -133,8 +141,8 @@ export function LavellaTripSections({
         if (section.type === "departures") return <section id={section.id} key={section.id}>
           <small>FECHAS DISPONIBLES</small><h2>{title}</h2><div className={styles.departures}>{trip.departures.map((item) => {
             const price = getTripDisplayStartingPrice({ trip, departure: item });
-            return <button key={item.id} className={item.id === selected.id ? styles.departureActive : undefined} onClick={() => onDepartureChange(item.id)} disabled={item.saleStatus === "sold_out"}>
-              <time>{lavellaDate(item.startDate, true)}</time><span>Desde {formatMoney(price.amount, price.currency)}</span><b>{item.saleStatus === "sold_out" ? "Agotada" : item.saleStatus === "limited" ? "Últimos lugares" : "Disponible"}</b>
+            return <button key={item.id} className={item.id === selected.id ? styles.departureActive : undefined} onClick={() => onDepartureChange(item.id)} disabled={!isDepartureBookable(item)}>
+              <time>{lavellaDate(item.startDate, true)}</time><span>Desde {formatMoney(price.amount, price.currency)}</span><b>{!isDepartureBookable(item) ? "Finalizada" : item.saleStatus === "limited" ? "Últimos lugares" : "Disponible"}</b>
             </button>;
           })}</div>
         </section>;

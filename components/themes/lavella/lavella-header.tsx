@@ -37,7 +37,10 @@ export function LavellaHeader({
   }, []);
   return (
     <>
-      <header className={`${styles.header} ${solid ? styles.headerSolid : ""}`}>
+      <header
+        className={`${styles.header} ${solid ? styles.headerSolid : ""}`}
+        data-lavella-surface={solid ? "dark" : "image"}
+      >
         <div className={styles.headerInner}>
           <div className={styles.topbar}>
             <div>

@@ -8,7 +8,7 @@ import { lavellaWhatsApp, openLavellaWhatsApp } from "./lavella-utils";
 const topNav = [["Inicio", "/"], ["Viajes", "/viajes"], ["Destinos", "/destinos"], ["Promociones", "/promociones"], ["Contacto", "/contacto"]] as const;
 
 export function LavellaFooter({ agency, onNavigate }: LavellaFooterProps) {
-  return <footer className={styles.footer}>
+  return <footer className={styles.footer} data-lavella-surface="dark">
     <div className={styles.footerTop}>
       <button className={styles.footerLogo} onClick={() => onNavigate("/")}>{agency.branding.logoText.toLowerCase()}</button>
       <nav>{topNav.map(([label, path]) => <button key={path} onClick={() => onNavigate(path)}>{label}</button>)}</nav>

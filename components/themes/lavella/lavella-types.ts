@@ -17,6 +17,7 @@ export type LavellaCardProps = {
   trip: TravelProduct;
   onOpen: LavellaOpenTrip;
   featured?: boolean;
+  variant?: "cinematic" | "classic";
 };
 export type LavellaFooterProps = {
   agency: Agency;

@@ -19,8 +19,37 @@ export const agencies: Agency[] = [
     { id: "furiver-instagram", network: "instagram", url: "https://social.example/furiver/instagram", enabled: true, order: 2, showInHeader: true, showInFooter: true },
     { id: "furiver-youtube", network: "youtube", url: "https://social.example/furiver/youtube", enabled: true, order: 3, showInHeader: false, showInFooter: true },
     { id: "furiver-disabled", network: "tiktok", url: "https://social.example/furiver/tiktok", enabled: false, order: 4, showInHeader: true, showInFooter: true },
-  ] }, availabilityDisplayMode: "hidden", travelerCategories: [{ id: "adult", label: "Adultos", minAge: 12, pricingRule: "adult", active: true, order: 1 }, { id: "child", label: "Menores", minAge: 3, maxAge: 11, pricingRule: "child", active: true, order: 2 }], extraVisibility: "hidden" } },
-  { id: "a-crisenix", slug: "crisenix", name: "Crisenix Demo", status: "active", theme: "marketplace", plan: "scale", currency: "MXN", timezone: "America/Mexico_City", locale: "es-MX", contact: { whatsapp: "525500000202", email: "ventas@crisenix.demo" }, branding: { logoText: "CRISENIX", primaryColor: "#173f86", accentColor: "#f05a3e", heroImage: "/images/marketplace-hero.webp", heroTitle: "Viajes para todos, opciones para comparar", heroDescription: "Catálogo nacional e internacional con fechas, tarifas y disponibilidad.", buttonStyle: "square" }, settings: { visibleSections: ["search", "departures", "categories", "promotions"], modules: ["catalog", "booking", "reports"], legalNotice: "Demo comercial sin inventario ni pagos reales." } },
+  ] }, availabilityDisplayMode: "hidden", travelerCategories: [{ id: "adult", label: "Adultos", minAge: 12, pricingRule: "adult", active: true, order: 1 }, { id: "child", label: "Menores", minAge: 3, maxAge: 11, pricingRule: "child", active: true, order: 2 }], extraVisibility: "hidden", heroSliderSettings: { autoplay: true, autoplayDelayMs: 5000, transitionDurationMs: 650, resumeAfterInteractionMs: 7000 } } },
+  {
+    id: "a-crisenix", slug: "crisenix", name: "Crisenix Demo", status: "active",
+    theme: "marketplace", plan: "scale", currency: "MXN",
+    timezone: "America/Mexico_City", locale: "es-MX",
+    contact: { whatsapp: "525500000202", email: "ventas@crisenix.demo" },
+    branding: {
+      logoText: "CRISENIX", primaryColor: "#173f86", accentColor: "#f05a3e",
+      heroImage: "/images/marketplace-hero.webp",
+      heroTitle: "Viajes para todos, opciones para comparar",
+      heroDescription: "Catálogo nacional e internacional con fechas, tarifas y disponibilidad.",
+      buttonStyle: "square",
+    },
+    settings: {
+      visibleSections: ["search", "departures", "categories", "promotions"],
+      modules: ["catalog", "booking", "reports"],
+      legalNotice: "Demo comercial sin inventario ni pagos reales.",
+      heroSliderSettings: {
+        autoplay: true, autoplayDelayMs: 5000,
+        transitionDurationMs: 650, resumeAfterInteractionMs: 7000,
+      },
+      exchangeRatePolicy: {
+        enabled: true,
+        providerId: "demo-deterministic-v1",
+        quoteTtlSeconds: 900,
+        requireExplicitConsent: true,
+        markup: { type: "percentage", basisPoints: 200 },
+        rounding: { mode: "up", incrementMinor: 100 },
+      },
+    },
+  },
   { id: "a-boutique", slug: "boutique", name: "Maison Voyage Demo", status: "active", theme: "boutique", plan: "commerce", currency: "USD", timezone: "America/Mexico_City", locale: "es-MX", contact: { whatsapp: "525500000303", email: "concierge@maison.demo", instagram: "maison.demo" }, branding: { logoText: "MAISON / VOYAGE", primaryColor: "#3d4536", accentColor: "#a45f47", heroImage: "/images/boutique-hero.webp", heroTitle: "El arte de viajar despacio", heroDescription: "Lunas de miel y experiencias privadas diseñadas con intención.", buttonStyle: "pill" }, settings: { visibleSections: ["story", "featured", "destinations", "testimonials"], modules: ["catalog", "booking", "concierge"], legalNotice: "Experiencias y precios creados exclusivamente para esta demostración." } },
 ];
 export const domains: AgencyDomain[] = [
@@ -35,6 +64,8 @@ export const departurePoints: AgencyDeparturePoint[] = [
   ["p4","a-crisenix","Oceanía","Venustiano Carranza"],
   ["p5","a-crisenix","Naucalpan","Naucalpan"],
   ["p6","a-crisenix","Guelatao","Iztapalapa"],
+  ["p8","a-crisenix","Revolución","Cuauhtémoc"],
+  ["p9","a-crisenix","Aeropuerto por confirmar","Ciudad de México"],
   ["p7","a-boutique","Terminal Ejecutiva","Miguel Hidalgo"],
 ].map(([id,agencyId,name,city]) => ({ id, agencyId, name, city, address: `Punto público de encuentro, zona ${name}`, state: "Ciudad de México", reference: "Ubicación exacta al confirmar", mapUrl: "https://maps.google.com", isActive: true }));
 
@@ -192,6 +223,401 @@ demoExpansion.forEach((spec, offset) => {
   });
 });
 
+type CrisenixSourceSpec = {
+  id: string;
+  slug: string;
+  title: string;
+  summary: string;
+  description: string;
+  sourceUrl: string;
+  cities: string[];
+  durationDays: number;
+  durationNights: number;
+  productType: TravelProduct["productType"];
+  transportTypes: TravelProduct["transportTypes"];
+  accommodationMode: TravelProduct["accommodationMode"];
+  featuredImage: string;
+  dates: string[];
+  pricingOptions: Array<{
+    occupancy: TravelProduct["pricingOptions"][number]["occupancy"];
+    label: string;
+    amount: number;
+    currency: "MXN" | "USD";
+  }>;
+  itinerary: Array<{
+    title: string;
+    description: string;
+    stops: string[];
+  }>;
+  includes: string[];
+  excludes: string[];
+  recommendations: string[];
+  difficulty: "facil" | "moderado";
+  airport?: boolean;
+  preTripSegment?: TravelProduct["preTripSegment"];
+  taxesIncluded?: boolean;
+  foreignCurrencyPricing?: TravelProduct["foreignCurrencyPricing"];
+};
+
+const sourceTripSpecs: CrisenixSourceSpec[] = [
+  {
+    id: "crisenix-muralla-china-mexicana",
+    slug: "muralla-china-mexicana",
+    title: "Muralla China Mexicana",
+    summary: "Una escapada por Xicotepec, la Cruz Celestial y una finca cafetalera de la Huasteca Poblana.",
+    description: "Recorre el Pueblo Mágico de Xicotepec, contempla la sierra desde la Cruz Celestial y conoce una finca donde el café se explica de la tierra a la taza.",
+    sourceUrl: "https://crisenix.com.mx/tour/muralla-china-mexicana/",
+    cities: ["Xicotepec", "Cruz Celestial", "Muralla China Mexicana", "Finca El Paraíso"],
+    durationDays: 1, durationNights: 0, productType: "day_tour",
+    transportTypes: ["ground"], accommodationMode: "none",
+    featuredImage: "/images/destination-town.webp",
+    dates: ["2026-04-25", "2026-09-19"],
+    pricingOptions: [{ occupancy: "general", label: "Tarifa general", amount: 1170, currency: "MXN" }],
+    itinerary: [{
+      title: "Xicotepec, miradores y café de la sierra",
+      description: "Salida desde Ciudad de México hacia Xicotepec, tiempo para conocer el pueblo y ascenso al Mirador de la Cruz Celestial. El recorrido continúa por el tramo panorámico conocido como Muralla China Mexicana y cierra con una visita cafetalera antes del regreso.",
+      stops: ["Ciudad de México", "Xicotepec", "Cruz Celestial", "Muralla China Mexicana", "Finca El Paraíso"],
+    }],
+    includes: ["Transporte terrestre", "Visita al Mirador de la Cruz Celestial", "Visita a Finca Cafetalera El Paraíso", "Coordinación de grupo desde Ciudad de México"],
+    excludes: ["Alimentos y bebidas", "Propinas", "Gastos personales", "Servicios no mencionados"],
+    recommendations: ["Calzado adecuado para caminata", "Chamarra y bloqueador solar", "Efectivo y batería externa"],
+    difficulty: "moderado",
+  },
+  {
+    id: "crisenix-guadalajara-mariachi",
+    slug: "guadalajara-mariachi-y-tradicion",
+    title: "Guadalajara, Mariachi y Tradición",
+    summary: "Historia tapatía, cultura ranchera, tequila y mariachi en una salida de dos días.",
+    description: "Una ruta por el centro de Guadalajara, el Hospicio Cabañas, un rancho emblemático y una hacienda tequilera con degustación y música.",
+    sourceUrl: "https://crisenix.com.mx/tour/guadalajara-guadalajara-mariachi-y-tradicion-en-hacienda-los-3-potrillos/",
+    cities: ["Guadalajara", "Hospicio Cabañas", "Rancho Los 3 Potrillos", "Tequila"],
+    durationDays: 2, durationNights: 1, productType: "short_break",
+    transportTypes: ["ground"], accommodationMode: "hotel_occupancy",
+    featuredImage: "/images/destination-town.webp",
+    dates: ["2026-03-13", "2026-09-11"],
+    pricingOptions: [
+      { occupancy: "single", label: "Base sencilla", amount: 4190, currency: "MXN" },
+      { occupancy: "double", label: "Base doble", amount: 3490, currency: "MXN" },
+      { occupancy: "triple", label: "Base triple", amount: 3340, currency: "MXN" },
+      { occupancy: "quadruple", label: "Base cuádruple", amount: 3190, currency: "MXN" },
+      { occupancy: "child", label: "Menor", amount: 2690, currency: "MXN" },
+    ],
+    preTripSegment: { title: "Traslado nocturno previo", description: "Salida nocturna desde Ciudad de México hacia Guadalajara. Este traslado operativo no incrementa la duración comercial de dos días." },
+    itinerary: [
+      { title: "Guadalajara y tradición ranchera", description: "Recorrido por el centro histórico, la Catedral, el Teatro Degollado y el Hospicio Cabañas. La jornada continúa en el Rancho Los 3 Potrillos antes del registro en el hotel.", stops: ["Guadalajara", "Hospicio Cabañas", "Rancho Los 3 Potrillos"] },
+      { title: "Tequila, hacienda y mariachi", description: "Después del desayuno, visita a Tequila y a una hacienda para conocer el proceso de producción, realizar una degustación y disfrutar mariachi antes del regreso.", stops: ["Tequila", "Hacienda tequilera", "Ciudad de México"] },
+    ],
+    includes: ["Transporte terrestre", "Una noche de hospedaje", "Un desayuno", "Hacienda tequilera con degustación y mariachi", "Acceso al Hospicio Cabañas", "Coordinación desde Ciudad de México"],
+    excludes: ["Alimentos y bebidas no indicados", "Propinas", "Gastos personales", "Servicios no mencionados"],
+    recommendations: ["Calzado cómodo y chamarra", "Bloqueador y agua", "Efectivo y batería externa"],
+    difficulty: "facil",
+  },
+  {
+    id: "crisenix-playas-riscos-veracruz",
+    slug: "playas-y-riscos-de-veracruz",
+    title: "Playas y Riscos de Veracruz",
+    summary: "Los Tuxtlas entre selva, manglares, playas escondidas y riscos frente al Golfo.",
+    description: "Tres días para conocer Catemaco, Nanciyaga, Sontecomapan, Barra de Oro y la costa rocosa de Veracruz.",
+    sourceUrl: "https://crisenix.com.mx/tour/playas-y-riscos-de-veracruz-los-tuxtlas-y-roca-partida/",
+    cities: ["Catemaco", "Nanciyaga", "Sontecomapan", "Barra de Oro", "Roca Partida", "Veracruz"],
+    durationDays: 3, durationNights: 2, productType: "beach",
+    transportTypes: ["ground"], accommodationMode: "hotel_occupancy",
+    featuredImage: "/images/destination-beach.webp",
+    dates: ["2026-05-14", "2026-07-16", "2026-12-30"],
+    pricingOptions: [
+      { occupancy: "single", label: "Base sencilla", amount: 6390, currency: "MXN" },
+      { occupancy: "double", label: "Base doble", amount: 4990, currency: "MXN" },
+      { occupancy: "triple", label: "Base triple", amount: 4790, currency: "MXN" },
+      { occupancy: "quadruple", label: "Base cuádruple", amount: 4590, currency: "MXN" },
+      { occupancy: "child", label: "Menor", amount: 3790, currency: "MXN" },
+    ],
+    preTripSegment: { title: "Traslado nocturno previo", description: "Salida nocturna desde Ciudad de México hacia Los Tuxtlas; no se contabiliza como día comercial." },
+    itinerary: [
+      { title: "Montepío y llegada a Catemaco", description: "Primera jornada de costa en Playa Montepío y traslado posterior a Catemaco para el registro de hospedaje.", stops: ["Playa Montepío", "Catemaco"] },
+      { title: "Catemaco, Nanciyaga y manglares", description: "Recorrido por la laguna de Catemaco, la reserva de Nanciyaga y los canales de Sontecomapan entre vegetación y manglares.", stops: ["Catemaco", "Nanciyaga", "Sontecomapan"] },
+      { title: "Barra de Oro y Roca Partida", description: "Navegación por Barra de Oro hacia islas, cuevas y Playa Escondida. Roca Partida se mantiene como actividad opcional y el regreso incluye una parada en Veracruz.", stops: ["Barra de Oro", "Playa Escondida", "Roca Partida", "Veracruz"] },
+    ],
+    includes: ["Transporte terrestre", "Dos noches de hospedaje", "Dos desayunos", "Recorridos en lancha indicados", "Acceso a Nanciyaga", "Coordinación de grupo"],
+    excludes: ["Alimentos y bebidas no indicados", "Actividad opcional en Roca Partida", "Propinas", "Gastos personales"],
+    recommendations: ["Equipaje de mano para la llegada a playa", "Repelente y bloqueador biodegradables", "Traje de baño y calzado acuático", "Efectivo y batería externa"],
+    difficulty: "moderado",
+  },
+  {
+    id: "crisenix-costas-oaxaca",
+    slug: "costas-de-oaxaca",
+    title: "Costas de Oaxaca",
+    summary: "Puerto Escondido, Manialtepec, Mazunte, Zipolite y Huatulco en una ruta de cuatro días.",
+    description: "Una travesía terrestre por playas, miradores y comunidades costeras de Oaxaca, con tiempo de mar y naturaleza.",
+    sourceUrl: "https://crisenix.com.mx/tour/costas-de-oaxaca/",
+    cities: ["Puerto Escondido", "Manialtepec", "Mazunte", "Zipolite", "Huatulco", "Playa La Entrega"],
+    durationDays: 4, durationNights: 3, productType: "beach",
+    transportTypes: ["ground"], accommodationMode: "hotel_occupancy",
+    featuredImage: "/images/destination-caribbean.webp",
+    dates: ["2026-04-01", "2026-07-22", "2026-09-02", "2026-12-25"],
+    pricingOptions: [
+      { occupancy: "single", label: "Base sencilla", amount: 9390, currency: "MXN" },
+      { occupancy: "double", label: "Base doble", amount: 6990, currency: "MXN" },
+      { occupancy: "triple", label: "Base triple", amount: 6790, currency: "MXN" },
+      { occupancy: "quadruple", label: "Base cuádruple", amount: 6590, currency: "MXN" },
+      { occupancy: "child", label: "Menor", amount: 4990, currency: "MXN" },
+    ],
+    preTripSegment: { title: "Traslado nocturno previo", description: "Salida nocturna desde Ciudad de México hacia la costa de Oaxaca; no suma un día al programa comercial." },
+    itinerary: [
+      { title: "Puerto Angelito y Manialtepec", description: "Llegada a Puerto Angelito, registro de hospedaje y navegación programada en la Laguna de Manialtepec.", stops: ["Puerto Angelito", "Laguna de Manialtepec"] },
+      { title: "Mazunte, Zipolite y Playa del Panteón", description: "Recorrido por Mazunte, Punta Cometa como actividad opcional, Zipolite y Playa del Panteón antes del traslado hacia Huatulco.", stops: ["Mazunte", "Punta Cometa", "Zipolite", "Playa del Panteón", "Huatulco"] },
+      { title: "Miradores y Playa El Maguey", description: "Panorámica por los miradores de Huatulco y tiempo de playa en El Maguey.", stops: ["Huatulco", "Playa El Maguey"] },
+      { title: "Playa La Entrega y regreso", description: "Mañana en Playa La Entrega, con snorkel opcional, y salida nocturna de regreso a Ciudad de México.", stops: ["Playa La Entrega", "Ciudad de México"] },
+    ],
+    includes: ["Transporte terrestre", "Tres noches de hospedaje", "Tres desayunos", "Lancha en Manialtepec", "Accesos indicados", "Coordinación de grupo"],
+    excludes: ["Alimentos y bebidas no indicados", "Actividades opcionales", "Propinas", "Gastos personales"],
+    recommendations: ["Calzado antiderrapante y acuático", "Traje de baño y chamarra ligera", "Bloqueador, efectivo y batería externa"],
+    difficulty: "moderado",
+  },
+  {
+    id: "crisenix-velada-astronomica-vip",
+    slug: "velada-astronomica-vip",
+    title: "Velada Astronómica VIP",
+    summary: "Cielos del norte, Cuatro Ciénegas, dunas, vino y paisajes de montaña en una experiencia Fly & Drive.",
+    description: "Una ruta premium por los ecosistemas de Cuatro Ciénegas, Parras, Saltillo, Arteaga, Santiago y Monterrey.",
+    sourceUrl: "https://crisenix.com.mx/tour/velada-astronomica-vip/",
+    cities: ["Monterrey", "Cuatro Ciénegas", "Dunas de Yeso", "Poza Azul", "Parras", "Saltillo", "Monterreal", "Santiago"],
+    durationDays: 5, durationNights: 4, productType: "vacation_package",
+    transportTypes: ["air", "ground"], accommodationMode: "hotel_occupancy",
+    featuredImage: "/images/destination-mountain.webp",
+    dates: ["2026-04-11", "2026-05-09", "2026-06-20", "2026-07-25", "2026-08-22", "2026-09-19", "2026-10-10", "2026-11-07"],
+    pricingOptions: [
+      { occupancy: "single", label: "Base sencilla", amount: 22990, currency: "MXN" },
+      { occupancy: "double", label: "Base doble", amount: 19390, currency: "MXN" },
+      { occupancy: "triple", label: "Base triple", amount: 19090, currency: "MXN" },
+      { occupancy: "child", label: "Menor de 3 a 11 años", amount: 15500, currency: "MXN" },
+    ],
+    itinerary: [
+      { title: "Monterrey y mármol bajo las estrellas", description: "Vuelo hacia Monterrey, traslado a Cuatro Ciénegas, visita a Minas de Mármol y experiencia nocturna programada antes del alojamiento.", stops: ["Monterrey", "Cuatro Ciénegas", "Minas de Mármol"] },
+      { title: "Dunas, pozas y velada astronómica", description: "Exploración de Dunas de Yeso, Poza Azul y Río Mezquite. Por la noche, velada astronómica con expositores.", stops: ["Dunas de Yeso", "Poza Azul", "Río Mezquite"] },
+      { title: "Parras, vino y tradición", description: "Ruta a Parras de la Fuente, visita y degustación en Casa Madero y continuación hacia Saltillo.", stops: ["Parras", "Casa Madero", "Saltillo"] },
+      { title: "Museo del Desierto y Monterreal", description: "Visita al Museo del Desierto y recorrido de naturaleza por Monterreal antes de seguir a Monterrey.", stops: ["Museo del Desierto", "Monterreal", "Monterrey"] },
+      { title: "Santiago y regreso", description: "Visita a Cola de Caballo y Santiago; traslado posterior al aeropuerto para el vuelo de regreso.", stops: ["Cola de Caballo", "Santiago", "Monterrey"] },
+    ],
+    includes: ["Vuelos redondos Ciudad de México–Monterrey", "Traslados del itinerario", "Cuatro noches de hospedaje", "Cuatro desayunos", "Velada astronómica", "Visita y degustación en Casa Madero", "Museo del Desierto", "Asistencia, impuestos y coordinación"],
+    excludes: ["Alimentos y bebidas no indicados", "Propinas", "Gastos personales", "Servicios no mencionados"],
+    recommendations: ["Chamarra ligera y calzado cómodo", "Bloqueador y gorra", "Efectivo y batería externa"],
+    difficulty: "facil", airport: true, taxesIncluded: true,
+  },
+  {
+    id: "crisenix-chepe-premier",
+    slug: "chepe-premier-barrancas-del-cobre",
+    title: "Chepe Premier: Barrancas del Cobre",
+    summary: "Una travesía Fly & Train por El Fuerte, el Chepe, las barrancas, Creel y Chihuahua.",
+    description: "Seis días entre paisajes ferroviarios, miradores serranos, pueblos históricos y naturaleza del norte de México.",
+    sourceUrl: "https://crisenix.com.mx/tour/chepe-premier-barrancas-del-cobre-con-estilo/",
+    cities: ["El Fuerte", "Cerocahui", "Divisadero", "Creel", "Lago de Arareko", "Basaseachi", "Chihuahua"],
+    durationDays: 6, durationNights: 5, productType: "circuit",
+    transportTypes: ["air", "train", "ground"], accommodationMode: "hotel_occupancy",
+    featuredImage: "/images/destination-canyon.webp",
+    dates: ["2026-04-12", "2026-07-19", "2026-10-25", "2026-12-20", "2026-12-27"],
+    pricingOptions: [
+      { occupancy: "single", label: "Base sencilla", amount: 34900, currency: "MXN" },
+      { occupancy: "double", label: "Base doble", amount: 27900, currency: "MXN" },
+      { occupancy: "triple", label: "Base triple", amount: 27300, currency: "MXN" },
+      { occupancy: "child", label: "Menor de 3 a 11 años", amount: 20890, currency: "MXN" },
+    ],
+    itinerary: [
+      { title: "El Fuerte, historia y tradición", description: "Vuelo hacia Los Mochis y traslado al Pueblo Mágico de El Fuerte para recorrer su centro histórico.", stops: ["Los Mochis", "El Fuerte"] },
+      { title: "El Chepe hacia la Sierra Tarahumara", description: "Trayecto en Chepe Primera Clase hasta Bahuichivo y continuación a Cerocahui.", stops: ["El Fuerte", "Bahuichivo", "Cerocahui"] },
+      { title: "Cerro del Gallego y Divisadero", description: "Jornada de miradores en el Cerro del Gallego y traslado a Divisadero entre panorámicas de las barrancas.", stops: ["Cerro del Gallego", "Divisadero"] },
+      { title: "Parque de Aventura y Creel", description: "Teleférico, tiempo para actividades opcionales y recorrido por el Valle de los Hongos y Lago de Arareko antes de llegar a Creel.", stops: ["Parque de Aventura", "Valle de los Hongos", "Lago de Arareko", "Creel"] },
+      { title: "Basaseachi y cultura menonita", description: "Visita a la Cascada de Basaseachi, panorámica por una comunidad menonita y traslado a Chihuahua.", stops: ["Cascada de Basaseachi", "Cuauhtémoc", "Chihuahua"] },
+      { title: "Chihuahua y regreso", description: "Recorrido panorámico por la ciudad y traslado al aeropuerto para el vuelo de regreso.", stops: ["Chihuahua"] },
+    ],
+    includes: ["Vuelos Ciudad de México–Los Mochis y Chihuahua–Ciudad de México", "Traslados del itinerario", "Cinco noches de hospedaje", "Cinco desayunos", "Chepe Primera Clase", "Cerro del Gallego y teleférico", "Accesos indicados", "Asistencia, impuestos y coordinación"],
+    excludes: ["Alimentos y bebidas no indicados", "Actividades opcionales en Parque de Aventura", "Propinas", "Gastos personales"],
+    recommendations: ["Chamarra y calzado cómodo", "Gorra y bloqueador", "Efectivo y batería externa"],
+    difficulty: "facil", airport: true, taxesIncluded: true,
+  },
+  {
+    id: "crisenix-patagonia-fin-del-mundo",
+    slug: "patagonia-encuentro-con-el-fin-del-mundo",
+    title: "Patagonia: Encuentro con el Fin del Mundo",
+    summary: "Buenos Aires, Bariloche, El Calafate y Ushuaia en una ruta aérea de trece días.",
+    description: "Glaciares, lagos, bosques fueguinos y ciudades australes en un circuito por la Patagonia argentina.",
+    sourceUrl: "https://crisenix.com.mx/tour/patagonia-encuentro-con-el-fin-del-mundo/",
+    cities: ["Buenos Aires", "Bariloche", "San Martín de los Andes", "El Calafate", "Ushuaia"],
+    durationDays: 13, durationNights: 12, productType: "circuit",
+    transportTypes: ["air", "ground"], accommodationMode: "hotel_occupancy",
+    featuredImage: "/images/destination-patagonia.webp",
+    dates: ["2026-10-02"],
+    pricingOptions: [{ occupancy: "double", label: "Base doble", amount: 5290, currency: "USD" }],
+    itinerary: [
+      { title: "Rumbo al sur del mundo", description: "Vuelo desde México hacia Buenos Aires, recepción y traslado al hotel.", stops: ["Ciudad de México", "Buenos Aires"] },
+      { title: "Buenos Aires, historia y tango", description: "Recorrido panorámico por barrios y espacios representativos, seguido de una cena show de tango.", stops: ["Buenos Aires"] },
+      { title: "De Buenos Aires a Bariloche", description: "Traslado al aeropuerto, vuelo a Bariloche y tiempo libre después del registro.", stops: ["Buenos Aires", "Bariloche"] },
+      { title: "Circuito Chico", description: "Ruta panorámica por el Lago Nahuel Huapi, lagos Moreno, Llao Llao y miradores de Bariloche.", stops: ["Bariloche", "Lago Nahuel Huapi", "Llao Llao"] },
+      { title: "La Ruta de los Siete Lagos", description: "Excursión hacia San Martín de los Andes por paisajes lacustres de los parques Nahuel Huapi y Lanín.", stops: ["Bariloche", "Ruta de los Siete Lagos", "San Martín de los Andes"] },
+      { title: "Rumbo al mundo del hielo", description: "Vuelo hacia El Calafate, recepción y traslado al hotel.", stops: ["Bariloche", "El Calafate"] },
+      { title: "Perito Moreno y Safari Náutico", description: "Jornada en el Parque Nacional Los Glaciares, navegación y pasarelas frente al Glaciar Perito Moreno.", stops: ["El Calafate", "Glaciar Perito Moreno"] },
+      { title: "El Calafate a tu ritmo", description: "Día libre con alternativas opcionales sujetas a disponibilidad y contratación.", stops: ["El Calafate"] },
+      { title: "Ushuaia, el fin del continente", description: "Vuelo a Ushuaia, recepción y traslado al hotel.", stops: ["El Calafate", "Ushuaia"] },
+      { title: "Tierra del Fuego", description: "Recorrido por el Parque Nacional Tierra del Fuego, bosques, lagunas y Bahía Lapataia.", stops: ["Ushuaia", "Parque Nacional Tierra del Fuego", "Bahía Lapataia"] },
+      { title: "Aventuras australes", description: "Día libre para descubrir Ushuaia o contratar navegaciones opcionales por el Canal Beagle.", stops: ["Ushuaia"] },
+      { title: "Regreso a Buenos Aires", description: "Vuelo de Ushuaia a Buenos Aires y traslado al hotel.", stops: ["Ushuaia", "Buenos Aires"] },
+      { title: "Hasta pronto, Argentina", description: "Traslado al aeropuerto y vuelo de regreso a México.", stops: ["Buenos Aires", "Ciudad de México"] },
+    ],
+    includes: ["Vuelos internacionales y domésticos indicados", "Doce noches de hospedaje", "Doce desayunos", "Recorridos y excursiones descritos", "Traslados", "Seguro de asistencia", "Guía de habla hispana", "Impuestos y representación de grupo"],
+    excludes: ["Alimentos y bebidas no indicados", "Gastos personales y extras de hotel", "Tours opcionales", "Servicios no mencionados"],
+    recommendations: ["Pasaporte con vigencia suficiente y requisitos migratorios verificados", "Ropa térmica por capas e impermeable", "Calzado cómodo y documentación de viaje"],
+    difficulty: "moderado", airport: true, taxesIncluded: true,
+    foreignCurrencyPricing: {
+      pricingCurrency: "USD", settlementCurrency: "USD",
+      checkoutChargeCurrency: "MXN", convertDepositAtCheckout: true,
+      balanceCurrency: "USD", displayCurrencyMode: "source_and_estimated_mxn",
+    },
+  },
+];
+
+const sourceDeparture = (
+  spec: CrisenixSourceSpec,
+  date: string,
+  index: number,
+): TravelDeparture => {
+  const start = new Date(`${date}T12:00:00.000Z`);
+  const end = new Date(start);
+  end.setUTCDate(end.getUTCDate() + Math.max(0, spec.durationDays - 1));
+  const departureId = `${spec.id}-departure-${index + 1}`;
+  const allowedPointIds = spec.airport ? ["p9"] : ["p4", "p5", "p6", "p8"];
+  return {
+    id: departureId,
+    travelId: spec.id,
+    startDate: start.toISOString(),
+    endDate: end.toISOString(),
+    timezone: "America/Mexico_City",
+    capacity: 40,
+    reservedSpaces: 0,
+    availableSpaces: 40,
+    saleStatus: "scheduled",
+    depositPolicy: { enabled: true, type: "percentage", percentage: 30 },
+    boardingOptions: departurePoints
+      .filter((point) => allowedPointIds.includes(point.id))
+      .map((point, pointIndex) => ({
+        id: `${departureId}-boarding-${point.id}`,
+        departureId,
+        agencyDeparturePointId: point.id,
+        meetingTime: "Por confirmar",
+        departureTime: "Por confirmar",
+        surchargeAmount: 0,
+        surchargeType: "per_booking",
+        currency: spec.pricingOptions[0].currency,
+        boardingOrder: pointIndex + 1,
+        status: "available",
+      })),
+  };
+};
+
+const sourceTrips = sourceTripSpecs.map((spec): TravelProduct => {
+  const referenceRate =
+    spec.pricingOptions.find((rate) => rate.occupancy === "double") ??
+    spec.pricingOptions[0];
+  const currency = referenceRate.currency;
+  return {
+    id: spec.id,
+    agencyId: "a-crisenix",
+    code: `CRX-${spec.durationDays}-${spec.id.slice(-4).toUpperCase()}`,
+    slug: spec.slug,
+    title: spec.title,
+    subtitle: spec.summary,
+    summary: spec.summary,
+    description: spec.description,
+    scope: spec.foreignCurrencyPricing ? "international" : "national",
+    productType: spec.productType,
+    transportTypes: spec.transportTypes,
+    tags: spec.foreignCurrencyPricing ? ["adventure", "culture"] : ["culture", "nature"],
+    region: spec.foreignCurrencyPricing ? "south_america" : "mexico",
+    countries: spec.foreignCurrencyPricing ? ["Argentina"] : ["México"],
+    cities: spec.cities,
+    destinationIds: [`destination-${spec.id}`],
+    categoryIds: [spec.productType],
+    durationDays: spec.durationDays,
+    durationNights: spec.durationNights,
+    accommodationMode: spec.accommodationMode,
+    featuredImage: spec.featuredImage,
+    gallery: [
+      spec.featuredImage,
+      spec.foreignCurrencyPricing ? "/images/destination-mountain.webp" : "/images/destination-town.webp",
+      spec.transportTypes.includes("air") ? "/images/destination-canyon.webp" : "/images/destination-beach.webp",
+    ],
+    includes: spec.includes,
+    excludes: spec.excludes,
+    requirements: spec.foreignCurrencyPricing
+      ? ["Pasaporte vigente", "Revisar requisitos migratorios antes de reservar"]
+      : ["Identificación vigente", "Confirmar disponibilidad antes de pagar"],
+    recommendations: spec.recommendations,
+    policies: {
+      cancellation: "Cambios y cancelaciones sujetos a las condiciones confirmadas al reservar.",
+      payment: "Anticipo de 30%; los plazos de liquidación se confirman con la salida.",
+      responsibility: "El itinerario puede ajustarse por condiciones climáticas, logísticas u operativas.",
+    },
+    itinerary: spec.itinerary.map((day, index) => ({
+      id: `${spec.id}-day-${index + 1}`,
+      day: index + 1,
+      dayNumber: index + 1,
+      order: index + 1,
+      title: day.title,
+      description: day.description,
+      stops: day.stops.map((name, stopIndex) => ({
+        id: `${spec.id}-day-${index + 1}-stop-${stopIndex + 1}`,
+        name,
+        order: stopIndex + 1,
+      })),
+      images: index < 3 ? [{
+        id: `${spec.id}-day-${index + 1}-image`,
+        url: index === 0 ? spec.featuredImage : visualLibrary[(index + spec.durationDays) % visualLibrary.length],
+        alt: `${spec.title}: ${day.title}`,
+        order: 1,
+      }] : [],
+    })),
+    basePrice: {
+      amount: referenceRate.amount,
+      currency,
+      taxesIncluded: Boolean(spec.taxesIncluded),
+      taxesLabel: "Impuestos",
+      ...(spec.taxesIncluded ? { taxesAmount: 0 } : {}),
+      depositAmount: Math.round(referenceRate.amount * .3),
+      priceType: "per_person",
+      displayFrom: true,
+    },
+    pricingOptions: spec.pricingOptions.map((rate, index) => ({
+      id: `${spec.id}-rate-${rate.occupancy}`,
+      ...rate,
+      inventoryImpact: 1,
+      ...(spec.accommodationMode === "hotel_occupancy" ? { maxGuestsPerRoom: 4 } : {}),
+    })),
+    departures: spec.dates.map((date, index) => sourceDeparture(spec, date, index)),
+    extras: [],
+    status: "published",
+    featured: true,
+    availabilityDisplayMode: "status_only",
+    depositPolicy: { enabled: true, type: "percentage", percentage: 30 },
+    travelerCategories: [
+      { id: `${spec.id}-adult`, label: "Adultos", minAge: 12, pricingRule: "adult", active: true, order: 1 },
+      { id: `${spec.id}-child`, label: "Menores", minAge: 3, maxAge: 11, pricingRule: "child", active: spec.pricingOptions.some((rate) => rate.occupancy === "child"), order: 2 },
+    ],
+    extraVisibility: "hidden",
+    allowManualOccupancy: false,
+    preTripSegment: spec.preTripSegment,
+    sourceReference: {
+      provider: "Crisenix",
+      sourceUrl: spec.sourceUrl,
+      reviewedAt: "2026-07-26",
+    },
+    foreignCurrencyPricing: spec.foreignCurrencyPricing,
+    seo: {
+      title: `${spec.title} | Crisenix Demo`,
+      description: spec.summary,
+      keywords: [...spec.cities.slice(0, 4), "viaje demo"],
+    },
+  };
+});
+travels.push(...sourceTrips);
+
 const sectionOrder = [
   "summary", "video", "gallery", "itinerary", "included", "map", "departures", "rates",
   "recommendations", "departure_points", "important_information", "faq", "related_trips",
@@ -224,11 +650,15 @@ function configureTripPage(trip: TravelProduct, options: { video?: boolean; lead
   trip.itinerary = trip.itinerary.map((day, index) => ({
     ...day, id: `${trip.id}-day-${day.day}`, dayNumber: day.day, order: index + 1,
     shortDescription: day.description.slice(0, 115),
-    startTime: index === 0 ? "07:00" : "09:00",
-    stops: [
-      { id: `${trip.id}-stop-${index}-1`, name: trip.cities[index % trip.cities.length] ?? trip.cities[0], order: 1 },
-      ...(trip.cities[index + 1] ? [{ id: `${trip.id}-stop-${index}-2`, name: trip.cities[index + 1], order: 2 }] : []),
-    ],
+    ...(!trip.sourceReference
+      ? { startTime: index === 0 ? "07:00" : "09:00" }
+      : {}),
+    stops: day.stops?.length
+      ? day.stops
+      : [
+          { id: `${trip.id}-stop-${index}-1`, name: trip.cities[index % trip.cities.length] ?? trip.cities[0], order: 1 },
+          ...(trip.cities[index + 1] ? [{ id: `${trip.id}-stop-${index}-2`, name: trip.cities[index + 1], order: 2 }] : []),
+        ],
     highlights: day.activities?.slice(0, 3) ?? ["Acompañamiento durante la ruta"],
     images: index < 2 ? [{ id: `${trip.id}-day-image-${index}`, url: trip.gallery[index] ?? trip.featuredImage, alt: day.title, order: 1 }] : [],
   }));
@@ -284,6 +714,92 @@ function configureTripPage(trip: TravelProduct, options: { video?: boolean; lead
         : { adultGeneral: Math.round(trip.basePrice.amount * 1.08), depositPolicy: trip.departures[1].depositPolicy },
     };
   }
+}
+
+for (const spec of sourceTripSpecs) {
+  const trip = travels.find((item) => item.id === spec.id);
+  if (!trip) continue;
+  configureTripPage(trip, {
+    video: false,
+    lead: false,
+    airport: Boolean(spec.airport),
+    route: true,
+  });
+  trip.departures.forEach((departure) => {
+    delete departure.pricing;
+  });
+  trip.recommendationsContent = {
+    mode: "items",
+    items: spec.recommendations.map((text, index) => ({
+      id: `${trip.id}-recommendation-${index + 1}`,
+      text,
+      order: index + 1,
+    })),
+    difficulty: {
+      level: spec.difficulty,
+      label: spec.difficulty === "moderado" ? "Ritmo moderado" : "Ruta fácil",
+    },
+  };
+  trip.publicDeparturePoints = spec.airport
+    ? [{
+        id: `${trip.id}-airport`,
+        type: "airport",
+        name: "Aeropuerto por confirmar",
+        city: "Ciudad de México",
+        instructions: "El aeropuerto y la terminal se confirman en la documentación final de la salida.",
+        enabled: true,
+        order: 1,
+      }]
+    : ["Guelatao", "Oceanía", "Revolución", "Naucalpan"].map((name, index) => ({
+        id: `${trip.id}-point-${index + 1}`,
+        type: "city_boarding" as const,
+        name,
+        city: "Ciudad de México",
+        instructions: "El horario y la referencia exacta se confirman antes de viajar.",
+        enabled: true,
+        order: index + 1,
+      }));
+  trip.importantInformation = {
+    introduction: "Información tomada de la publicación revisada y estructurada para esta demostración.",
+    items: [
+      {
+        id: `${trip.id}-important-operation`,
+        title: "Programa sujeto a operación",
+        description: "El orden y los horarios pueden ajustarse por clima, logística o causas de fuerza mayor sin eliminar los servicios confirmados.",
+        icon: "operation",
+        severity: "info",
+        order: 1,
+      },
+      {
+        id: `${trip.id}-important-pricing`,
+        title: "Precio y disponibilidad",
+        description: "Confirma disponibilidad, condiciones y forma de pago antes de realizar cualquier depósito.",
+        icon: "pricing",
+        severity: "warning",
+        order: 2,
+      },
+    ],
+  };
+  trip.faqContent = {
+    introduction: "Respuestas breves basadas en la información publicada.",
+    displayMode: "accordion",
+    items: [
+      {
+        id: `${trip.id}-faq-includes`,
+        question: "¿Qué incluye la tarifa?",
+        answer: spec.includes.join(", ") + ".",
+        category: "servicios",
+        order: 1,
+      },
+      {
+        id: `${trip.id}-faq-departures`,
+        question: "¿Cuándo hay salidas?",
+        answer: `Las fechas demo cargadas son ${spec.dates.map((date) => new Date(`${date}T12:00:00Z`).toLocaleDateString("es-MX", { day: "numeric", month: "long" })).join(", ")}; están sujetas a disponibilidad.`,
+        category: "fechas",
+        order: 2,
+      },
+    ],
+  };
 }
 
 const configurableDemos = [

@@ -1,13 +1,157 @@
 import { agencies, departurePoints, travels } from "@/data/demo";
+import { toMinorUnits } from "@/lib/fx";
 import { resolveRoomCapacityPolicy, validateRoomCapacity } from "@/lib/room-capacity";
 import { getEffectiveRateAmount, getEffectiveTaxesPerTraveler } from "@/lib/trip-sections";
-import type { BookingBoardingSnapshot, CartLine, PricedCartLine } from "@/types";
+import type { BookingBoardingSnapshot, CartLine, DepositPolicy, PricedCartLine } from "@/types";
 
-export function formatMoney(amount:number,currency:"MXN"|"USD"){return new Intl.NumberFormat("es-MX",{style:"currency",currency,maximumFractionDigits:0}).format(amount)+" "+currency}
+export function isDepartureBookable(
+  departure: PricedCartLine["departure"],
+  now: Date = new Date(),
+) {
+  const today = now.toISOString().slice(0, 10);
+  return (
+    departure.saleStatus !== "sold_out" &&
+    departure.startDate.slice(0, 10) >= today
+  );
+}
+
+export function formatMoney(amount: number, currency: "MXN" | "USD") {
+  return (
+    new Intl.NumberFormat("es-MX", {
+      style: "currency",
+      currency,
+      currencyDisplay: "narrowSymbol",
+      maximumFractionDigits: 0,
+    }).format(amount) + ` ${currency}`
+  );
+}
+export function resolveDepositAmount({
+  policy,
+  total,
+  fallbackPerTraveler,
+  travelers,
+}: {
+  policy?: DepositPolicy;
+  total: number;
+  fallbackPerTraveler: number;
+  travelers: number;
+}) {
+  if (!policy?.enabled) return fallbackPerTraveler * travelers;
+  if (policy.type === "fixed")
+    return Math.max(policy.fixedAmount ?? fallbackPerTraveler, policy.minimumAmount ?? 0);
+  return Math.max(
+    total * ((policy.percentage ?? 100) / 100),
+    policy.minimumAmount ?? 0,
+  );
+}
+const depositPolicyFor = (travel: PricedCartLine["travel"], departure: PricedCartLine["departure"]) =>
+  departure.depositPolicy ??
+  departure.pricing?.pricingOverrides?.depositPolicy ??
+  travel.depositPolicy;
+
+export function validateCartCurrencies(lines: CartLine[]) {
+  const currencies = new Set(
+    lines.map((line) => {
+      const travel = travels.find(
+        (item) => item.id === line.travelId && item.agencyId === line.agencyId,
+      );
+      if (!travel) throw new Error("El viaje no pertenece a la agencia.");
+      return travel.basePrice.currency;
+    }),
+  );
+  if (currencies.size > 1) throw new Error("No puedes mezclar monedas.");
+  return true;
+}
+
+export function validateDemoFxOrderShape(lines: CartLine[]) {
+  const orderGroups = new Set(
+    lines.map(
+      (line) => `${line.agencyId}:${line.travelId}:${line.departureId}`,
+    ),
+  );
+  const foreignGroups = new Set(
+    lines.flatMap((line) => {
+      const travel = travels.find(
+        (item) =>
+          item.id === line.travelId && item.agencyId === line.agencyId,
+      );
+      return travel?.foreignCurrencyPricing?.convertDepositAtCheckout
+        ? [`${line.agencyId}:${line.travelId}:${line.departureId}`]
+        : [];
+    }),
+  );
+  if (
+    foreignGroups.size > 1 ||
+    (foreignGroups.size === 1 && orderGroups.size > 1)
+  )
+    throw new Error(
+      "La demostración procesa un viaje internacional por orden y sin otros viajes.",
+    );
+  return true;
+}
+
+export function validateFxGroupConsistency(lines: CartLine[]) {
+  const groups = new Map<string, CartLine[]>();
+  lines.forEach((line) => {
+    const key = `${line.agencyId}:${line.travelId}:${line.departureId}`;
+    groups.set(key, [...(groups.get(key) ?? []), line]);
+  });
+  groups.forEach((group) => {
+    const firstLine = group[0];
+    const travel = travels.find(
+      (item) =>
+        item.id === firstLine.travelId &&
+        item.agencyId === firstLine.agencyId,
+    );
+    if (!travel) throw new Error("El viaje no pertenece a la agencia.");
+    const foreign = travel.foreignCurrencyPricing;
+    if (!foreign?.convertDepositAtCheckout) return;
+    if (
+      group.some(
+        (line) => !line.fxSnapshot || !line.paymentAllocation,
+      )
+    )
+      throw new Error(
+        "La reserva internacional requiere una cotización vigente.",
+      );
+    const snapshot = group[0].fxSnapshot!;
+    const allocation = group[0].paymentAllocation!;
+    group.forEach((line) => {
+      if (
+        line.fxSnapshot!.id !== snapshot.id ||
+        line.paymentAllocation!.fxSnapshotId !== snapshot.id ||
+        line.paymentAllocation!.contractCurrency !==
+          foreign.pricingCurrency ||
+        line.paymentAllocation!.chargeCurrency !==
+          foreign.checkoutChargeCurrency ||
+        line.fxSnapshot!.sourceCurrency !== foreign.pricingCurrency ||
+        line.fxSnapshot!.chargeCurrency !==
+          foreign.checkoutChargeCurrency
+      )
+        throw new Error(
+          "Las líneas del viaje tienen cotizaciones incompatibles.",
+        );
+    });
+    const contractTotalMinor = group.reduce((sum, line) => {
+      const priced = line.boardingOptionId
+        ? priceLine(line)
+        : priceLinePending(line);
+      return sum + toMinorUnits(priced.total, foreign.pricingCurrency);
+    }, 0);
+    if (
+      allocation.fxSnapshotId !== snapshot.id ||
+      allocation.contractTotalMinor !== contractTotalMinor ||
+      allocation.contractualPaymentMinor !== snapshot.sourceAmountMinor ||
+      allocation.chargeNowMinor !== snapshot.chargeAmountMinor
+    )
+      throw new Error("La asignación del pago no coincide con la cotización.");
+  });
+  return true;
+}
 export function priceLine(line: CartLine): PricedCartLine {
   const travel=travels.find(t=>t.id===line.travelId && t.agencyId===line.agencyId);
   if(!travel) throw new Error("El viaje no pertenece a la agencia.");
-  const departure=travel.departures.find(d=>d.id===line.departureId && d.saleStatus!=="sold_out" && d.availableSpaces>=line.travelers);
+  const departure=travel.departures.find(d=>d.id===line.departureId && isDepartureBookable(d) && d.availableSpaces>=line.travelers);
   if(!departure) throw new Error("La salida ya no está disponible.");
   if(!line.boardingOptionId) throw new Error("Debes seleccionar y confirmar un punto de abordaje.");
   const option=departure.boardingOptions.find(b=>b.id===line.boardingOptionId && b.status!=="sold_out" && b.status!=="disabled");
@@ -16,24 +160,51 @@ export function priceLine(line: CartLine): PricedCartLine {
   const rate=travel.pricingOptions.find(p=>p.id===line.pricingOptionId);
   if(!point||!rate||rate.currency!==travel.basePrice.currency) throw new Error("Configuración de tarifa inválida.");
   const selectedExtras=travel.extras.filter(e=>line.extraIds.includes(e.id));
+  if(selectedExtras.some(extra=>extra.currency!==travel.basePrice.currency))throw new Error("La moneda del extra no coincide con la moneda contractual.");
+  if((option.currency??travel.basePrice.currency)!==travel.basePrice.currency)throw new Error("La moneda del suplemento no coincide con la moneda contractual.");
   const subtotal=getEffectiveRateAmount({trip:travel,departure,rate})*line.travelers;
   const taxes=getEffectiveTaxesPerTraveler({trip:travel,departure,rate})*line.travelers;
   const surcharge=(option.surchargeAmount??0)*(option.surchargeType==="per_booking"?1:line.travelers);
   const extrasTotal=selectedExtras.reduce((sum,e)=>sum+e.price*(e.pricingMode==="per_person"?line.travelers:1),0);
   const boarding:BookingBoardingSnapshot={boardingOptionId:option.id,boardingPointId:point.id,pointName:point.name,address:point.address,reference:point.reference,city:point.city,meetingTime:option.meetingTime,departureTime:option.departureTime,surchargeAmount:option.surchargeAmount??0,surchargeType:option.surchargeType??"per_person",currency:option.currency??travel.basePrice.currency,instructions:option.instructionsOverride??point.instructions};
-  return {...line,boardingOptionId:option.id,boardingSnapshot:boarding,travel,departure,boarding,subtotal,taxes,surcharge,extrasTotal,total:subtotal+taxes+surcharge+extrasTotal,deposit:(travel.basePrice.depositAmount??subtotal)*line.travelers};
+  const total=subtotal+taxes+surcharge+extrasTotal;
+  return {...line,boardingOptionId:option.id,boardingSnapshot:boarding,travel,departure,boarding,subtotal,taxes,surcharge,extrasTotal,total,deposit:resolveDepositAmount({policy:depositPolicyFor(travel,departure),total,fallbackPerTraveler:travel.basePrice.depositAmount??getEffectiveRateAmount({trip:travel,departure,rate}),travelers:line.travelers})};
 }
 export function priceLinePending(line:CartLine){
   const travel=travels.find(t=>t.id===line.travelId&&t.agencyId===line.agencyId);
   if(!travel)throw new Error("El viaje no pertenece a la agencia.");
-  const departure=travel.departures.find(d=>d.id===line.departureId&&d.saleStatus!=="sold_out"&&d.availableSpaces>=line.travelers);
+  const departure=travel.departures.find(d=>d.id===line.departureId&&isDepartureBookable(d)&&d.availableSpaces>=line.travelers);
   const rate=travel.pricingOptions.find(p=>p.id===line.pricingOptionId);
   if(!departure||!rate||rate.currency!==travel.basePrice.currency)throw new Error("Configuración de reserva inválida.");
   const extras=travel.extras.filter(e=>line.extraIds.includes(e.id));
+  if(extras.some(extra=>extra.currency!==travel.basePrice.currency))throw new Error("La moneda del extra no coincide con la moneda contractual.");
   const subtotal=getEffectiveRateAmount({trip:travel,departure,rate})*line.travelers;
   const taxes=getEffectiveTaxesPerTraveler({trip:travel,departure,rate})*line.travelers;
   const extrasTotal=extras.reduce((sum,e)=>sum+e.price*(e.pricingMode==="per_person"?line.travelers:1),0);
-  return {travel,departure,subtotal,taxes,extrasTotal,total:subtotal+taxes+extrasTotal,deposit:(travel.basePrice.depositAmount??subtotal)*line.travelers};
+  const total=subtotal+taxes+extrasTotal;
+  return {travel,departure,subtotal,taxes,extrasTotal,total,deposit:resolveDepositAmount({policy:depositPolicyFor(travel,departure),total,fallbackPerTraveler:travel.basePrice.depositAmount??getEffectiveRateAmount({trip:travel,departure,rate}),travelers:line.travelers})};
+}
+export function estimateCartLines(lines: CartLine[]) {
+  return lines.map((line) => {
+    try {
+      return {
+        line,
+        estimate: line.boardingOptionId
+          ? priceLine(line)
+          : priceLinePending(line),
+        error: "",
+      };
+    } catch (error) {
+      return {
+        line,
+        estimate: null,
+        error:
+          error instanceof Error
+            ? error.message
+            : "La reserva guardada ya no es válida.",
+      };
+    }
+  });
 }
 export function confirmBoardingPoint(line:CartLine,boardingOptionId:string):CartLine{
   const travel=travels.find(t=>t.id===line.travelId&&t.agencyId===line.agencyId);
@@ -65,4 +236,4 @@ export function validateCartRoomCapacity(lines:CartLine[]){
   });
   return true;
 }
-export function validateCart(lines:CartLine[]){validateCartRoomCapacity(lines);const priced=lines.map(priceLine);if(new Set(priced.map(x=>x.agencyId)).size>1)throw new Error("No puedes mezclar agencias.");if(new Set(priced.map(x=>x.travel.basePrice.currency)).size>1)throw new Error("No puedes mezclar monedas.");return priced}
+export function validateCart(lines:CartLine[]){validateCartCurrencies(lines);validateDemoFxOrderShape(lines);validateFxGroupConsistency(lines);validateCartRoomCapacity(lines);const priced=lines.map(priceLine);if(new Set(priced.map(x=>x.agencyId)).size>1)throw new Error("No puedes mezclar agencias.");return priced}

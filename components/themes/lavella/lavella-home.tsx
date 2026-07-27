@@ -1,4 +1,7 @@
+"use client";
+
 import Image from "next/image";
+import { useRef } from "react";
 import { FaArrowLeft, FaArrowRight, FaWhatsapp } from "react-icons/fa6";
 import styles from "./lavella-home.module.css";
 import { LavellaDestinationCard } from "./lavella-destination-card";
@@ -14,12 +17,17 @@ export function LavellaHome({
   onOpen,
   onNavigate,
 }: LavellaHomeProps) {
-  const compactDestinations = trips.slice(0, 10);
+  const destinationsRail = useRef<HTMLDivElement>(null);
+  const moveDestinations = (direction: number) =>
+    destinationsRail.current?.scrollBy({
+      left: direction * 444,
+      behavior: "smooth",
+    });
   return (
     <main className={styles.home}>
-      <LavellaHomeHero trips={trips} onOpen={onOpen} onNavigate={onNavigate} />
+      <LavellaHomeHero agency={agency} trips={trips} onOpen={onOpen} onNavigate={onNavigate} />
 
-      <section className={styles.popular}>
+      <section className={styles.popular} data-lavella-surface="dark">
         <header className={styles.sectionHeadingDark}>
           <div>
             <small>LOS MÁS BUSCADOS</small>
@@ -58,7 +66,7 @@ export function LavellaHome({
         </div>
       </section>
 
-      <section className={styles.searchChapter}>
+      <section className={styles.searchChapter} data-lavella-surface="light">
         <LavellaSearchBox
           onSearch={(query) =>
             onNavigate(query ? `/viajes?q=${encodeURIComponent(query)}` : "/viajes")
@@ -66,41 +74,71 @@ export function LavellaHome({
         />
       </section>
 
-      <section className={styles.destinations}>
+      <section className={styles.classicPopular} data-lavella-surface="light">
+        <header className={styles.classicPopularHeading}>
+          <div>
+            <small>VIAJES POPULARES</small>
+            <h2>Próximas expediciones</h2>
+          </div>
+          <p>Una selección de salidas activas, desde escapadas de un día hasta grandes circuitos.</p>
+        </header>
+        <div className={styles.classicPopularGrid}>
+          {trips.slice(0, 8).map((trip) => (
+            <LavellaTourCard
+              key={trip.id}
+              trip={trip}
+              onOpen={onOpen}
+              variant="classic"
+            />
+          ))}
+        </div>
+        <button className={styles.classicPopularMore} onClick={() => onNavigate("/viajes")}>
+          Ver todos los viajes <FaArrowRight />
+        </button>
+      </section>
+
+      <section className={styles.destinations} data-lavella-surface="light">
         <header className={styles.sectionHeadingLight}>
           <div><small>AHORA MISMO</small><h2>Destinos populares</h2></div>
           <div>
             <button onClick={() => onNavigate("/destinos")}>Ver todos los destinos</button>
-            <button aria-label="Destino anterior"><FaArrowLeft /></button>
-            <button aria-label="Destino siguiente"><FaArrowRight /></button>
+            <button
+              aria-label="Destino anterior"
+              onClick={() => moveDestinations(-1)}
+            >
+              <FaArrowLeft />
+            </button>
+            <button
+              aria-label="Destino siguiente"
+              onClick={() => moveDestinations(1)}
+            >
+              <FaArrowRight />
+            </button>
           </div>
         </header>
-        <div className={styles.destinationRail}>
-          {trips.slice(0, 6).map((trip) => (
-            <LavellaDestinationCard key={trip.id} trip={trip} onOpen={onOpen} />
+        <div className={styles.destinationRail} ref={destinationsRail}>
+          {trips.slice(0, 8).map((trip) => (
+            <LavellaDestinationCard
+              key={trip.id}
+              trip={trip}
+              onOpen={onOpen}
+            />
           ))}
         </div>
       </section>
 
-      <section className={styles.operator}>
+      <section className={styles.operator} data-lavella-surface="light">
         <small>DESTINOS PRINCIPALES</small>
         <h2>{agency.branding.logoText} — operador de experiencias</h2>
         <div>
           <p>{agency.branding.heroDescription}</p>
           <p>Fechas, tarifas y acompañamiento reunidos en una experiencia de reserva clara.</p>
         </div>
-        <div className={styles.destinationMiniRail}>
-          {compactDestinations.map((trip) => (
-            <button key={trip.id} onClick={() => onOpen(trip)}>
-              <Image src={trip.featuredImage} alt="" fill sizes="115px" />
-              <span>{trip.cities[0] ?? trip.title}</span>
-            </button>
-          ))}
-        </div>
       </section>
 
       <section
         className={styles.promotion}
+        data-lavella-surface="image"
         style={{ backgroundImage: `url(${trips[3]?.featuredImage ?? trips[0]?.featuredImage})` }}
       >
         <div>
@@ -120,6 +158,7 @@ export function LavellaHome({
 
       <section
         className={styles.journal}
+        data-lavella-surface="image"
         style={{ backgroundImage: `url(${trips[4]?.featuredImage ?? trips[0]?.featuredImage})` }}
       >
         <header><small>DIARIO DE VIAJE</small><h2>Historias para inspirar la próxima ruta</h2><p>Consejos prácticos, lugares y formas de disfrutar mejor cada salida.</p></header>

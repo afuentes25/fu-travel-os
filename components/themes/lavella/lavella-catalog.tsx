@@ -8,7 +8,11 @@ import styles from "./lavella-catalog.module.css";
 import { LavellaSearchBox } from "./lavella-search-box";
 import { LavellaTourCard } from "./lavella-tour-card";
 import type { LavellaCatalogProps } from "./lavella-types";
-import { lavellaDate, lavellaDeparture } from "./lavella-utils";
+import {
+  lavellaDate,
+  lavellaDeparture,
+  lavellaTransport,
+} from "./lavella-utils";
 
 export function LavellaCatalog({
   agency,
@@ -21,9 +25,10 @@ export function LavellaCatalog({
   const update = (key: keyof CatalogFilters, value: string | boolean) =>
     setFilters((current) => ({ ...current, [key]: value }));
   return (
-    <main className={styles.catalog}>
+    <main className={styles.catalog} data-lavella-surface="light">
       <section
         className={styles.catalogHero}
+        data-lavella-surface="image"
         style={{ backgroundImage: `url(${trips[0]?.featuredImage ?? agency.branding.heroImage})` }}
       >
         <div className={styles.heroShade} />
@@ -77,7 +82,7 @@ export function LavellaCatalog({
                   <LavellaTourCard trip={trip} onOpen={onOpen} />
                   <div className={styles.listMeta}>
                     <span><b>{lavellaDate(departure?.startDate, true)}</b><small>Próxima salida</small></span>
-                    <span><b>{trip.transportTypes.join(" · ")}</b><small>Transporte</small></span>
+                    <span><b>{lavellaTransport(trip.transportTypes)}</b><small>Transporte</small></span>
                     <button onClick={() => onOpen(trip)}>Ver detalles <FaArrowRight /></button>
                   </div>
                 </div>
@@ -99,7 +104,10 @@ export function LavellaCatalog({
             </nav>
           </div>
 
-          <aside className={`${styles.sidebar} ${mobileFilters ? styles.sidebarOpen : ""}`}>
+          <aside
+            className={`${styles.sidebar} ${mobileFilters ? styles.sidebarOpen : ""}`}
+            data-lavella-surface="light"
+          >
             <header><h3>Filtrar viajes</h3><button onClick={() => setMobileFilters(false)}>Cerrar</button></header>
             <label>
               Palabra clave

@@ -20,7 +20,11 @@ import {
   FaYoutube,
 } from "react-icons/fa6";
 import { agencies, departurePoints, destinations, travels } from "@/data/demo";
-import { filterCatalog, type CatalogFilters } from "@/lib/catalog";
+import {
+  filterCatalog,
+  getAvailabilityLabel,
+  type CatalogFilters,
+} from "@/lib/catalog";
 import {
   EXPLORER_SLIDER_LABELS,
   explorerAdultRateOccupancy,
@@ -28,7 +32,12 @@ import {
   explorerSlideIndex,
   explorerVisibleRateOccupancies,
 } from "@/lib/explorer";
-import { formatMoney, priceLine, priceLinePending } from "@/lib/pricing";
+import {
+  formatMoney,
+  isDepartureBookable,
+  priceLine,
+  priceLinePending,
+} from "@/lib/pricing";
 import {
   resolveRoomCapacityPolicy,
   validateRoomCapacity,
@@ -148,7 +157,7 @@ const travelUrl = (trip: TravelProduct) => `/viajes/${trip.slug}`;
 const available = (trip: TravelProduct) =>
   trip.departures.find(
     (departure) =>
-      departure.saleStatus !== "sold_out" && departure.availableSpaces > 0,
+      isDepartureBookable(departure) && departure.availableSpaces > 0,
   ) ?? trip.departures[0];
 const availabilityMode = (
   agency: Agency,
@@ -157,6 +166,11 @@ const availabilityMode = (
   trip.availabilityDisplayMode ??
   agency.settings.availabilityDisplayMode ??
   "status_only";
+const availabilityLabel = (
+  agency: Agency,
+  trip: TravelProduct,
+  departure: TravelProduct["departures"][number],
+) => getAvailabilityLabel(availabilityMode(agency, trip), departure);
 const occupancyName = (occupancy?: string) =>
   ({
     single: "Sencilla",
@@ -683,6 +697,8 @@ function BoutiqueCard({ trip, onOpen }: CardProps) {
 
 function MarketplaceCard({ trip, onOpen }: CardProps) {
   const departure = available(trip);
+  const agency = agencies.find((item) => item.id === trip.agencyId)!;
+  const availability = availabilityLabel(agency, trip, departure);
   return (
     <article className="market-card">
       <div className="market-card-image">
@@ -721,12 +737,12 @@ function MarketplaceCard({ trip, onOpen }: CardProps) {
         </strong>
         {!trip.basePrice.taxesIncluded && (
           <small>
-            +{" "}
-            {formatMoney(
-              trip.basePrice.taxesAmount ?? 0,
-              trip.basePrice.currency,
-            )}{" "}
-            imp.
+            {trip.basePrice.taxesAmount === undefined
+              ? "Impuestos por confirmar"
+              : `+ ${formatMoney(
+                  trip.basePrice.taxesAmount,
+                  trip.basePrice.currency,
+                )} imp.`}
           </small>
         )}
         <small>
@@ -736,9 +752,19 @@ function MarketplaceCard({ trip, onOpen }: CardProps) {
             trip.basePrice.currency,
           )}
         </small>
-        <b className={departure.availableSpaces < 6 ? "is-limited" : ""}>
-          {departure.availableSpaces} lugares
-        </b>
+        {availability && (
+          <b
+            className={
+              departure.saleStatus === "limited" ||
+              (availabilityMode(agency, trip) === "remaining_places" &&
+                departure.availableSpaces < 6)
+                ? "is-limited"
+                : ""
+            }
+          >
+            {availability}
+          </b>
+        )}
         <button onClick={() => onOpen(trip)}>Ver programa</button>
       </div>
     </article>
@@ -2146,7 +2172,11 @@ function SharedCatalog({
               </button>
             </div>
           ) : table && theme === "marketplace" ? (
-            <MarketplaceTable trips={results} onOpen={onOpen} />
+            <MarketplaceTable
+              agency={agency}
+              trips={results}
+              onOpen={onOpen}
+            />
           ) : (
             <div className={`v2-card-grid ${theme}-results-grid`}>
               {results.map((trip) => (
@@ -2161,9 +2191,11 @@ function SharedCatalog({
 }
 
 function MarketplaceTable({
+  agency,
   trips,
   onOpen,
 }: {
+  agency: Agency;
   trips: TravelProduct[];
   onOpen: OpenTrip;
 }) {
@@ -2179,6 +2211,7 @@ function MarketplaceTable({
       </div>
       {trips.map((trip) => {
         const departure = available(trip);
+        const availability = availabilityLabel(agency, trip, departure);
         const point = departurePoints.find(
           (item) =>
             item.id === departure.boardingOptions[0]?.agencyDeparturePointId,
@@ -2214,7 +2247,9 @@ function MarketplaceTable({
               <small>
                 {trip.basePrice.taxesIncluded
                   ? "Impuestos incluidos"
-                  : `+ ${formatMoney(trip.basePrice.taxesAmount ?? 0, trip.basePrice.currency)} imp.`}
+                  : trip.basePrice.taxesAmount === undefined
+                    ? "Impuestos por confirmar"
+                    : `+ ${formatMoney(trip.basePrice.taxesAmount, trip.basePrice.currency)} imp.`}
               </small>
               <small>
                 Anticipo{" "}
@@ -2225,9 +2260,19 @@ function MarketplaceTable({
               </small>
             </span>
             <span>
-              <b className={departure.availableSpaces < 6 ? "is-limited" : ""}>
-                {departure.availableSpaces} lugares
-              </b>
+              {availability && (
+                <b
+                  className={
+                    departure.saleStatus === "limited" ||
+                    (availabilityMode(agency, trip) === "remaining_places" &&
+                      departure.availableSpaces < 6)
+                      ? "is-limited"
+                      : ""
+                  }
+                >
+                  {availability}
+                </b>
+              )}
               <button onClick={() => onOpen(trip)}>Ver programa →</button>
             </span>
           </article>
@@ -2313,18 +2358,19 @@ function SharedBookingPanel({
           value={departureId}
           onChange={(event) => changeDeparture(event.target.value)}
         >
-          {trip.departures.map((item) => (
-            <option
-              key={item.id}
-              value={item.id}
-              disabled={item.saleStatus === "sold_out"}
-            >
-              {dateLabel(item.startDate, true)} ·{" "}
-              {item.saleStatus === "sold_out"
-                ? "Agotada"
-                : `${item.availableSpaces} lugares`}
-            </option>
-          ))}
+          {trip.departures.map((item) => {
+            const availability = availabilityLabel(agency, trip, item);
+            return (
+              <option
+                key={item.id}
+                value={item.id}
+                disabled={item.saleStatus === "sold_out"}
+              >
+                {dateLabel(item.startDate, true)}
+                {availability ? ` · ${availability}` : ""}
+              </option>
+            );
+          })}
         </select>
       </label>
       <fieldset>
@@ -3434,7 +3480,7 @@ function ExplorerDetail({
   );
 }
 
-function SharedConfigurableSections({ trip, theme }: { trip: TravelProduct; theme: Exclude<TravelTheme, "explorer"> }) {
+function SharedConfigurableSections({ agency, trip, theme }: { agency: Agency; trip: TravelProduct; theme: Exclude<TravelTheme, "explorer"> }) {
   const sections = resolveTripSections(trip);
   const video = getSafeVideoPresentation(trip.videoContent);
   return <div className={`shared-configurable-sections ${theme}-section-renderer`}>
@@ -3447,7 +3493,7 @@ function SharedConfigurableSections({ trip, theme }: { trip: TravelProduct; them
       if(section.type==="itinerary")return <section id={section.id} key={section.id}><span className="section-label">ITINERARIO</span><h2>{heading}</h2>{trip.itinerary.map((day)=><details key={day.id??day.day} open={trip.itinerarySettings?.displayMode==="all_open"||day.day===1&&trip.itinerarySettings?.displayMode==="first_open"}><summary><b>{String(day.day).padStart(2,"0")}</b><span>{day.title}</span><i>+</i></summary><p>{day.description}</p></details>)}</section>;
       if(section.type==="included")return <section id={section.id} key={section.id} className="v2-includes"><div><h3>Incluye</h3>{trip.inclusionsContent?.included.map((item)=><p key={item.id}>✓ {item.text}</p>)}</div><div><h3>No incluye</h3>{trip.inclusionsContent?.excluded.map((item)=><p key={item.id}>— {item.text}</p>)}</div></section>;
       if(section.type==="map")return <section id={section.id} key={section.id}><span className="section-label">RUTA</span><h2>{heading}</h2><div className="shared-route">{getOrderedRouteStops(trip.mapSettings).map((stop)=><span key={stop.id}><b>{stop.dayNumber}</b>{stop.name}</span>)}</div></section>;
-      if(section.type==="departures")return <section id={section.id} key={section.id} className="v2-date-list"><span className="section-label">FECHAS</span><h2>{heading}</h2>{trip.departures.map((item)=><div key={item.id}><time>{dateLabel(item.startDate,true)}</time><span>{formatMoney(getTripDisplayStartingPrice({trip,departure:item}).amount,trip.basePrice.currency)}</span><b>{item.saleStatus.replace("_"," ")}</b></div>)}</section>;
+      if(section.type==="departures")return <section id={section.id} key={section.id} className="v2-date-list"><span className="section-label">FECHAS</span><h2>{heading}</h2>{trip.departures.map((item)=>{const availability=availabilityLabel(agency,trip,item);return <div key={item.id}><time>{dateLabel(item.startDate,true)}</time><span>{formatMoney(getTripDisplayStartingPrice({trip,departure:item}).amount,trip.basePrice.currency)}</span>{availability&&<b>{availability}</b>}</div>})}</section>;
       if(section.type==="rates")return <section id={section.id} key={section.id} className="v2-rate-section"><span className="section-label">TARIFAS</span><h2>{heading}</h2>{trip.pricingOptions.map((rate)=><div key={rate.id}><span><b>{rate.label}</b><small>{rate.occupancy==="double"?"Precio de referencia":rate.occupancy}</small></span><strong>{formatMoney(rate.amount,rate.currency)}</strong></div>)}</section>;
       if(section.type==="recommendations")return <section id={section.id} key={section.id}><span className="section-label">RECOMENDACIONES</span><h2>{heading}</h2><ul>{getRecommendationItems(trip).map((item)=><li key={item.id}>{item.text}</li>)}</ul></section>;
       if(section.type==="departure_points")return <section id={section.id} key={section.id}><span className="section-label">PUNTOS DE SALIDA</span><h2>{heading}</h2>{getPublicDeparturePoints(trip.publicDeparturePoints).map((point)=><article className="shared-point" key={point.id}><b>{point.name}{point.airportCode?` · ${point.airportCode}`:""}</b><p>{[point.city,point.reference,point.meetingTime].filter(Boolean).join(" · ")}</p></article>)}</section>;
@@ -3470,6 +3516,7 @@ function SharedDetail({
   onNavigate: (path: string) => void;
 }) {
   const departure = available(trip);
+  const availability = availabilityLabel(agency, trip, departure);
   return (
     <main className={`v2-detail ${theme}-detail`}>
       {theme === "explorer" && (
@@ -3532,7 +3579,9 @@ function SharedDetail({
               <span>
                 {trip.basePrice.taxesIncluded
                   ? "Impuestos incluidos"
-                  : `+ ${formatMoney(trip.basePrice.taxesAmount ?? 0, trip.basePrice.currency)} impuestos`}
+                  : trip.basePrice.taxesAmount === undefined
+                    ? "Impuestos por confirmar"
+                    : `+ ${formatMoney(trip.basePrice.taxesAmount, trip.basePrice.currency)} impuestos`}
               </span>
               <button
                 onClick={() =>
@@ -3551,7 +3600,7 @@ function SharedDetail({
               [trip.cities.length, "Ciudades"],
               [trip.transportTypes.join(", "), "Transporte"],
               [trip.departures.length, "Salidas"],
-              [departure.availableSpaces, "Lugares"],
+              ...(availability ? [[availability, "Disponibilidad"]] : []),
             ].map(([value, label]) => (
               <span key={label}>
                 <b>{value}</b>
@@ -3601,7 +3650,7 @@ function SharedDetail({
                 [`${trip.durationDays} días`, "Duración"],
                 [trip.countries.join(", "), "País"],
                 [trip.transportTypes.join(", "), "Transporte"],
-                [`${departure.availableSpaces} lugares`, "Disponibilidad"],
+                ...(availability ? [[availability, "Disponibilidad"]] : []),
               ].map(([value, label]) => (
                 <span key={label}>
                   <b>{value}</b>
@@ -3611,7 +3660,11 @@ function SharedDetail({
             </div>
           )}
           {trip.pageConfiguration && theme !== "explorer" ? (
-            <SharedConfigurableSections trip={trip} theme={theme} />
+            <SharedConfigurableSections
+              agency={agency}
+              trip={trip}
+              theme={theme}
+            />
           ) : (
           <>
           <section id="descripción">
@@ -3671,15 +3724,15 @@ function SharedDetail({
           </section>
           <section id="fechas" className="v2-date-list">
             <span className="section-label">FECHAS Y SALIDAS</span>
-            {trip.departures.map((item) => (
-              <div key={item.id}>
-                <time>{dateLabel(item.startDate, true)}</time>
-                <span>
-                  {item.availableSpaces} / {item.capacity} lugares
-                </span>
-                <b>{item.saleStatus.replace("_", " ")}</b>
-              </div>
-            ))}
+            {trip.departures.map((item) => {
+              const itemAvailability = availabilityLabel(agency, trip, item);
+              return (
+                <div key={item.id}>
+                  <time>{dateLabel(item.startDate, true)}</time>
+                  {itemAvailability && <b>{itemAvailability}</b>}
+                </div>
+              );
+            })}
           </section>
           <section id="condiciones">
             <span className="section-label">CONDICIONES</span>

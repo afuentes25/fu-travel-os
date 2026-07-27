@@ -1,10 +1,10 @@
 import { travelerWhatsAppSummary } from "@/lib/travelers";
-import type {
-  Agency,
-  PricedCartLine,
-  TravelerDataStatus,
-  TravelerDraft,
-} from "@/types";
+import {
+  formatAppliedRate,
+  formatMinorUnits,
+  fxContractualPaymentLabel,
+} from "@/lib/fx";
+import type { Agency, PricedCartLine, TravelerDataStatus, TravelerDraft } from "@/types";
 export function whatsappUrl(
   agency: Agency,
   line: PricedCartLine,
@@ -18,6 +18,8 @@ export function whatsappUrl(
     deposit?: number;
   },
 ) {
+  const allocation = line.paymentAllocation;
+  const snapshot = line.fxSnapshot;
   const msg = [
     `Hola ${agency.name}, me interesa ${line.travel.title}.`,
     `Salida: ${new Date(line.travel.departures.find((d) => d.id === line.departureId)!.startDate).toLocaleDateString("es-MX")}.`,
@@ -33,7 +35,18 @@ export function whatsappUrl(
       : `Viajeros: ${line.travelers}.`,
     travelerData?.minors ? `Menores: ${travelerData.minors}.` : "",
     `Total estimado: ${travelerData?.total ?? line.total} ${line.travel.basePrice.currency}.`,
-    `Anticipo: ${travelerData?.deposit ?? line.deposit} ${line.travel.basePrice.currency}.`,
+    allocation
+      ? `${fxContractualPaymentLabel(allocation.kind)}: ${formatMinorUnits(allocation.contractualPaymentMinor, allocation.contractCurrency)}.`
+      : `Anticipo: ${travelerData?.deposit ?? line.deposit} ${line.travel.basePrice.currency}.`,
+    allocation
+      ? `Cobro demo actual: ${formatMinorUnits(allocation.chargeNowMinor, allocation.chargeCurrency)}.`
+      : "",
+    allocation
+      ? `Saldo contractual: ${formatMinorUnits(allocation.remainingContractMinor, allocation.contractCurrency)}.`
+      : "",
+    snapshot
+      ? `Tasa demo aplicada: ${formatAppliedRate(snapshot)} MXN/USD.`
+      : "",
     travelerData
       ? travelerWhatsAppSummary(travelerData.status, travelerData.drafts)
       : "",

@@ -11,8 +11,13 @@ export function LavellaDestinationCard({
   onOpen: (trip: TravelProduct) => void;
 }) {
   return (
-    <article className={styles.destinationCard}>
-      <button className={styles.destinationImage} onClick={() => onOpen(trip)}>
+    <article className={styles.destinationCard} data-lavella-surface="light">
+      <button
+        className={styles.destinationImage}
+        data-lavella-surface="image"
+        onClick={() => onOpen(trip)}
+        aria-label={`Ver viajes a ${trip.cities[0] ?? trip.title}`}
+      >
         <Image src={trip.featuredImage} alt="" fill sizes="(max-width:760px) 88vw, 31vw" />
       </button>
       <div className={styles.destinationBody}>
@@ -20,10 +25,10 @@ export function LavellaDestinationCard({
         <h3>{trip.cities[0] ?? trip.title}</h3>
         <p>{trip.summary}</p>
       </div>
-      <footer>
+      <div className={styles.destinationCardFooter}>
         <small>{trip.departures.length} salidas</small>
         <button onClick={() => onOpen(trip)}>Ver viajes <FaArrowRight /></button>
-      </footer>
+      </div>
     </article>
   );
 }

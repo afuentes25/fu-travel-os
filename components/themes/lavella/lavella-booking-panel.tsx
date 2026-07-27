@@ -7,7 +7,20 @@ import {
   explorerAdultRateOccupancy,
   explorerVisibleRateOccupancies,
 } from "@/lib/explorer";
-import { formatMoney, priceLinePending } from "@/lib/pricing";
+import {
+  createDeterministicDemoPaymentQuote,
+  formatAppliedRate,
+  formatFxMarkup,
+  formatMinorUnits,
+  formatSourceRate,
+  toMinorUnits,
+} from "@/lib/fx";
+import {
+  formatMoney,
+  isDepartureBookable,
+  priceLinePending,
+  resolveDepositAmount,
+} from "@/lib/pricing";
 import {
   resolveRoomCapacityPolicy,
   validateRoomCapacity,
@@ -20,11 +33,13 @@ import {
 import type {
   Agency,
   CartLine,
-  DepositPolicy,
+  FxSnapshot,
+  PaymentAllocation,
   TravelProduct,
 } from "@/types";
 import styles from "./lavella-booking.module.css";
 import {
+  lavellaCategory,
   lavellaDate,
   lavellaDeparture,
   lavellaStartingPrice,
@@ -41,16 +56,6 @@ const occupancyLabel = (value?: string) =>
     child: "Menor",
     general: "Adulto",
   })[value ?? ""] ?? "Por confirmar";
-
-const calculateDeposit = (
-  policy: DepositPolicy | undefined,
-  total: number,
-  fallback: number,
-) => {
-  if (!policy?.enabled) return fallback;
-  if (policy.type === "fixed") return Math.max(policy.fixedAmount ?? fallback, policy.minimumAmount ?? 0);
-  return Math.max(total * ((policy.percentage ?? 100) / 100), policy.minimumAmount ?? 0);
-};
 
 export function LavellaBookingPanel({
   agency,
@@ -71,6 +76,8 @@ export function LavellaBookingPanel({
   const [sheet, setSheet] = useState(false);
   const [showMobileBar, setShowMobileBar] = useState(false);
   const [mounted, setMounted] = useState(false);
+  const [fxSnapshot, setFxSnapshot] = useState<FxSnapshot>();
+  const [paymentAllocation, setPaymentAllocation] = useState<PaymentAllocation>();
   const triggerRef = useRef<HTMLButtonElement>(null);
   const sheetRef = useRef<HTMLDivElement>(null);
   const hotel = trip.accommodationMode === "hotel_occupancy";
@@ -131,19 +138,65 @@ export function LavellaBookingPanel({
   const charges =
     (adultPrice?.extrasTotal ?? 0) + (minorPrice?.extrasTotal ?? 0);
   const total = (adultPrice?.total ?? 0) + (minorPrice?.total ?? 0);
-  const deposit = calculateDeposit(
-    departure.depositPolicy ?? trip.depositPolicy,
+  const starting = lavellaStartingPrice(trip, departure);
+  const deposit = resolveDepositAmount({
+    policy:
+      departure.depositPolicy ??
+      departure.pricing?.pricingOverrides?.depositPolicy ??
+      trip.depositPolicy,
     total,
-    (adultPrice?.deposit ?? 0) + (minorPrice?.deposit ?? 0),
+    fallbackPerTraveler: trip.basePrice.depositAmount ?? starting.amount,
+    travelers: adults + minors,
+  });
+  const fxPolicy = agency.settings.exchangeRatePolicy;
+  const foreignPricing = trip.foreignCurrencyPricing;
+  const fxEnabled = Boolean(
+    fxPolicy?.enabled &&
+      foreignPricing?.convertDepositAtCheckout &&
+      foreignPricing.pricingCurrency !== foreignPricing.checkoutChargeCurrency,
   );
   const canReserve = Boolean(
     adultPrice &&
       (!hotel || (occupancy && adults <= 4)) &&
       (!minors || minorPrice) &&
-      capacityValid,
+      capacityValid &&
+      isDepartureBookable(departure) &&
+      (!fxEnabled || (fxSnapshot && paymentAllocation)),
   );
-  const starting = lavellaStartingPrice(trip, departure);
   useEffect(() => setMounted(true), []);
+  useEffect(() => {
+    let cancelled = false;
+    if (!fxEnabled || !fxPolicy || !foreignPricing || !total || !deposit) {
+      setFxSnapshot(undefined);
+      setPaymentAllocation(undefined);
+      return;
+    }
+    createDeterministicDemoPaymentQuote({
+      policy: fxPolicy,
+      sourceCurrency: foreignPricing.pricingCurrency,
+      chargeCurrency: foreignPricing.checkoutChargeCurrency,
+      contractTotalMinor: toMinorUnits(total, foreignPricing.pricingCurrency),
+      contractualPaymentMinor: toMinorUnits(
+        deposit,
+        foreignPricing.pricingCurrency,
+      ),
+      kind: "deposit",
+    })
+      .then(({ snapshot, allocation }) => {
+        if (cancelled) return;
+        setFxSnapshot(snapshot);
+        setPaymentAllocation(allocation);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setFxSnapshot(undefined);
+          setPaymentAllocation(undefined);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [deposit, foreignPricing, fxEnabled, fxPolicy, total]);
   useEffect(() => {
     const hero = document.querySelector("[data-lavella-detail-hero]");
     if (!hero) return;
@@ -205,6 +258,8 @@ export function LavellaBookingPanel({
       .filter(Boolean)
       .map((line) => ({
         ...line!,
+        ...(fxSnapshot ? { fxSnapshot } : {}),
+        ...(paymentAllocation ? { paymentAllocation } : {}),
         travelerDataStatus: previousLines[0]?.travelerDataStatus ?? "pending",
         travelerDrafts: reconciled.drafts.filter(
           (draft) =>
@@ -229,6 +284,8 @@ export function LavellaBookingPanel({
         ...(hotel && occupancy ? { occupancy } : {}),
         total,
         deposit,
+        ...(fxSnapshot ? { fxSnapshot } : {}),
+        ...(paymentAllocation ? { paymentAllocation } : {}),
       }),
     );
     window.location.assign(`/carrito${window.location.search}`);
@@ -243,6 +300,12 @@ export function LavellaBookingPanel({
       ? `Somos ${capacity.totalCountedGuests} personas y la capacidad máxima es ${policy.defaultMaxGuestsPerRoom}. ¿Me ayudan a cotizar más habitaciones?`
       : "¿Me pueden compartir los puntos de ascenso disponibles?",
     total ? `Total estimado: ${formatMoney(total, trip.basePrice.currency)}` : "",
+    fxSnapshot && paymentAllocation
+      ? `Anticipo contractual: ${formatMinorUnits(paymentAllocation.contractualPaymentMinor, paymentAllocation.contractCurrency)} · Cobro demo: ${formatMinorUnits(paymentAllocation.chargeNowMinor, paymentAllocation.chargeCurrency)}`
+      : "",
+    fxSnapshot
+      ? `Tasa demo aplicada: ${formatAppliedRate(fxSnapshot)} MXN por USD`
+      : "",
   ]
     .filter(Boolean)
     .join("\n");
@@ -252,7 +315,7 @@ export function LavellaBookingPanel({
       <div className={styles.bookingVisual}>
         <Image src={trip.featuredImage} alt="" fill sizes="400px" />
         <div>
-          <span>★★★★★</span>
+          <span>{lavellaCategory(trip).toUpperCase()}</span>
           <h2>{trip.title}</h2>
           <p>
             {trip.durationDays} {trip.durationDays === 1 ? "día" : "días"}
@@ -271,8 +334,8 @@ export function LavellaBookingPanel({
         Fecha de salida
         <select value={departure.id} onChange={(event) => onDepartureChange(event.target.value)}>
           {trip.departures.map((item) => (
-            <option key={item.id} value={item.id} disabled={item.saleStatus === "sold_out"}>
-              {lavellaDate(item.startDate, true)} · {item.saleStatus === "sold_out" ? "Agotada" : "Programada"}
+            <option key={item.id} value={item.id} disabled={!isDepartureBookable(item)}>
+              {lavellaDate(item.startDate, true)} · {!isDepartureBookable(item) ? "Finalizada" : "Programada"}
             </option>
           ))}
         </select>
@@ -309,8 +372,15 @@ export function LavellaBookingPanel({
         {charges > 0 && <span><small>Cargos</small><b>{formatMoney(charges, trip.basePrice.currency)}</b></span>}
         <strong><span>Total</span><b>{canReserve ? formatMoney(total, trip.basePrice.currency) : "Por confirmar"}</b></strong>
         <small>{trip.basePrice.taxesIncluded ? "Impuestos incluidos" : taxes ? "Impuestos desglosados" : "Impuestos por confirmar"}</small>
+        {fxSnapshot && paymentAllocation && (
+          <div className={styles.fxEstimate} role="note">
+            <span><small>Anticipo contractual</small><b>{formatMinorUnits(paymentAllocation.contractualPaymentMinor, paymentAllocation.contractCurrency)}</b></span>
+            <span><small>Estimado de cobro hoy</small><b>{formatMinorUnits(paymentAllocation.chargeNowMinor, paymentAllocation.chargeCurrency)}</b></span>
+            <p>Tasa fuente demo {formatSourceRate(fxSnapshot)} + margen {formatFxMarkup(fxSnapshot)} · aplicada {formatAppliedRate(fxSnapshot)} MXN/USD. El saldo de {formatMinorUnits(paymentAllocation.remainingContractMinor, paymentAllocation.contractCurrency)} permanece en USD.</p>
+          </div>
+        )}
         <button disabled={!canReserve} onClick={reserve}>
-          {capacityValid ? "Reservar ahora" : "Ajusta viajeros"}
+          {!capacityValid ? "Ajusta viajeros" : fxEnabled && !fxSnapshot ? "Calculando tasa…" : "Reservar ahora"}
         </button>
         {mounted && (
           <a
@@ -328,7 +398,11 @@ export function LavellaBookingPanel({
   );
   return (
     <>
-      <aside className={styles.bookingPanel} aria-label="Configurar reserva">
+      <aside
+        className={styles.bookingPanel}
+        aria-label="Configurar reserva"
+        data-lavella-surface="light"
+      >
         {fields}
       </aside>
       <div className={`${styles.mobileBookingBar} ${showMobileBar ? styles.mobileBookingBarVisible : ""}`}>
@@ -348,7 +422,14 @@ export function LavellaBookingPanel({
       </div>
       {sheet && (
         <div className={styles.sheetBackdrop} onMouseDown={(event) => event.target === event.currentTarget && setSheet(false)}>
-          <div ref={sheetRef} className={styles.bookingSheet} role="dialog" aria-modal="true" aria-label="Configurar reserva">
+          <div
+            ref={sheetRef}
+            className={styles.bookingSheet}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Configurar reserva"
+            data-lavella-surface="light"
+          >
             <header><b>Configura tu reserva</b><button onClick={() => setSheet(false)} aria-label="Cerrar reserva"><FaXmark /></button></header>
             <div className={styles.bookingSheetScroll}>{fields}</div>
           </div>

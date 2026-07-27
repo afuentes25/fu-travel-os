@@ -11,11 +11,20 @@ export const lavellaDate = (value?: string, withYear = false) =>
       })
     : "Por confirmar";
 
-export const lavellaDeparture = (trip: TravelProduct) =>
-  [...trip.departures]
+export const lavellaDeparture = (
+  trip: TravelProduct,
+  now: Date = new Date(),
+) => {
+  const ordered = [...trip.departures]
     .filter((departure) => departure.saleStatus !== "sold_out")
-    .sort((a, b) => a.startDate.localeCompare(b.startDate))[0] ??
-  trip.departures[0];
+    .sort((a, b) => a.startDate.localeCompare(b.startDate));
+  const today = now.toISOString().slice(0, 10);
+  return (
+    ordered.find((departure) => departure.startDate.slice(0, 10) >= today) ??
+    ordered.at(-1) ??
+    trip.departures[0]
+  );
+};
 
 export const lavellaStartingPrice = (
   trip: TravelProduct,
@@ -60,3 +69,19 @@ export const openLavellaWhatsApp = (
 
 export const lavellaCategory = (trip: TravelProduct) =>
   (trip.categoryIds[0] ?? trip.productType).replaceAll("_", " ");
+
+const transportLabels: Record<
+  TravelProduct["transportTypes"][number],
+  string
+> = {
+  air: "Aéreo",
+  ground: "Terrestre",
+  mixed: "Mixto",
+  train: "Tren",
+  cruise: "Crucero",
+  not_included: "No incluido",
+};
+
+export const lavellaTransport = (
+  values: TravelProduct["transportTypes"],
+) => values.map((value) => transportLabels[value]).join(" · ");

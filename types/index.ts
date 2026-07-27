@@ -3,6 +3,107 @@ export type ThemeId = TravelTheme;
 export type AgencyPlan = "start" | "commerce" | "growth" | "scale";
 export type AgencyStatus = "draft" | "active" | "suspended";
 export type Currency = "MXN" | "USD";
+export type LavellaSurfaceTone = "light" | "dark" | "image" | "accent";
+export type HeroSliderSettings = {
+  autoplay: boolean;
+  autoplayDelayMs: number;
+  transitionDurationMs: number;
+  resumeAfterInteractionMs: number;
+};
+export type ExchangeRateMarkup =
+  | { type: "percentage"; basisPoints: number }
+  | { type: "fixed"; amountMinor: number; currency: Currency };
+export type ExchangeRateRoundingPolicy = {
+  mode: "nearest" | "up";
+  incrementMinor: number;
+};
+export type ExchangeRatePolicy = {
+  enabled: boolean;
+  providerId: string;
+  quoteTtlSeconds: number;
+  requireExplicitConsent: boolean;
+  markup: ExchangeRateMarkup;
+  rounding: ExchangeRateRoundingPolicy;
+};
+export type ExchangeRateQuote = {
+  id: string;
+  providerId: string;
+  baseCurrency: Currency;
+  quoteCurrency: Currency;
+  sourceRateUnits: number;
+  rateScale: number;
+  quotedAt: string;
+  expiresAt: string;
+};
+export interface ExchangeRateProvider {
+  readonly id: string;
+  getQuote(input: {
+    baseCurrency: Currency;
+    quoteCurrency: Currency;
+    quotedAt: string;
+  }): Promise<ExchangeRateQuote>;
+}
+export type FxSnapshot = Readonly<{
+  id: string;
+  quoteId: string;
+  providerId: string;
+  sourceCurrency: Currency;
+  chargeCurrency: Currency;
+  sourceRateUnits: number;
+  appliedRateUnits: number;
+  rateScale: number;
+  markup: ExchangeRateMarkup;
+  rounding: ExchangeRateRoundingPolicy;
+  sourceAmountMinor: number;
+  chargeAmountMinor: number;
+  createdAt: string;
+  expiresAt: string;
+}>;
+export type FxConsent = Readonly<{
+  snapshotId: string;
+  acceptedAt: string;
+  disclosureVersion: string;
+  acceptedChargeAmountMinor: number;
+}>;
+export type PaymentAllocation = Readonly<{
+  kind: "deposit" | "full";
+  contractTotalMinor: number;
+  contractualPaymentMinor: number;
+  chargeNowMinor: number;
+  remainingContractMinor: number;
+  contractCurrency: Currency;
+  chargeCurrency: Currency;
+  fxSnapshotId: string;
+}>;
+export type ForeignCurrencyPaymentAllocation = Readonly<
+  PaymentAllocation & {
+    paymentId: string;
+    appliedAt: string;
+  }
+>;
+export type ForeignCurrencyPricing = {
+  pricingCurrency: Currency;
+  settlementCurrency: Currency;
+  checkoutChargeCurrency: Currency;
+  convertDepositAtCheckout: boolean;
+  balanceCurrency: Currency;
+  displayCurrencyMode: "source_only" | "source_and_estimated_mxn";
+};
+export type TravelSeo = {
+  title: string;
+  description: string;
+  keywords?: string[];
+};
+export type SourceReference = {
+  provider: string;
+  sourceUrl: string;
+  reviewedAt: string;
+};
+export type PreTripSegment = {
+  title: string;
+  description: string;
+  startsAt?: string;
+};
 export type GeographicScope = "national" | "international";
 export type TravelProductType =
   | "day_tour"
@@ -129,6 +230,8 @@ export type AgencySettings = {
   availabilityDisplayMode?: AvailabilityDisplayMode;
   travelerCategories?: TravelerCategory[];
   extraVisibility?: ExtraVisibility;
+  heroSliderSettings?: HeroSliderSettings;
+  exchangeRatePolicy?: ExchangeRatePolicy;
 };
 export type Agency = {
   id: string;
@@ -433,6 +536,10 @@ export type TravelProduct = {
   departurePointsDisplayMode?: DeparturePointsDisplayMode;
   importantInformation?: ImportantInformationContent;
   faqContent?: TripFaqContent;
+  sourceReference?: SourceReference;
+  preTripSegment?: PreTripSegment;
+  foreignCurrencyPricing?: ForeignCurrencyPricing;
+  seo?: TravelSeo;
 };
 export type BookingBoardingSnapshot = {
   boardingOptionId: string;
@@ -481,6 +588,10 @@ export type CartLine = {
   extraIds: string[];
   travelerDataStatus?: TravelerDataStatus;
   travelerDrafts?: TravelerDraft[];
+  fxSnapshot?: FxSnapshot;
+  paymentAllocation?: PaymentAllocation;
+  fxConsent?: FxConsent;
+  fxPaymentHistory?: ForeignCurrencyPaymentAllocation[];
 };
 export type PricedCartLine = Omit<CartLine, "boardingOptionId"> & {
   boardingOptionId: string;

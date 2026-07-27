@@ -2,7 +2,25 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { agencies, departurePoints, travels } from "../data/demo/index";
-import { filterCatalog } from "../lib/catalog/index";
+import {
+  filterCatalog,
+  getAvailabilityLabel,
+  getCatalogNextDeparture,
+} from "../lib/catalog/index";
+import {
+  appendFxPaymentAllocation,
+  createDeterministicDemoPaymentQuote,
+  createFxConsent,
+  DeterministicDemoExchangeRateProvider,
+  ensureFreshDeterministicDemoPaymentQuote,
+  formatAppliedRate,
+  fxContractualPaymentLabel,
+  isFxSnapshotExpired,
+  requireFreshFxSnapshot,
+  toMinorUnits,
+  validateFxConsent,
+  validateFxPaymentContext,
+} from "../lib/fx/index";
 import {
   EXPLORER_BOOKING_COLORS,
   EXPLORER_SLIDER_LABELS,
@@ -15,12 +33,16 @@ import {
 } from "../lib/explorer/index";
 import {
   confirmBoardingPoint,
+  estimateCartLines,
   formatMoney,
   priceLine,
   priceLinePending,
   validateCart,
+  validateCartCurrencies,
+  validateDemoFxOrderShape,
   validateCartRoomCapacity,
 } from "../lib/pricing/index";
+import { lavellaDeparture } from "../components/themes/lavella/lavella-utils";
 import {
   DEFAULT_ROOM_CAPACITY_POLICY,
   getRoomCapacity,
@@ -60,7 +82,12 @@ import {
   resolveTripSections,
   validateLead,
 } from "../lib/trip-sections/index";
-import type { CartLine, TravelerDraft } from "../types/index";
+import type {
+  CartLine,
+  PricedCartLine,
+  TravelerDraft,
+  TravelProduct,
+} from "../types/index";
 
 const configuredTrip = () => travels.find((trip) => trip.pageConfiguration)!;
 
@@ -1063,4 +1090,853 @@ test("CSS de detalle Lavella permanece aislado de home y otros temas", () => {
   );
   assert.doesNotMatch(detailCss + bookingCss, /\.explorer-|\.boutique-|\.marketplace-/);
   assert.doesNotMatch(detailCss + bookingCss, /\.home\b|\.catalog\b/);
+});
+
+const sourcedTripIds = [
+  "crisenix-muralla-china-mexicana",
+  "crisenix-guadalajara-mariachi",
+  "crisenix-playas-riscos-veracruz",
+  "crisenix-costas-oaxaca",
+  "crisenix-velada-astronomica-vip",
+  "crisenix-chepe-premier",
+  "crisenix-patagonia-fin-del-mundo",
+] as const;
+
+const sourcedTrips = () =>
+  sourcedTripIds.map(
+    (id) => travels.find((trip) => trip.id === id)!,
+  );
+
+const patagonia = () =>
+  travels.find(
+    (trip) => trip.id === "crisenix-patagonia-fin-del-mundo",
+  )!;
+
+const crisenixFxPolicy = () =>
+  agencies.find((agency) => agency.id === "a-crisenix")!.settings
+    .exchangeRatePolicy!;
+
+test("flecha Lavella usa el SVG adquirido existente y corrección óptica", () => {
+  const hero = readFileSync(
+    "components/themes/lavella/lavella-home-hero.tsx",
+    "utf8",
+  );
+  const css = readFileSync(
+    "components/themes/lavella/lavella-home.module.css",
+    "utf8",
+  );
+  const svg = readFileSync("public/themes/lavella/slide-arrow.svg", "utf8");
+  assert.match(hero, /\/themes\/lavella\/slide-arrow\.svg/);
+  assert.doesNotMatch(hero, /left-arrow\.svg/);
+  assert.match(svg, /viewBox="0 0 20\.051 14\.097"/);
+  assert.match(css, /\.heroArrow img[\s\S]*translateX\(1px\)/);
+});
+
+test("autoplay Lavella usa 5000, transición 650 y reanudación 7000", () => {
+  const hero = readFileSync(
+    "components/themes/lavella/lavella-home-hero.tsx",
+    "utf8",
+  );
+  assert.match(hero, /LAVELLA_SLIDER_AUTOPLAY_MS = 5000/);
+  assert.match(hero, /LAVELLA_SLIDER_TRANSITION_MS = 650/);
+  assert.match(hero, /LAVELLA_SLIDER_RESUME_AFTER_INTERACTION_MS = 7000/);
+});
+
+test("slider Lavella usa un temporizador rearmable sin setInterval", () => {
+  const hero = readFileSync(
+    "components/themes/lavella/lavella-home-hero.tsx",
+    "utf8",
+  );
+  assert.match(hero, /setTimeout/);
+  assert.doesNotMatch(hero, /setInterval/);
+  assert.match(hero, /visibilitychange/);
+  assert.match(hero, /prefers-reduced-motion/);
+});
+
+test("destinos populares usa el carrusel proporcional de Lavella", () => {
+  const home = readFileSync(
+    "components/themes/lavella/lavella-home.tsx",
+    "utf8",
+  );
+  assert.match(home, /destinationRail/);
+  assert.match(home, /LavellaDestinationCard/);
+  assert.match(home, /moveDestinations/);
+  assert.doesNotMatch(home, /destinationMosaic/);
+});
+
+test("componentes Lavella declaran superficies claras, oscuras e imagen", () => {
+  const files = [
+    "lavella-home.tsx",
+    "lavella-header.tsx",
+    "lavella-mobile-menu.tsx",
+    "lavella-catalog.tsx",
+    "lavella-trip-detail.tsx",
+    "lavella-trip-hero.tsx",
+    "lavella-booking-panel.tsx",
+    "lavella-footer.tsx",
+  ]
+    .map((name) =>
+      readFileSync(`components/themes/lavella/${name}`, "utf8"),
+    )
+    .join("\n");
+  assert.match(files, /data-lavella-surface="light"/);
+  assert.match(files, /data-lavella-surface="dark"/);
+  assert.match(files, /data-lavella-surface="image"/);
+});
+
+test("viajes populares usa cuatro columnas en el viewport compatible", () => {
+  const css = readFileSync(
+    "components/themes/lavella/lavella-home.module.css",
+    "utf8",
+  );
+  assert.match(
+    css,
+    /\.classicPopularGrid[\s\S]*grid-template-columns: repeat\(4, minmax\(0, 1fr\)\)/,
+  );
+});
+
+test("card Lavella no inventa rating ni reseñas", () => {
+  const card = readFileSync(
+    "components/themes/lavella/lavella-tour-card.tsx",
+    "utf8",
+  );
+  assert.doesNotMatch(card, /reseñas|reviews|FaStar|★★★★★/i);
+});
+
+test("home Lavella solicita ocho próximas expediciones", () => {
+  const home = readFileSync(
+    "components/themes/lavella/lavella-home.tsx",
+    "utf8",
+  );
+  assert.match(home, /trips\.slice\(0, 8\)/);
+});
+
+test("sidebar Lavella es sticky en escritorio con altura de viewport", () => {
+  const css = readFileSync(
+    "components/themes/lavella/lavella-catalog.module.css",
+    "utf8",
+  );
+  assert.match(css, /\.sidebar \{[\s\S]*position: sticky/);
+  assert.match(css, /max-height: calc\(100dvh/);
+  assert.match(css, /align-self: start/);
+});
+
+test("sidebar Lavella solo usa fixed dentro del breakpoint móvil", () => {
+  const css = readFileSync(
+    "components/themes/lavella/lavella-catalog.module.css",
+    "utf8",
+  );
+  const desktop = css.slice(0, css.indexOf("@media (max-width: 1000px)"));
+  const mobile = css.slice(css.indexOf("@media (max-width: 1000px)"));
+  assert.doesNotMatch(desktop, /\.sidebar \{[\s\S]*position: fixed/);
+  assert.match(mobile, /\.sidebar \{[\s\S]*position: fixed/);
+});
+
+test("detalle Lavella elimina la franja de introducción previa al submenú", () => {
+  const detail = readFileSync(
+    "components/themes/lavella/lavella-trip-detail.tsx",
+    "utf8",
+  );
+  assert.doesNotMatch(detail, /styles\.introduction/);
+});
+
+test("hero de detalle separa contenido editorial y oferta comercial", () => {
+  const css = readFileSync(
+    "components/themes/lavella/lavella-detail.module.css",
+    "utf8",
+  );
+  assert.match(
+    css,
+    /\.tripHeroRow[\s\S]*grid-template-columns: minmax\(0, 1fr\) minmax\(250px, 340px\)/,
+  );
+  assert.match(css, /\.tripHeroOffer[\s\S]*gap: 16px/);
+});
+
+test("adultos y menores comparten fila en el panel Lavella", () => {
+  const css = readFileSync(
+    "components/themes/lavella/lavella-booking.module.css",
+    "utf8",
+  );
+  assert.match(
+    css,
+    /\.travelerRows[\s\S]*grid-template-columns: 1fr 1fr/,
+  );
+});
+
+test("reserva y WhatsApp comparten fila en escritorio Lavella", () => {
+  const css = readFileSync(
+    "components/themes/lavella/lavella-booking.module.css",
+    "utf8",
+  );
+  assert.match(
+    css,
+    /\.bookingFooter[\s\S]*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/,
+  );
+});
+
+test("itinerario Lavella no muestra HORARIO", () => {
+  const itinerary = readFileSync(
+    "components/themes/lavella/lavella-trip-sections.tsx",
+    "utf8",
+  );
+  assert.doesNotMatch(itinerary, />HORARIO</);
+});
+
+test("itinerario Lavella no muestra PARADAS", () => {
+  const itinerary = readFileSync(
+    "components/themes/lavella/lavella-trip-sections.tsx",
+    "utf8",
+  );
+  assert.doesNotMatch(itinerary, />PARADAS</);
+});
+
+test("paradas tipadas siguen disponibles para el mapa", () => {
+  assert.ok(
+    sourcedTrips().every((trip) =>
+      trip.itinerary.every((day) => (day.stops?.length ?? 0) > 0),
+    ),
+  );
+  assert.ok(
+    sourcedTrips().every(
+      (trip) => (trip.mapSettings?.routeStops?.length ?? 0) >= trip.durationDays,
+    ),
+  );
+});
+
+test("existen exactamente los siete viajes fuente Crisenix", () => {
+  assert.equal(sourcedTrips().filter(Boolean).length, 7);
+  assert.ok(
+    sourcedTrips().every(
+      (trip) =>
+        trip.sourceReference?.provider === "Crisenix" &&
+        trip.sourceReference.reviewedAt === "2026-07-26",
+    ),
+  );
+});
+
+test("slugs de viajes fuente son únicos en el catálogo compartido", () => {
+  const slugs = travels.map((trip) => trip.slug);
+  assert.equal(new Set(slugs).size, slugs.length);
+});
+
+test("los siete viajes usan un único dato compartido para los cuatro temas", () => {
+  const registry = readFileSync("components/travel-app.tsx", "utf8");
+  for (const theme of [
+    "explorer",
+    "boutique",
+    "marketplace",
+    "lavella",
+  ]) {
+    assert.match(registry, new RegExp(`${theme}:`));
+  }
+  assert.equal(
+    travels.filter((trip) => sourcedTripIds.includes(trip.id as never)).length,
+    7,
+  );
+});
+
+test("duraciones y noches de los siete viajes coinciden con las fuentes", () => {
+  assert.deepEqual(
+    sourcedTrips().map((trip) => [
+      trip.durationDays,
+      trip.durationNights,
+    ]),
+    [
+      [1, 0],
+      [2, 1],
+      [3, 2],
+      [4, 3],
+      [5, 4],
+      [6, 5],
+      [13, 12],
+    ],
+  );
+});
+
+test("tarifas dobles publicadas son la referencia de hospedaje", () => {
+  assert.deepEqual(
+    sourcedTrips()
+      .slice(1)
+      .map(
+        (trip) =>
+          trip.pricingOptions.find((rate) => rate.occupancy === "double")
+            ?.amount,
+      ),
+    [3490, 4990, 6990, 19390, 27900, 5290],
+  );
+});
+
+test("tarifas no publicadas no se inventan", () => {
+  const [muralla, , , , velada, chepe, argentina] = sourcedTrips();
+  assert.equal(
+    muralla.pricingOptions.some((rate) => rate.occupancy === "child"),
+    false,
+  );
+  assert.equal(
+    velada.pricingOptions.some((rate) => rate.occupancy === "quadruple"),
+    false,
+  );
+  assert.equal(
+    chepe.pricingOptions.some((rate) => rate.occupancy === "quadruple"),
+    false,
+  );
+  assert.deepEqual(
+    argentina.pricingOptions.map((rate) => rate.occupancy),
+    ["double"],
+  );
+});
+
+test("Muralla de un día no usa hospedaje", () => {
+  const muralla = sourcedTrips()[0];
+  assert.equal(muralla.accommodationMode, "none");
+  assert.equal(muralla.durationNights, 0);
+});
+
+test("Día 0 se conserva como segmento previo sin aumentar duración", () => {
+  for (const trip of sourcedTrips().slice(1, 4)) {
+    assert.ok(trip.preTripSegment);
+  }
+  assert.deepEqual(
+    sourcedTrips()
+      .slice(1, 4)
+      .map((trip) => trip.durationDays),
+    [2, 3, 4],
+  );
+});
+
+test("Patagonia conserva precio y obligación contractual en USD", () => {
+  const trip = patagonia();
+  assert.equal(trip.basePrice.currency, "USD");
+  assert.equal(trip.basePrice.amount, 5290);
+  assert.equal(trip.foreignCurrencyPricing?.pricingCurrency, "USD");
+  assert.equal(trip.foreignCurrencyPricing?.settlementCurrency, "USD");
+  assert.equal(trip.foreignCurrencyPricing?.checkoutChargeCurrency, "MXN");
+});
+
+test("la conversión no sobrescribe el total contractual USD", async () => {
+  const quote = await createDeterministicDemoPaymentQuote({
+    policy: crisenixFxPolicy(),
+    sourceCurrency: "USD",
+    chargeCurrency: "MXN",
+    contractTotalMinor: toMinorUnits(5290, "USD"),
+    contractualPaymentMinor: toMinorUnits(1587, "USD"),
+    kind: "deposit",
+    quotedAt: "2026-07-26T12:00:00.000Z",
+  });
+  assert.equal(quote.allocation.contractTotalMinor, 529000);
+  assert.equal(quote.allocation.contractCurrency, "USD");
+  assert.equal(quote.allocation.chargeCurrency, "MXN");
+});
+
+test("conversión genera snapshot enlazado al intento", async () => {
+  const result = await createDeterministicDemoPaymentQuote({
+    policy: crisenixFxPolicy(),
+    sourceCurrency: "USD",
+    chargeCurrency: "MXN",
+    contractTotalMinor: 529000,
+    contractualPaymentMinor: 158700,
+    kind: "deposit",
+    quotedAt: "2026-07-26T12:00:00.000Z",
+  });
+  assert.equal(result.allocation.fxSnapshotId, result.snapshot.id);
+  assert.equal(result.snapshot.providerId, "demo-deterministic-v1");
+});
+
+test("snapshot FX es inmutable", async () => {
+  const result = await createDeterministicDemoPaymentQuote({
+    policy: crisenixFxPolicy(),
+    sourceCurrency: "USD",
+    chargeCurrency: "MXN",
+    contractTotalMinor: 529000,
+    contractualPaymentMinor: 158700,
+    kind: "deposit",
+    quotedAt: "2026-07-26T12:00:00.000Z",
+  });
+  assert.equal(Object.isFrozen(result.snapshot), true);
+  assert.equal(Object.isFrozen(result.snapshot.markup), true);
+});
+
+test("snapshot expirado requiere una nueva cotización", async () => {
+  const result = await createDeterministicDemoPaymentQuote({
+    policy: crisenixFxPolicy(),
+    sourceCurrency: "USD",
+    chargeCurrency: "MXN",
+    contractTotalMinor: 529000,
+    contractualPaymentMinor: 158700,
+    kind: "deposit",
+    quotedAt: "2026-07-26T12:00:00.000Z",
+  });
+  assert.equal(
+    isFxSnapshotExpired(result.snapshot, "2026-07-26T12:16:00.000Z"),
+    true,
+  );
+  assert.throws(
+    () =>
+      requireFreshFxSnapshot(
+        result.snapshot,
+        "2026-07-26T12:16:00.000Z",
+      ),
+    /venció/,
+  );
+});
+
+test("recotización reemplaza un snapshot vencido y valida el nuevo intento", async () => {
+  const context = {
+    policy: crisenixFxPolicy(),
+    sourceCurrency: "USD" as const,
+    chargeCurrency: "MXN" as const,
+    contractTotalMinor: 529000,
+    contractualPaymentMinor: 158700,
+    kind: "deposit" as const,
+  };
+  const original = await createDeterministicDemoPaymentQuote({
+    ...context,
+    quotedAt: "2026-07-26T12:00:00.000Z",
+  });
+  const refreshed = await ensureFreshDeterministicDemoPaymentQuote({
+    ...context,
+    current: original,
+    quotedAt: "2026-07-26T12:16:00.000Z",
+  });
+  assert.notEqual(refreshed.snapshot.id, original.snapshot.id);
+  assert.equal(
+    validateFxPaymentContext({
+      snapshot: refreshed.snapshot,
+      allocation: refreshed.allocation,
+      sourceCurrency: context.sourceCurrency,
+      chargeCurrency: context.chargeCurrency,
+      contractTotalMinor: context.contractTotalMinor,
+      contractualPaymentMinor: context.contractualPaymentMinor,
+      kind: context.kind,
+      now: "2026-07-26T12:16:01.000Z",
+    }),
+    true,
+  );
+});
+
+test("anticipo mantiene saldo contractual en USD", async () => {
+  const result = await createDeterministicDemoPaymentQuote({
+    policy: crisenixFxPolicy(),
+    sourceCurrency: "USD",
+    chargeCurrency: "MXN",
+    contractTotalMinor: 529000,
+    contractualPaymentMinor: 158700,
+    kind: "deposit",
+    quotedAt: "2026-07-26T12:00:00.000Z",
+  });
+  assert.equal(result.allocation.remainingContractMinor, 370300);
+  assert.equal(result.allocation.contractCurrency, "USD");
+});
+
+test("cada abono puede conservar un snapshot nuevo en el historial", async () => {
+  const first = await createDeterministicDemoPaymentQuote({
+    policy: crisenixFxPolicy(),
+    sourceCurrency: "USD",
+    chargeCurrency: "MXN",
+    contractTotalMinor: 529000,
+    contractualPaymentMinor: 100000,
+    kind: "deposit",
+    quotedAt: "2026-07-26T12:00:00.000Z",
+  });
+  const second = await createDeterministicDemoPaymentQuote({
+    policy: crisenixFxPolicy(),
+    sourceCurrency: "USD",
+    chargeCurrency: "MXN",
+    contractTotalMinor: 429000,
+    contractualPaymentMinor: 100000,
+    kind: "deposit",
+    quotedAt: "2026-08-26T12:00:00.000Z",
+  });
+  let history = appendFxPaymentAllocation({
+    history: [],
+    allocation: first.allocation,
+    paymentId: "payment-1",
+    appliedAt: "2026-07-26T12:05:00.000Z",
+  });
+  history = appendFxPaymentAllocation({
+    history: [...history],
+    allocation: second.allocation,
+    paymentId: "payment-2",
+    appliedAt: "2026-08-26T12:05:00.000Z",
+  });
+  assert.notEqual(first.snapshot.id, second.snapshot.id);
+  assert.equal(history.length, 2);
+});
+
+test("pago total liquida el saldo USD", async () => {
+  const result = await createDeterministicDemoPaymentQuote({
+    policy: crisenixFxPolicy(),
+    sourceCurrency: "USD",
+    chargeCurrency: "MXN",
+    contractTotalMinor: 529000,
+    contractualPaymentMinor: 529000,
+    kind: "full",
+    quotedAt: "2026-07-26T12:00:00.000Z",
+  });
+  assert.equal(result.allocation.remainingContractMinor, 0);
+  assert.equal(result.allocation.kind, "full");
+  assert.equal(
+    fxContractualPaymentLabel(result.allocation.kind),
+    "Pago contractual",
+  );
+});
+
+test("WhatsApp describe pago total sin etiquetarlo como anticipo", async () => {
+  const trip = patagonia();
+  const departure = trip.departures[0];
+  const agency = agencies.find((item) => item.id === trip.agencyId)!;
+  const option = departure.boardingOptions[0];
+  const point = departurePoints.find(
+    (item) => item.id === option.agencyDeparturePointId,
+  )!;
+  const result = await createDeterministicDemoPaymentQuote({
+    policy: crisenixFxPolicy(),
+    sourceCurrency: "USD",
+    chargeCurrency: "MXN",
+    contractTotalMinor: 529000,
+    contractualPaymentMinor: 529000,
+    kind: "full",
+    quotedAt: new Date().toISOString(),
+  });
+  const boarding = {
+    boardingOptionId: option.id,
+    boardingPointId: point.id,
+    pointName: point.name,
+    address: point.address,
+    reference: point.reference,
+    city: point.city,
+    meetingTime: option.meetingTime,
+    departureTime: option.departureTime,
+    surchargeAmount: option.surchargeAmount ?? 0,
+    surchargeType: option.surchargeType ?? ("per_person" as const),
+    currency: option.currency ?? trip.basePrice.currency,
+    instructions: option.instructionsOverride ?? point.instructions,
+  };
+  const priced = {
+    id: "patagonia-whatsapp-full",
+    agencyId: trip.agencyId,
+    travelId: trip.id,
+    departureId: departure.id,
+    boardingOptionId: option.id,
+    boardingSnapshot: boarding,
+    pricingOptionId: trip.pricingOptions[0].id,
+    travelers: 1,
+    extraIds: [],
+    fxSnapshot: result.snapshot,
+    paymentAllocation: result.allocation,
+    travel: trip,
+    departure,
+    boarding,
+    subtotal: 5290,
+    taxes: 0,
+    surcharge: 0,
+    extrasTotal: 0,
+    total: 5290,
+    deposit: 1587,
+  } satisfies PricedCartLine;
+  const message = decodeURIComponent(
+    whatsappUrl(agency, priced).split("text=")[1],
+  );
+  assert.match(message, /Pago contractual:/);
+  assert.doesNotMatch(message, /Anticipo:/);
+});
+
+test("carrito no suma MXN y USD", () => {
+  const mxn = sourcedTrips()[0];
+  const usd = patagonia();
+  const makeLine = (trip: TravelProduct): CartLine => ({
+    id: `line-${trip.id}`,
+    agencyId: trip.agencyId,
+    travelId: trip.id,
+    departureId: trip.departures[0].id,
+    boardingOptionId: null,
+    pricingOptionId: trip.pricingOptions[0].id,
+    travelers: 1,
+    extraIds: [],
+  });
+  assert.throws(
+    () => validateCartCurrencies([makeLine(mxn), makeLine(usd)]),
+    /mezclar monedas/,
+  );
+});
+
+test("redondeo FX ocurre al final según política de agencia", async () => {
+  const deposit = await createDeterministicDemoPaymentQuote({
+    policy: crisenixFxPolicy(),
+    sourceCurrency: "USD",
+    chargeCurrency: "MXN",
+    contractTotalMinor: 529000,
+    contractualPaymentMinor: 158700,
+    kind: "deposit",
+    quotedAt: "2026-07-26T12:00:00.000Z",
+  });
+  const full = await createDeterministicDemoPaymentQuote({
+    policy: crisenixFxPolicy(),
+    sourceCurrency: "USD",
+    chargeCurrency: "MXN",
+    contractTotalMinor: 529000,
+    contractualPaymentMinor: 529000,
+    kind: "full",
+    quotedAt: "2026-07-26T12:00:00.000Z",
+  });
+  assert.equal(deposit.snapshot.chargeAmountMinor, 2_792_400);
+  assert.equal(full.snapshot.chargeAmountMinor, 9_307_800);
+  assert.equal(formatAppliedRate(deposit.snapshot), "17.5950");
+});
+
+test("consentimiento enlaza tasa, monto y versión del texto", async () => {
+  const result = await createDeterministicDemoPaymentQuote({
+    policy: crisenixFxPolicy(),
+    sourceCurrency: "USD",
+    chargeCurrency: "MXN",
+    contractTotalMinor: 529000,
+    contractualPaymentMinor: 158700,
+    kind: "deposit",
+    quotedAt: "2026-07-26T12:00:00.000Z",
+  });
+  const consent = createFxConsent({
+    snapshot: result.snapshot,
+    acceptedAt: "2026-07-26T12:05:00.000Z",
+  });
+  assert.equal(
+    validateFxConsent({
+      snapshot: result.snapshot,
+      consent,
+      now: "2026-07-26T12:06:00.000Z",
+    }),
+    true,
+  );
+  assert.equal(consent.acceptedChargeAmountMinor, 2_792_400);
+  assert.equal(consent.disclosureVersion, "fx-demo-v1");
+});
+
+test("checkout valida defensivamente snapshot y asignación", async () => {
+  const result = await createDeterministicDemoPaymentQuote({
+    policy: crisenixFxPolicy(),
+    sourceCurrency: "USD",
+    chargeCurrency: "MXN",
+    contractTotalMinor: 529000,
+    contractualPaymentMinor: 158700,
+    kind: "deposit",
+    quotedAt: "2026-07-26T12:00:00.000Z",
+  });
+  assert.equal(
+    validateFxPaymentContext({
+      snapshot: result.snapshot,
+      allocation: result.allocation,
+      sourceCurrency: "USD",
+      chargeCurrency: "MXN",
+      contractTotalMinor: 529000,
+      contractualPaymentMinor: 158700,
+      kind: "deposit",
+      now: "2026-07-26T12:05:00.000Z",
+    }),
+    true,
+  );
+  assert.throws(
+    () =>
+      validateFxPaymentContext({
+        snapshot: result.snapshot,
+        allocation: result.allocation,
+        sourceCurrency: "USD",
+        chargeCurrency: "MXN",
+        contractTotalMinor: 529001,
+        contractualPaymentMinor: 158700,
+        kind: "deposit",
+        now: "2026-07-26T12:05:00.000Z",
+      }),
+    /no coincide/,
+  );
+});
+
+test("carrito conserva theme y tenant al reservar Lavella", () => {
+  const booking = readFileSync(
+    "components/themes/lavella/lavella-booking-panel.tsx",
+    "utf8",
+  );
+  assert.match(
+    booking,
+    /window\.location\.assign\(`\/carrito\$\{window\.location\.search\}`\)/,
+  );
+});
+
+test("proveedor determinista no se presenta como Banxico", async () => {
+  const provider = new DeterministicDemoExchangeRateProvider();
+  const quote = await provider.getQuote({
+    baseCurrency: "USD",
+    quoteCurrency: "MXN",
+    quotedAt: "2026-07-26T12:00:00.000Z",
+  });
+  assert.equal(quote.providerId, "demo-deterministic-v1");
+  assert.doesNotMatch(quote.providerId, /banxico/i);
+});
+
+test("utilidades monetarias usan unidades menores seguras", () => {
+  assert.equal(toMinorUnits(1587, "USD"), 158700);
+  assert.equal(toMinorUnits(27924, "MXN"), 2792400);
+  assert.throws(() => toMinorUnits(Number.POSITIVE_INFINITY, "MXN"));
+});
+
+test("catálogo y Lavella eligen la próxima salida futura", () => {
+  const muralla = sourcedTrips()[0];
+  const now = new Date("2026-07-26T12:00:00.000Z");
+  assert.equal(
+    lavellaDeparture(muralla, now).startDate.slice(0, 10),
+    "2026-09-19",
+  );
+  assert.equal(
+    getCatalogNextDeparture(muralla, now).startDate.slice(0, 10),
+    "2026-09-19",
+  );
+});
+
+test("impuestos desconocidos no se representan como cero confirmado", () => {
+  const [muralla, guadalajara, veracruz, oaxaca] = sourcedTrips();
+  for (const trip of [muralla, guadalajara, veracruz, oaxaca]) {
+    assert.equal(trip.basePrice.taxesIncluded, false);
+    assert.equal(trip.basePrice.taxesAmount, undefined);
+  }
+});
+
+test("la demo restringe múltiples grupos FX para no compartir snapshot", () => {
+  const trip = patagonia();
+  const base: CartLine = {
+    id: "patagonia-1",
+    agencyId: trip.agencyId,
+    travelId: trip.id,
+    departureId: trip.departures[0].id,
+    boardingOptionId: null,
+    pricingOptionId: trip.pricingOptions[0].id,
+    travelers: 1,
+    extraIds: [],
+  };
+  assert.throws(
+    () =>
+      validateDemoFxOrderShape([
+        base,
+        {
+          ...base,
+          id: "patagonia-2",
+          departureId: `${base.departureId}-otra`,
+        },
+      ]),
+    /un viaje internacional/,
+  );
+});
+
+test("un viaje FX debe reservarse sin otro viaje aunque ambos usen USD", () => {
+  const foreignTrip = patagonia();
+  const usdWithoutFx = travels.find(
+    (trip) =>
+      trip.agencyId === foreignTrip.agencyId &&
+      trip.basePrice.currency === "USD" &&
+      !trip.foreignCurrencyPricing,
+  )!;
+  const makeLine = (trip: TravelProduct): CartLine => ({
+    id: `line-${trip.id}`,
+    agencyId: trip.agencyId,
+    travelId: trip.id,
+    departureId: trip.departures[0].id,
+    boardingOptionId: null,
+    pricingOptionId: trip.pricingOptions[0].id,
+    travelers: 1,
+    extraIds: [],
+  });
+  assert.equal(
+    validateCartCurrencies([makeLine(foreignTrip), makeLine(usdWithoutFx)]),
+    true,
+  );
+  assert.throws(
+    () =>
+      validateDemoFxOrderShape([
+        makeLine(foreignTrip),
+        makeLine(usdWithoutFx),
+      ]),
+    /sin otros viajes/,
+  );
+});
+
+test("checkout puede representar una línea persistida inválida sin lanzar", () => {
+  const trip = patagonia();
+  const [result] = estimateCartLines([
+    {
+      id: "persisted-invalid-line",
+      agencyId: trip.agencyId,
+      travelId: trip.id,
+      departureId: "departure-removed",
+      boardingOptionId: null,
+      pricingOptionId: trip.pricingOptions[0].id,
+      travelers: 1,
+      extraIds: [],
+    },
+  ]);
+  assert.equal(result.estimate, null);
+  assert.match(result.error, /reserva inválida|no está disponible/);
+});
+
+test("itinerarios fuente no fabrican horarios públicos", () => {
+  assert.ok(
+    sourcedTrips().every((trip) =>
+      trip.itinerary.every((day) => day.startTime === undefined),
+    ),
+  );
+});
+
+test("visibilidad de disponibilidad distingue oculto, estado y conteo", () => {
+  const departure = {
+    ...sourcedTrips()[0].departures[0],
+    saleStatus: "scheduled" as const,
+    availableSpaces: 40,
+  };
+  assert.equal(getAvailabilityLabel("hidden", departure), null);
+  assert.equal(getAvailabilityLabel("status_only", departure), "Disponible");
+  assert.equal(
+    getAvailabilityLabel("remaining_places", departure),
+    "40 lugares",
+  );
+});
+
+test("estados de salida prevalecen sobre un conteo operativo", () => {
+  const departure = sourcedTrips()[0].departures[0];
+  assert.equal(
+    getAvailabilityLabel("status_only", {
+      ...departure,
+      saleStatus: "limited",
+    }),
+    "Últimos lugares",
+  );
+  assert.equal(
+    getAvailabilityLabel("remaining_places", {
+      ...departure,
+      saleStatus: "sold_out",
+    }),
+    "Agotado",
+  );
+  assert.equal(
+    getAvailabilityLabel("remaining_places", {
+      ...departure,
+      saleStatus: "cancelled",
+    }),
+    "Cancelada",
+  );
+});
+
+test("Marketplace y detalle compartido consumen la visibilidad configurada", () => {
+  const source = readFileSync("components/travel-app.tsx", "utf8");
+  const marketplaceCard = source.slice(
+    source.indexOf("function MarketplaceCard"),
+    source.indexOf("function ExplorerSearch"),
+  );
+  const marketplaceTable = source.slice(
+    source.indexOf("function MarketplaceTable"),
+    source.indexOf("function SharedBookingPanel"),
+  );
+  const sharedDetail = source.slice(
+    source.indexOf("function SharedDetail"),
+    source.indexOf("export function TravelApp"),
+  );
+  assert.match(marketplaceCard, /availabilityLabel\(agency, trip, departure\)/);
+  assert.match(marketplaceTable, /availabilityLabel\(agency, trip, departure\)/);
+  assert.match(sharedDetail, /availabilityLabel\(agency, trip, departure\)/);
+  assert.match(sharedDetail, /availabilityLabel\(agency, trip, item\)/);
 });

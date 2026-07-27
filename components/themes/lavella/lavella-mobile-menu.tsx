@@ -67,6 +67,7 @@ export function LavellaMobileMenu({
     <div className={styles.mobileOverlay} role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
       <aside
         className={styles.mobileMenu}
+        data-lavella-surface="dark"
         ref={panelRef}
         role="dialog"
         aria-modal="true"

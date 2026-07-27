@@ -4,10 +4,26 @@ import { useEffect, useMemo, useState } from "react";
 import { agencies, departurePoints, destinations, travels } from "@/data/demo";
 import { filterCatalog } from "@/lib/catalog";
 import {
+  createFxConsent,
+  ensureFreshDeterministicDemoPaymentQuote,
+  fxContractualPaymentLabel,
+  formatAppliedRate,
+  formatFxMarkup,
+  formatMinorUnits,
+  formatSourceRate,
+  toMinorUnits,
+  validateFxConsent,
+  validateFxPaymentContext,
+} from "@/lib/fx";
+import {
   confirmBoardingPoint,
+  estimateCartLines,
   formatMoney,
   priceLine,
   priceLinePending,
+  validateCartCurrencies,
+  validateDemoFxOrderShape,
+  validateFxGroupConsistency,
   validateCartRoomCapacity,
 } from "@/lib/pricing";
 import { resolveTenant, resolveTheme } from "@/lib/tenancy";
@@ -27,6 +43,9 @@ import type {
   TravelProduct,
   TripSectionConfig,
   TravelTheme,
+  FxConsent,
+  FxSnapshot,
+  PaymentAllocation,
 } from "@/types";
 
 const nav = [
@@ -101,6 +120,7 @@ function DemoBar({
           <option value="explorer">Explorer</option>
           <option value="boutique">Boutique</option>
           <option value="marketplace">Marketplace</option>
+          <option value="lavella">Lavella</option>
         </select>
       </label>
       <button onClick={() => onChange("view", admin ? "public" : "admin")}>
@@ -798,11 +818,13 @@ function Detail({
 function Cart({
   lines,
   agency,
+  theme,
   onRemove,
   onCheckout,
 }: {
   lines: CartLine[];
   agency: Agency;
+  theme: TravelTheme;
   onRemove: (id: string) => void;
   onCheckout: () => void;
 }) {
@@ -834,6 +856,28 @@ function Cart({
         ? error.message
         : "La cantidad de viajeros excede la capacidad máxima de la habitación.";
   }
+  let currencyError = "";
+  try {
+    validateCartCurrencies(lines);
+    validateDemoFxOrderShape(lines);
+    if (
+      lines.some(
+        (line) => Boolean(line.fxSnapshot || line.paymentAllocation),
+      )
+    )
+      validateFxGroupConsistency(lines);
+  } catch (error) {
+    currencyError =
+      error instanceof Error
+        ? error.message
+        : "No puedes mezclar monedas en una misma orden.";
+  }
+  const fxLine = lines.find(
+    (line) => line.fxSnapshot && line.paymentAllocation,
+  );
+  const fxSnapshot = fxLine?.fxSnapshot;
+  const paymentAllocation = fxLine?.paymentAllocation;
+  const commercialError = roomError || currencyError;
   return (
     <main className="simple-page">
       <header className="page-title">
@@ -850,6 +894,11 @@ function Cart({
             <p className="cart-room-error" role="alert">
               {roomError} Reduce viajeros o solicita apoyo para distribuirlos en
               más habitaciones.
+            </p>
+          )}
+          {currencyError && (
+            <p className="cart-room-error" role="alert">
+              {currencyError} Ajusta el carrito antes de continuar.
             </p>
           )}
           <div className="cart-list">
@@ -870,7 +919,7 @@ function Cart({
                       ? "menores"
                       : "adultos"}
                   </p>
-                  {agency.theme === "explorer" && (
+                  {(theme === "explorer" || theme === "lavella") && (
                     <p>
                       Tarifa:{" "}
                       <b>
@@ -922,17 +971,61 @@ function Cart({
             ))}
           </div>
           <div className="cart-total">
-            <span>Total antes de confirmar abordaje</span>
+            <span>
+              {currencyError
+                ? currencyError.includes("mezclar monedas")
+                  ? "Totales separados por moneda"
+                  : "Total no disponible"
+                : "Total antes de confirmar abordaje"}
+            </span>
             <b>
-              {formatMoney(total, items[0].estimate.travel.basePrice.currency)}
+              {currencyError
+                ? "No disponible"
+                : formatMoney(
+                    total,
+                    items[0].estimate.travel.basePrice.currency,
+                  )}
             </b>
+            {fxSnapshot && paymentAllocation && (
+              <div className="fx-cart-summary" role="note">
+                <span>
+                  {fxContractualPaymentLabel(paymentAllocation.kind)}{" "}
+                  <b>
+                    {formatMinorUnits(
+                      paymentAllocation.contractualPaymentMinor,
+                      paymentAllocation.contractCurrency,
+                    )}
+                  </b>
+                </span>
+                <span>
+                  Cobro demo en México{" "}
+                  <b>
+                    {formatMinorUnits(
+                      paymentAllocation.chargeNowMinor,
+                      paymentAllocation.chargeCurrency,
+                    )}
+                  </b>
+                </span>
+                <small>
+                  Tasa fuente demo {formatSourceRate(fxSnapshot)} + margen{" "}
+                  {formatFxMarkup(fxSnapshot)} · aplicada{" "}
+                  {formatAppliedRate(fxSnapshot)} MXN/USD · saldo{" "}
+                  {formatMinorUnits(
+                    paymentAllocation.remainingContractMinor,
+                    paymentAllocation.contractCurrency,
+                  )}
+                </small>
+              </div>
+            )}
             <button
               className="primary"
-              disabled={Boolean(roomError)}
+              disabled={Boolean(commercialError)}
               onClick={onCheckout}
             >
-              {roomError
-                ? "Ajusta la cantidad de viajeros"
+              {commercialError
+                ? roomError
+                  ? "Ajusta la cantidad de viajeros"
+                  : "Ajusta el carrito"
                 : "Continuar al checkout"}{" "}
               <Icon name="arrow" />
             </button>
@@ -1289,11 +1382,13 @@ function TravelerStep({
 function Checkout({
   lines,
   agency,
+  theme,
   onDone,
   onUpdate,
 }: {
   lines: CartLine[];
   agency: Agency;
+  theme: TravelTheme;
   onDone: () => void;
   onUpdate: (line: CartLine) => void;
 }) {
@@ -1306,6 +1401,24 @@ function Checkout({
   const [travelerDrafts, setTravelerDrafts] = useState<TravelerDraft[]>(() =>
     draftsFromLines(lines),
   );
+  const [paymentKind, setPaymentKind] = useState<"deposit" | "full">(
+    lines[0]?.paymentAllocation?.kind ?? "deposit",
+  );
+  const [checkoutFxSnapshot, setCheckoutFxSnapshot] = useState<
+    FxSnapshot | undefined
+  >(lines.find((line) => line.fxSnapshot)?.fxSnapshot);
+  const [checkoutPaymentAllocation, setCheckoutPaymentAllocation] = useState<
+    PaymentAllocation | undefined
+  >(lines.find((line) => line.paymentAllocation)?.paymentAllocation);
+  const [fxAccepted, setFxAccepted] = useState(false);
+  const [checkoutFxConsent, setCheckoutFxConsent] = useState<
+    FxConsent | undefined
+  >(lines.find((line) => line.fxConsent)?.fxConsent);
+  const [fxQuoteStatus, setFxQuoteStatus] = useState<
+    "idle" | "loading" | "ready" | "error"
+  >("idle");
+  const [fxQuoteError, setFxQuoteError] = useState("");
+  const [fxQuoteRequestNonce, setFxQuoteRequestNonce] = useState(0);
   let roomError = "";
   try {
     validateCartRoomCapacity(lines);
@@ -1315,23 +1428,139 @@ function Checkout({
         ? capacityError.message
         : "La cantidad de viajeros excede la capacidad máxima de la habitación.";
   }
+  let currencyError = "";
+  try {
+    validateCartCurrencies(lines);
+    validateDemoFxOrderShape(lines);
+  } catch (currencyIssue) {
+    currencyError =
+      currencyIssue instanceof Error
+        ? currencyIssue.message
+        : "No puedes mezclar monedas en una misma orden.";
+  }
+  const estimateResults = estimateCartLines(lines);
+  const pricingError =
+    estimateResults.find((result) => !result.estimate)?.error ?? "";
+  const estimates = estimateResults.flatMap((result) =>
+    result.estimate ? [result.estimate] : [],
+  );
   const boardingComplete =
     lines.length > 0 &&
     !roomError &&
+    !currencyError &&
+    !pricingError &&
     lines.every((line) => Boolean(line.boardingOptionId));
-  const estimates = lines
-    .map((line) => {
-      try {
-        return line.boardingOptionId ? priceLine(line) : priceLinePending(line);
-      } catch {
-        return null;
-      }
-    })
-    .filter(Boolean) as Array<
-    ReturnType<typeof priceLine> | ReturnType<typeof priceLinePending>
-  >;
-  const priced = boardingComplete ? lines.map(priceLine) : [];
+  const priced = boardingComplete
+    ? (estimates as ReturnType<typeof priceLine>[])
+    : [];
   const total = estimates.reduce((sum, item) => sum + item.total, 0);
+  const contractualDeposit = estimates.reduce(
+    (sum, item) => sum + item.deposit,
+    0,
+  );
+  const foreignTravel = estimates.find(
+    (item) => item.travel.foreignCurrencyPricing?.convertDepositAtCheckout,
+  )?.travel;
+  const foreignPricing = foreignTravel?.foreignCurrencyPricing;
+  const fxPolicy = agency.settings.exchangeRatePolicy;
+  const fxRequired = Boolean(
+    foreignPricing &&
+      fxPolicy?.enabled &&
+      foreignPricing.pricingCurrency !==
+        foreignPricing.checkoutChargeCurrency,
+  );
+  const contractualPayment =
+    paymentKind === "full" ? total : contractualDeposit;
+  const requestFxRequote = (message = "") => {
+    setFxAccepted(false);
+    setCheckoutFxConsent(undefined);
+    setCheckoutFxSnapshot(undefined);
+    setCheckoutPaymentAllocation(undefined);
+    setFxQuoteError(message);
+    setFxQuoteStatus("loading");
+    setFxQuoteRequestNonce((current) => current + 1);
+  };
+  useEffect(() => {
+    let cancelled = false;
+    if (
+      step < 4 ||
+      !fxRequired ||
+      !foreignPricing ||
+      !fxPolicy ||
+      !total ||
+      !contractualPayment
+    ) {
+      if (!fxRequired) {
+        setFxQuoteStatus("idle");
+        setFxQuoteError("");
+      }
+      return;
+    }
+    const contractTotalMinor = toMinorUnits(
+      total,
+      foreignPricing.pricingCurrency,
+    );
+    const contractualPaymentMinor = toMinorUnits(
+      contractualPayment,
+      foreignPricing.pricingCurrency,
+    );
+    const existing = lines.find(
+      (line) =>
+        line.fxSnapshot &&
+        line.paymentAllocation &&
+        line.paymentAllocation.kind === paymentKind &&
+        line.fxSnapshot.sourceAmountMinor === contractualPaymentMinor &&
+        line.paymentAllocation.contractTotalMinor === contractTotalMinor,
+    );
+    setFxQuoteStatus("loading");
+    setFxQuoteError("");
+    setFxAccepted(false);
+    ensureFreshDeterministicDemoPaymentQuote({
+      current:
+        existing?.fxSnapshot && existing.paymentAllocation
+          ? {
+              snapshot: existing.fxSnapshot,
+              allocation: existing.paymentAllocation,
+            }
+          : undefined,
+      policy: fxPolicy,
+      sourceCurrency: foreignPricing.pricingCurrency,
+      chargeCurrency: foreignPricing.checkoutChargeCurrency,
+      contractTotalMinor,
+      contractualPaymentMinor,
+      kind: paymentKind,
+    })
+      .then(({ snapshot, allocation }) => {
+        if (cancelled) return;
+        setCheckoutFxSnapshot(snapshot);
+        setCheckoutPaymentAllocation(allocation);
+        setFxQuoteStatus("ready");
+      })
+      .catch((quoteError) => {
+        if (cancelled) return;
+        setCheckoutFxSnapshot(undefined);
+        setCheckoutPaymentAllocation(undefined);
+        setFxQuoteStatus("error");
+        setFxQuoteError(
+          quoteError instanceof Error
+            ? quoteError.message
+            : "No fue posible calcular el tipo de cambio demo.",
+        );
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    contractualPayment,
+    foreignPricing,
+    fxPolicy,
+    fxRequired,
+    fxQuoteRequestNonce,
+    lines,
+    paymentKind,
+    step,
+    total,
+  ]);
   const adultCount = travelerDrafts.filter(
     (draft) => draft.category === "adult",
   ).length;
@@ -1351,11 +1580,20 @@ function Checkout({
       <Cart
         lines={[]}
         agency={agency}
+        theme={theme}
         onRemove={() => {}}
         onCheckout={() => {}}
       />
     );
   const next = () => {
+    if (pricingError) {
+      setError(`${pricingError} Actualiza o elimina esta reserva del carrito.`);
+      return;
+    }
+    if (currencyError) {
+      setError(`${currencyError} Ajusta el carrito antes de continuar.`);
+      return;
+    }
     if (roomError) {
       setError(roomError);
       return;
@@ -1366,12 +1604,119 @@ function Checkout({
       );
       return;
     }
-    if (step === 3 && agency.theme === "explorer") {
+    if (
+      step === 3 &&
+      (theme === "explorer" || theme === "lavella")
+    ) {
       const validation = validateTravelerDrafts(travelerDrafts, travelerStatus);
       if (!validation.valid) {
         setError(
           "Escribe el nombre completo de cada viajero o elige Llenar después.",
         );
+        return;
+      }
+    }
+    if (step === 4 && fxRequired) {
+      if (
+        fxQuoteStatus !== "ready" ||
+        !checkoutFxSnapshot ||
+        !checkoutPaymentAllocation
+      ) {
+        setError(
+          fxQuoteError ||
+            "Espera mientras actualizamos el tipo de cambio demo.",
+        );
+        return;
+      }
+      if (fxPolicy?.requireExplicitConsent && !fxAccepted) {
+        setError(
+          "Acepta la conversión de USD a MXN antes de continuar.",
+        );
+        return;
+      }
+      try {
+        validateFxPaymentContext({
+          snapshot: checkoutFxSnapshot,
+          allocation: checkoutPaymentAllocation,
+          sourceCurrency: foreignPricing!.pricingCurrency,
+          chargeCurrency: foreignPricing!.checkoutChargeCurrency,
+          contractTotalMinor: toMinorUnits(
+            total,
+            foreignPricing!.pricingCurrency,
+          ),
+          contractualPaymentMinor: toMinorUnits(
+            contractualPayment,
+            foreignPricing!.pricingCurrency,
+          ),
+          kind: paymentKind,
+        });
+        const consent = createFxConsent({
+          snapshot: checkoutFxSnapshot,
+          acceptedAt: new Date().toISOString(),
+        });
+        validateFxConsent({
+          snapshot: checkoutFxSnapshot,
+          consent,
+        });
+        setCheckoutFxConsent(consent);
+        lines.forEach((line) =>
+          onUpdate({
+            ...line,
+            fxSnapshot: checkoutFxSnapshot,
+            paymentAllocation: checkoutPaymentAllocation,
+            fxConsent: consent,
+          }),
+        );
+      } catch (consentError) {
+        requestFxRequote(
+          "La cotización venció. Estamos calculando un nuevo importe.",
+        );
+        setError(
+          consentError instanceof Error
+            ? consentError.message
+            : "La cotización ya no está vigente.",
+        );
+        return;
+      }
+    }
+    if (
+      step === 5 &&
+      fxRequired &&
+      checkoutFxSnapshot &&
+      fxPolicy?.requireExplicitConsent
+    ) {
+      try {
+        if (!checkoutPaymentAllocation || !foreignPricing)
+          throw new Error("La asignación del pago no está disponible.");
+        validateFxPaymentContext({
+          snapshot: checkoutFxSnapshot,
+          allocation: checkoutPaymentAllocation,
+          sourceCurrency: foreignPricing.pricingCurrency,
+          chargeCurrency: foreignPricing.checkoutChargeCurrency,
+          contractTotalMinor: toMinorUnits(
+            total,
+            foreignPricing.pricingCurrency,
+          ),
+          contractualPaymentMinor: toMinorUnits(
+            contractualPayment,
+            foreignPricing.pricingCurrency,
+          ),
+          kind: paymentKind,
+        });
+        validateFxConsent({
+          snapshot: checkoutFxSnapshot,
+          consent: checkoutFxConsent,
+        });
+      } catch (consentError) {
+        requestFxRequote(
+          "La cotización venció. Estamos calculando un nuevo importe.",
+        );
+        setError(
+          consentError instanceof Error
+            ? consentError.message
+            : "Actualiza y acepta nuevamente la cotización.",
+        );
+        setStep(4);
         return;
       }
     }
@@ -1416,31 +1761,68 @@ function Checkout({
             más habitaciones.
           </p>
         )}
+        {currencyError && (
+          <p className="cart-room-error" role="alert">
+            {currencyError} Ajusta el carrito antes de continuar.
+          </p>
+        )}
+        {pricingError && (
+          <p className="cart-room-error" role="alert">
+            {pricingError} Actualiza o elimina esta reserva del carrito.
+          </p>
+        )}
+        {error &&
+          error !== roomError &&
+          !error.includes("punto de abordaje") &&
+          !error.includes("nombre completo") && (
+            <p className="cart-room-error" role="alert">
+              {error}
+            </p>
+          )}
         {step === 1 && (
           <>
             <h2>Revisa tu viaje</h2>
-            {lines.map((line, index) => (
-              <div className="summary-row" key={line.id}>
-                <span>
-                  {estimates[index].travel.title}
-                  <small>
-                    {line.boardingSnapshot
-                      ? `${line.boardingSnapshot.pointName} · ${line.travelers} viajeros`
-                      : `Punto pendiente · ${line.travelers} viajeros`}
-                  </small>
-                </span>
-                <b>
-                  {formatMoney(
-                    estimates[index].total,
-                    estimates[index].travel.basePrice.currency,
-                  )}
-                </b>
-              </div>
-            ))}
+            {estimateResults.map(({ line, estimate, error: lineError }) =>
+              estimate ? (
+                <div className="summary-row" key={line.id}>
+                  <span>
+                    {estimate.travel.title}
+                    <small>
+                      {line.boardingSnapshot
+                        ? `${line.boardingSnapshot.pointName} · ${line.travelers} viajeros`
+                        : `Punto pendiente · ${line.travelers} viajeros`}
+                    </small>
+                  </span>
+                  <b>
+                    {formatMoney(
+                      estimate.total,
+                      estimate.travel.basePrice.currency,
+                    )}
+                  </b>
+                </div>
+              ) : (
+                <div className="summary-row" key={line.id} role="alert">
+                  <span>
+                    Reserva guardada no disponible
+                    <small>{lineError}</small>
+                  </span>
+                  <b>Revisar</b>
+                </div>
+              ),
+            )}
             <div className="summary-total">
-              Total estimado{" "}
+              {currencyError || pricingError
+                ? currencyError.includes("mezclar monedas")
+                  ? "Totales separados por moneda"
+                  : "Total no disponible"
+                : "Total estimado"}{" "}
               <b>
-                {formatMoney(total, estimates[0].travel.basePrice.currency)}
+                {currencyError || pricingError
+                  ? "No disponible"
+                  : formatMoney(
+                      total,
+                      estimates[0].travel.basePrice.currency,
+                    )}
               </b>
             </div>
           </>
@@ -1467,7 +1849,7 @@ function Checkout({
               onUpdate={onUpdate}
               error={roomError ? "" : error}
             />
-            {agency.theme === "explorer" ? (
+            {theme === "explorer" || theme === "lavella" ? (
               <TravelerStep
                 agency={agency}
                 status={travelerStatus}
@@ -1501,18 +1883,26 @@ function Checkout({
           <>
             <h2>¿Cómo deseas continuar?</h2>
             <div className="choice-grid">
-              {["Anticipo", "Pago total"].map((label) => (
-                <label key={label}>
+              {([
+                { label: "Anticipo", value: "deposit" },
+                { label: "Pago total", value: "full" },
+              ] as const).map((option) => (
+                <label key={option.value}>
                   <input
                     type="radio"
                     name="paymentAmount"
-                    defaultChecked={label === "Anticipo"}
+                    checked={paymentKind === option.value}
+                    onChange={() => {
+                      setPaymentKind(option.value);
+                      setFxAccepted(false);
+                      setCheckoutFxConsent(undefined);
+                    }}
                   />
-                  <b>{label}</b>
+                  <b>{option.label}</b>
                   <small>
-                    {label === "Anticipo"
+                    {option.value === "deposit"
                       ? formatMoney(
-                          priced.reduce((sum, item) => sum + item.deposit, 0),
+                          contractualDeposit,
                           priced[0].travel.basePrice.currency,
                         )
                       : formatMoney(total, priced[0].travel.basePrice.currency)}
@@ -1520,6 +1910,92 @@ function Checkout({
                 </label>
               ))}
             </div>
+            {fxRequired && (
+              <div className="fx-checkout-disclosure">
+                <h3>Conversión de moneda para este pago</h3>
+                <p>
+                  La tarifa está denominada en dólares. El cobro demo se
+                  procesa en pesos mexicanos con la cotización vigente para
+                  este intento.
+                </p>
+                {fxQuoteStatus === "loading" && (
+                  <p role="status">Actualizando la tasa demo…</p>
+                )}
+                {fxQuoteStatus === "error" && (
+                  <>
+                    <p role="alert">{fxQuoteError}</p>
+                    <button
+                      type="button"
+                      onClick={() => requestFxRequote()}
+                    >
+                      Reintentar cotización
+                    </button>
+                  </>
+                )}
+                {checkoutFxSnapshot && checkoutPaymentAllocation && (
+                  <dl>
+                    <div>
+                      <dt>
+                        {fxContractualPaymentLabel(paymentKind)}
+                      </dt>
+                      <dd>
+                        {formatMinorUnits(
+                          checkoutPaymentAllocation.contractualPaymentMinor,
+                          checkoutPaymentAllocation.contractCurrency,
+                        )}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Importe a cobrar</dt>
+                      <dd>
+                        {formatMinorUnits(
+                          checkoutPaymentAllocation.chargeNowMinor,
+                          checkoutPaymentAllocation.chargeCurrency,
+                        )}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Tasa fuente demo</dt>
+                      <dd>
+                        {formatSourceRate(checkoutFxSnapshot)} +{" "}
+                        {formatFxMarkup(checkoutFxSnapshot)}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Tasa final aplicada</dt>
+                      <dd>
+                        {formatAppliedRate(checkoutFxSnapshot)} MXN/USD
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Saldo contractual</dt>
+                      <dd>
+                        {formatMinorUnits(
+                          checkoutPaymentAllocation.remainingContractMinor,
+                          checkoutPaymentAllocation.contractCurrency,
+                        )}
+                      </dd>
+                    </div>
+                  </dl>
+                )}
+                {fxPolicy?.requireExplicitConsent &&
+                  checkoutFxSnapshot &&
+                  checkoutPaymentAllocation && (
+                    <label className="check">
+                      <input
+                        type="checkbox"
+                        checked={fxAccepted}
+                        onChange={(event) =>
+                          setFxAccepted(event.target.checked)
+                        }
+                      />
+                      Entiendo que la tarifa está expresada en USD y que el
+                      cargo en MXN se calcula con la tasa vigente al momento de
+                      cada pago.
+                    </label>
+                  )}
+              </div>
+            )}
             <div className="choice-grid">
               {[
                 "Transferencia",
@@ -1604,17 +2080,68 @@ function Checkout({
                   {formatMoney(total, firstPriced.travel.basePrice.currency)}
                 </b>
               </span>
-              <span>
-                Anticipo{" "}
-                <b>
-                  {formatMoney(
-                    priced.reduce((sum, item) => sum + item.deposit, 0),
-                    firstPriced.travel.basePrice.currency,
+              {!checkoutPaymentAllocation && (
+                <span>
+                  Anticipo{" "}
+                  <b>
+                    {formatMoney(
+                      priced.reduce((sum, item) => sum + item.deposit, 0),
+                      firstPriced.travel.basePrice.currency,
+                    )}
+                  </b>
+                </span>
+              )}
+              {checkoutFxSnapshot && checkoutPaymentAllocation && (
+                <>
+                  <span>
+                    {fxContractualPaymentLabel(
+                      checkoutPaymentAllocation.kind,
+                    )}{" "}
+                    <b>
+                      {formatMinorUnits(
+                        checkoutPaymentAllocation.contractualPaymentMinor,
+                        checkoutPaymentAllocation.contractCurrency,
+                      )}
+                    </b>
+                  </span>
+                  <span>
+                    Cargo demo en México{" "}
+                    <b>
+                      {formatMinorUnits(
+                        checkoutPaymentAllocation.chargeNowMinor,
+                        checkoutPaymentAllocation.chargeCurrency,
+                      )}
+                    </b>
+                  </span>
+                  <span>
+                    Tasa demo aplicada{" "}
+                    <b>
+                      {formatAppliedRate(checkoutFxSnapshot)} MXN/USD
+                    </b>
+                  </span>
+                  <span>
+                    Saldo contractual{" "}
+                    <b>
+                      {formatMinorUnits(
+                        checkoutPaymentAllocation.remainingContractMinor,
+                        checkoutPaymentAllocation.contractCurrency,
+                      )}
+                    </b>
+                  </span>
+                  {checkoutFxConsent && (
+                    <span>
+                      Conversión aceptada{" "}
+                      <b>
+                        {new Date(
+                          checkoutFxConsent.acceptedAt,
+                        ).toLocaleString("es-MX")}
+                      </b>
+                    </span>
                   )}
-                </b>
-              </span>
+                </>
+              )}
             </div>
-            {agency.theme === "explorer" &&
+            {(theme === "explorer" || theme === "lavella") &&
               (travelerStatus === "pending" ? (
                 <div className="confirmation-travelers is-pending">
                   <h3>Datos de viajeros pendientes de completar</h3>
@@ -1643,7 +2170,7 @@ function Checkout({
                 agency,
                 firstPriced,
                 folio,
-                agency.theme === "explorer"
+                theme === "explorer" || theme === "lavella"
                   ? {
                       status: travelerStatus,
                       drafts: travelerDrafts,
@@ -1678,14 +2205,16 @@ function Checkout({
             </button>
             <button
               className="primary"
-              disabled={Boolean(roomError)}
+              disabled={Boolean(roomError || currencyError || pricingError)}
               onClick={next}
             >
               {roomError
                 ? "Ajusta la cantidad de viajeros"
-                : step === 5
-                  ? "Confirmar reserva demo"
-                  : "Continuar"}{" "}
+                : currencyError || pricingError
+                  ? "Revisa el carrito"
+                  : step === 5
+                    ? "Confirmar reserva demo"
+                    : "Continuar"}{" "}
               <Icon name="arrow" />
             </button>
           </div>
@@ -2217,7 +2746,12 @@ export function TravelApp({
   const updateLine = (line: CartLine) => {
     setCart((current) => {
       const next = current.map((item) => (item.id === line.id ? line : item));
-      if (line.boardingSnapshot)
+      if (
+        line.boardingSnapshot ||
+        line.fxSnapshot ||
+        line.paymentAllocation ||
+        line.fxConsent
+      )
         try {
           const draft = JSON.parse(
             localStorage.getItem("fu-travel-booking-draft") ?? "null",
@@ -2238,7 +2772,14 @@ export function TravelApp({
               "fu-travel-booking-draft",
               JSON.stringify({
                 ...draft,
-                boarding: line.boardingSnapshot,
+                ...(line.boardingSnapshot
+                  ? { boarding: line.boardingSnapshot }
+                  : {}),
+                ...(line.fxSnapshot ? { fxSnapshot: line.fxSnapshot } : {}),
+                ...(line.paymentAllocation
+                  ? { paymentAllocation: line.paymentAllocation }
+                  : {}),
+                ...(line.fxConsent ? { fxConsent: line.fxConsent } : {}),
                 total: priced.length
                   ? priced.reduce((sum, item) => sum + item.total, 0)
                   : draft.total,
@@ -2270,6 +2811,7 @@ export function TravelApp({
       <Cart
         lines={cart}
         agency={agency}
+        theme={theme}
         onRemove={(id) =>
           setCart((current) => current.filter((item) => item.id !== id))
         }
@@ -2281,6 +2823,7 @@ export function TravelApp({
       <Checkout
         lines={cart}
         agency={agency}
+        theme={theme}
         onDone={() => {}}
         onUpdate={updateLine}
       />

@@ -3,6 +3,7 @@ import { formatMoney } from "@/lib/pricing";
 import styles from "./lavella-home.module.css";
 import type { LavellaCardProps } from "./lavella-types";
 import {
+  lavellaDate,
   lavellaDeparture,
   lavellaStartingPrice,
 } from "./lavella-utils";
@@ -11,9 +12,30 @@ export function LavellaTourCard({
   trip,
   onOpen,
   featured = false,
+  variant = "cinematic",
 }: LavellaCardProps) {
   const departure = lavellaDeparture(trip);
   const price = lavellaStartingPrice(trip, departure);
+  if (variant === "classic") {
+    return (
+      <article className={styles.tourClassicCard} data-lavella-surface="image">
+        <button onClick={() => onOpen(trip)} aria-label={`Ver ${trip.title}`}>
+          <Image src={trip.featuredImage} alt="" fill sizes="(max-width:760px) 92vw, (max-width:1100px) 45vw, 24vw" />
+          <span className={styles.tourClassicShade} />
+          {trip.promotion && <em>{trip.promotion}</em>}
+          <div className={styles.tourClassicContent}>
+            <small>{trip.cities[0] ?? trip.countries[0]}</small>
+            <h3>{trip.title}</h3>
+            <p>
+              <span><img src="/themes/lavella/clock.svg" alt="" />{trip.durationDays} {trip.durationDays === 1 ? "día" : "días"}</span>
+              <span>{lavellaDate(departure?.startDate)}</span>
+            </p>
+            <b>Desde {formatMoney(price.amount, price.currency)}</b>
+          </div>
+        </button>
+      </article>
+    );
+  }
   return (
     <article className={`${styles.tourCard} ${featured ? styles.tourCardFeatured : ""}`}>
       <button onClick={() => onOpen(trip)} aria-label={`Ver ${trip.title}`}>
@@ -21,16 +43,6 @@ export function LavellaTourCard({
         <span className={styles.tourShade} />
         {trip.promotion && <em>{trip.promotion}</em>}
         <div className={styles.tourCardContent}>
-          <div className={styles.rating} aria-label="Calificación 4 de 5">
-            {[0, 1, 2, 3, 4].map((star) => (
-              <img
-                key={star}
-                src={star < 4 ? "/themes/lavella/star-active.svg" : "/themes/lavella/star.svg"}
-                alt=""
-              />
-            ))}
-            <span>({trip.departures.length + 1} reseñas)</span>
-          </div>
           <h3>
             {trip.title} <i>|</i>{" "}
             {formatMoney(price.amount, price.currency)}
