@@ -1,0 +1,85 @@
+.lavella-commerce {
+  --brand: #ff7f00;
+  --accent: #ff7f00;
+  background: #f4f4f4;
+  color: #3e4559;
+  font-family: var(--font-explorer), Arial, sans-serif;
+}
+
+.lavella-commerce > header {
+  background: #080808;
+  color: #fff;
+  border-color: #292929;
+}
+
+.lavella-commerce .simple-page {
+  width: min(1200px, calc(100% - 80px));
+  min-height: 72vh;
+  margin: auto;
+  padding: 170px 0 100px;
+}
+
+.lavella-commerce .page-title {
+  max-width: 760px;
+  margin-bottom: 48px;
+}
+
+.lavella-commerce .page-title .eyebrow {
+  color: #ff7f00;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .14em;
+}
+
+.lavella-commerce .page-title h1 {
+  margin: 8px 0 18px;
+  font-size: clamp(46px, 6vw, 72px);
+  line-height: 1;
+  letter-spacing: -.045em;
+}
+
+.lavella-commerce .page-title p {
+  color: #818693;
+  font-size: 17px;
+  line-height: 1.7;
+}
+
+.lavella-commerce .cart-list article,
+.lavella-commerce .checkout-shell,
+.lavella-commerce .confirmation-card {
+  border: 0;
+  border-radius: 0;
+  background: #fff;
+  box-shadow: 0 15px 45px rgba(35, 40, 48, .08);
+}
+
+.lavella-commerce .cart-list article {
+  padding: 0;
+  overflow: hidden;
+  border-bottom: 1px solid #e6e6e6;
+}
+
+.lavella-commerce button.primary,
+.lavella-commerce .primary {
+  min-height: 50px;
+  border-radius: 27px;
+  background: #ff7f00;
+  color: #fff;
+}
+
+.lavella-commerce input,
+.lavella-commerce select,
+.lavella-commerce textarea {
+  min-height: 48px;
+  border: 1px solid #dedede;
+  border-radius: 0;
+  background: #fff;
+  color: #3e4559;
+}
+
+@media (max-width: 760px) {
+  .lavella-commerce .simple-page {
+    width: calc(100% - 36px);
+    padding: 110px 0 90px;
+  }
+}

@@ -1,0 +1,1008 @@
+.home {
+  --ink: #3e4559;
+  --muted: #818693;
+  --orange: #ff7f00;
+  --black: #050505;
+  --soft: #f4f4f4;
+  font-family: var(--font-explorer), Arial, sans-serif;
+  color: var(--ink);
+  background: var(--soft);
+}
+
+.hero {
+  position: relative;
+  min-height: 720px;
+  height: 100dvh;
+  overflow: hidden;
+  background: #111;
+  color: #fff;
+}
+
+.heroImage {
+  object-fit: cover;
+  opacity: 0;
+  transform: scale(1.04);
+  transition: opacity 800ms ease, transform 7s ease;
+}
+
+.heroImageActive {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.heroOverlay {
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(90deg, rgba(0, 0, 0, 0.66), rgba(0, 0, 0, 0.08) 73%),
+    linear-gradient(0deg, rgba(0, 0, 0, 0.93), transparent 54%);
+}
+
+.heroContent {
+  position: absolute;
+  z-index: 3;
+  left: max(40px, calc((100vw - 1200px) / 2));
+  bottom: 188px;
+  width: min(650px, 55vw);
+}
+
+.heroContent > small {
+  display: block;
+  margin-bottom: 10px;
+  color: #ff9832;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.heroContent h1 {
+  max-width: 650px;
+  margin: 0 0 18px;
+  font-size: clamp(44px, 4.3vw, 66px);
+  font-weight: 700;
+  line-height: 1.02;
+  letter-spacing: -0.035em;
+}
+
+.heroContent > p {
+  margin: 0;
+  font-size: 18px;
+  line-height: 1.5;
+  color: rgba(255, 255, 255, 0.86);
+}
+
+.heroActions {
+  display: flex;
+  gap: 18px;
+  margin-top: 28px;
+}
+
+.heroActions button {
+  min-width: 188px;
+  min-height: 52px;
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  border-radius: 28px;
+  background: transparent;
+  color: #fff;
+  padding: 0 27px;
+  font-weight: 500;
+}
+
+.heroActions button:first-child {
+  border-color: var(--orange);
+  background: var(--orange);
+}
+
+.heroActions .heroArrow {
+  min-width: 52px;
+  width: 52px;
+  padding: 0;
+  border-radius: 50%;
+}
+
+.heroCallout {
+  position: absolute;
+  z-index: 3;
+  right: max(75px, calc((100vw - 1200px) / 2));
+  bottom: 222px;
+  width: 360px;
+  display: flex;
+  align-items: center;
+  gap: 22px;
+}
+
+.heroCallout > svg {
+  flex: 0 0 auto;
+  font-size: 42px;
+}
+
+.heroCallout span {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.45;
+}
+
+.heroCallout small {
+  font-size: 14px;
+  font-weight: 400;
+}
+
+.heroCallout b {
+  font-size: 16px;
+}
+
+.heroDots {
+  position: absolute;
+  z-index: 4;
+  right: max(40px, calc((100vw - 1220px) / 2));
+  top: 42%;
+  display: grid;
+  gap: 15px;
+}
+
+.heroDots button {
+  width: 14px;
+  height: 14px;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.4);
+}
+
+.heroDots button.heroDotActive {
+  background: #fff;
+}
+
+.heroCategories {
+  position: absolute;
+  z-index: 3;
+  inset: auto 0 0;
+  height: 144px;
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  background: rgba(0, 0, 0, 0.72);
+  backdrop-filter: blur(5px);
+}
+
+.heroCategories > button {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  border: 0;
+  border-right: 1px solid rgba(255, 255, 255, 0.16);
+  background: transparent;
+  color: #fff;
+}
+
+.heroCategories > button > span {
+  position: relative;
+  width: 52px;
+  height: 52px;
+  flex: 0 0 auto;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.42);
+}
+
+.heroCategories img {
+  object-fit: cover;
+}
+
+.heroCategories b {
+  max-width: 95px;
+  font-size: 14px;
+  line-height: 1.25;
+  text-align: left;
+}
+
+.heroCategoryMore span {
+  font-size: 20px;
+}
+
+.popular {
+  padding: 100px 0 80px;
+  overflow: hidden;
+  background: var(--black);
+  color: #fff;
+}
+
+.sectionHeadingDark,
+.sectionHeadingLight {
+  width: min(1200px, calc(100% - 80px));
+  margin: 0 auto 45px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+}
+
+.sectionHeadingDark small,
+.sectionHeadingLight small,
+.operator > small,
+.promotion small,
+.journal small,
+.searchBox header small {
+  color: var(--orange);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+}
+
+.sectionHeadingDark h2,
+.sectionHeadingLight h2,
+.operator h2,
+.promotion h2,
+.journal h2,
+.searchBox h2 {
+  margin: 8px 0 0;
+  font-size: clamp(38px, 4vw, 52px);
+  line-height: 1.08;
+  font-weight: 800;
+  letter-spacing: -0.035em;
+}
+
+.sectionHeadingDark > div:last-child,
+.sectionHeadingLight > div:last-child {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.sectionHeadingDark button,
+.sectionHeadingLight button {
+  min-width: 52px;
+  height: 52px;
+  border: 1px solid currentColor;
+  border-radius: 28px;
+  background: transparent;
+  color: inherit;
+}
+
+.sectionHeadingDark button:first-child,
+.sectionHeadingLight button:first-child {
+  min-width: 220px;
+}
+
+.popularRail {
+  width: max-content;
+  transform: translateX(calc((100vw - 1200px) / 2));
+  display: flex;
+  gap: 34px;
+}
+
+.tourCard {
+  width: min(730px, 76vw);
+  height: 430px;
+  flex: 0 0 auto;
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.tourCard > button {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: #222;
+  color: #fff;
+  text-align: left;
+}
+
+.tourCard img:not(.rating img) {
+  object-fit: cover;
+  transition: transform 500ms ease;
+}
+
+.tourCard:hover > button > img {
+  transform: scale(1.04);
+}
+
+.tourShade {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(0deg, rgba(0, 0, 0, 0.85), transparent 70%);
+}
+
+.tourCard > button > em {
+  position: absolute;
+  right: 28px;
+  top: 28px;
+  padding: 10px 18px;
+  border-radius: 22px;
+  background: #e45d3a;
+  font-size: 13px;
+  font-style: normal;
+}
+
+.tourCardContent {
+  position: absolute;
+  left: 50px;
+  right: 45px;
+  bottom: 43px;
+}
+
+.rating {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.rating img {
+  width: 18px;
+  height: 18px;
+}
+
+.rating span {
+  margin-left: 8px;
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 14px;
+}
+
+.tourCard h3 {
+  margin: 14px 0 10px;
+  font-size: 28px;
+  line-height: 1.15;
+  font-weight: 700;
+}
+
+.tourCard h3 i {
+  color: var(--orange);
+  font-style: normal;
+}
+
+.tourCard p {
+  margin: 0 0 16px;
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 17px;
+  font-style: italic;
+}
+
+.tourCardContent > small {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 16px;
+}
+
+.tourCardContent > small img {
+  width: 24px !important;
+  height: 24px !important;
+  filter: brightness(0) invert(1);
+}
+
+.benefits {
+  width: min(1200px, calc(100% - 80px));
+  margin: 95px auto 0;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 60px;
+}
+
+.benefits article {
+  display: grid;
+  grid-template-columns: 135px 1fr;
+  gap: 30px;
+  align-items: center;
+}
+
+.benefits article > span {
+  position: relative;
+  width: 135px;
+  height: 135px;
+  overflow: hidden;
+  border-radius: 50%;
+}
+
+.benefits img {
+  object-fit: cover;
+}
+
+.benefits h3 {
+  margin: 0 0 10px;
+  font-size: 20px;
+  font-weight: 500;
+}
+
+.benefits p {
+  margin: 0;
+  color: #888;
+  font-size: 15px;
+  font-style: italic;
+  line-height: 1.7;
+}
+
+.searchChapter {
+  padding: 0 0 100px;
+  background: linear-gradient(#050505 0 208px, #f4f4f4 208px);
+}
+
+.searchBox {
+  width: min(1200px, calc(100% - 80px));
+  min-height: 358px;
+  margin: 0 auto;
+  padding: 54px 56px;
+  border-radius: 17px;
+  background: #fff;
+  box-shadow: 0 20px 55px rgba(32, 38, 55, 0.11);
+}
+
+.searchBox header {
+  max-width: 590px;
+  margin-bottom: 34px;
+}
+
+.searchBox h2 {
+  font-size: 40px;
+}
+
+.searchFields {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr 1fr 1fr 78px;
+  align-items: end;
+}
+
+.searchFields label {
+  min-width: 0;
+  color: #c0c0c0;
+  font-size: 13px;
+}
+
+.searchFields label > span,
+.searchFields select,
+.searchFields label > input {
+  height: 62px;
+  margin-top: 12px;
+  border: 1px solid #e2e2e2;
+  background: #fff;
+}
+
+.searchFields label > span {
+  display: flex;
+  align-items: center;
+  padding: 0 18px;
+}
+
+.searchFields input,
+.searchFields select {
+  width: 100%;
+  min-width: 0;
+  padding: 0 20px;
+  border: 0;
+  color: #3e4559;
+  font-size: 14px;
+}
+
+.searchFields label > input,
+.searchFields select {
+  border: 1px solid #e2e2e2;
+}
+
+.searchFields label > span input {
+  padding: 0;
+}
+
+.searchFields > button {
+  width: 62px;
+  height: 62px;
+  margin-left: 16px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--orange);
+  color: #fff;
+  font-size: 21px;
+}
+
+.searchCompact {
+  min-height: 0;
+  padding: 36px 42px;
+}
+
+.destinations {
+  padding: 0 0 90px;
+  overflow: hidden;
+  background: #f4f4f4;
+}
+
+.destinationRail {
+  width: max-content;
+  display: flex;
+  gap: 34px;
+  transform: translateX(calc((100vw - 1200px) / 2));
+}
+
+.destinationCard {
+  width: 374px;
+  flex: 0 0 auto;
+  overflow: hidden;
+  border-radius: 9px;
+  background: #fff;
+  box-shadow: 0 10px 25px rgba(42, 48, 63, 0.07);
+}
+
+.destinationImage {
+  position: relative;
+  width: 100%;
+  height: 220px;
+  border: 0;
+  overflow: hidden;
+}
+
+.destinationImage img {
+  object-fit: cover;
+  transition: transform 450ms ease;
+}
+
+.destinationCard:hover .destinationImage img {
+  transform: scale(1.04);
+}
+
+.destinationBody {
+  position: relative;
+  padding: 44px 36px 23px;
+}
+
+.destinationBody > span {
+  position: absolute;
+  left: 36px;
+  top: -31px;
+  width: 62px;
+  height: 62px;
+  display: grid;
+  place-items: center;
+  border: 6px solid #fff;
+  border-radius: 50%;
+  background: var(--orange);
+  color: #fff;
+  font-weight: 700;
+}
+
+.destinationBody h3 {
+  margin: 0 0 12px;
+  font-size: 28px;
+}
+
+.destinationBody p {
+  margin: 0;
+  min-height: 72px;
+  color: var(--muted);
+  font-size: 15px;
+  font-style: italic;
+  line-height: 1.55;
+}
+
+.destinationCard footer {
+  min-height: 58px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-top: 1px solid #e8e8e8;
+  padding: 0 36px;
+}
+
+.destinationCard footer small {
+  color: var(--orange);
+  font-size: 13px;
+}
+
+.destinationCard footer button {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+}
+
+.operator {
+  padding: 95px max(40px, calc((100vw - 1200px) / 2)) 105px;
+  background: #fff;
+}
+
+.operator h2 {
+  margin-bottom: 30px;
+}
+
+.operator > div:nth-of-type(1) {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 100px;
+}
+
+.operator > div:nth-of-type(1) p {
+  color: var(--muted);
+  font-size: 17px;
+  line-height: 1.65;
+}
+
+.destinationMiniRail {
+  margin-top: 45px;
+  display: grid;
+  grid-template-columns: repeat(10, 1fr);
+  gap: 14px;
+}
+
+.destinationMiniRail button {
+  position: relative;
+  height: 116px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 7px;
+  color: #fff;
+}
+
+.destinationMiniRail button::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(0deg, rgba(0,0,0,.68), transparent);
+}
+
+.destinationMiniRail img {
+  object-fit: cover;
+}
+
+.destinationMiniRail span {
+  position: absolute;
+  z-index: 2;
+  left: 10px;
+  bottom: 12px;
+  right: 10px;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.promotion {
+  min-height: 570px;
+  display: flex;
+  align-items: center;
+  padding: 80px max(40px, calc((100vw - 1200px) / 2));
+  background-position: center;
+  background-size: cover;
+  color: #fff;
+  position: relative;
+}
+
+.promotion::before,
+.journal::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.promotion > div {
+  position: relative;
+  z-index: 1;
+  max-width: 650px;
+}
+
+.promotion h2 {
+  font-size: clamp(44px, 5vw, 68px);
+}
+
+.promotion p {
+  font-size: 17px;
+  line-height: 1.65;
+  color: rgba(255, 255, 255, 0.75);
+}
+
+.promotion a {
+  width: max-content;
+  min-height: 54px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 28px;
+  padding: 0 28px;
+  border-radius: 28px;
+  background: var(--orange);
+  color: #fff;
+  text-decoration: none;
+}
+
+.journal {
+  position: relative;
+  min-height: 900px;
+  padding: 100px max(40px, calc((100vw - 1200px) / 2));
+  background-position: center;
+  background-size: cover;
+  color: #fff;
+}
+
+.journal::before {
+  background: rgba(9, 7, 13, 0.66);
+}
+
+.journal > * {
+  position: relative;
+  z-index: 1;
+}
+
+.journal > header {
+  max-width: 600px;
+}
+
+.journal > header > p {
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 17px;
+  line-height: 1.65;
+}
+
+.journal > div {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 40px;
+  margin-top: 48px;
+}
+
+.journal article img {
+  width: 100%;
+  height: 255px;
+  object-fit: cover;
+  border-radius: 8px;
+}
+
+.journal time {
+  display: block;
+  margin-top: 20px;
+  color: #ff9933;
+  font-size: 13px;
+}
+
+.journal article h3 {
+  margin: 9px 0;
+  font-size: 24px;
+}
+
+.journal article p {
+  color: rgba(255, 255, 255, 0.7);
+  line-height: 1.6;
+}
+
+.journal > button {
+  min-width: 245px;
+  min-height: 54px;
+  display: block;
+  margin: 45px auto 0;
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  border-radius: 28px;
+  background: transparent;
+  color: #fff;
+}
+
+@media (max-width: 1230px) {
+  .heroContent {
+    left: 40px;
+  }
+
+  .heroCallout {
+    right: 65px;
+  }
+
+  .popularRail,
+  .destinationRail {
+    transform: translateX(40px);
+  }
+
+  .destinationMiniRail {
+    grid-template-columns: repeat(5, 1fr);
+  }
+}
+
+@media (max-width: 1000px) {
+  .hero {
+    min-height: 760px;
+  }
+
+  .heroContent {
+    left: 30px;
+    bottom: 172px;
+    width: min(660px, calc(100% - 60px));
+  }
+
+  .heroCallout {
+    display: none;
+  }
+
+  .heroCategories {
+    grid-template-columns: repeat(3, 1fr);
+    height: 136px;
+  }
+
+  .heroCategories > button:nth-child(n + 4) {
+    display: none;
+  }
+
+  .benefits {
+    grid-template-columns: 1fr;
+  }
+
+  .searchFields {
+    grid-template-columns: 1fr 1fr;
+    gap: 18px;
+  }
+
+  .searchFields > button {
+    width: 100%;
+    margin: 0;
+    border-radius: 5px;
+  }
+
+  .operator > div:nth-of-type(1) {
+    gap: 40px;
+  }
+}
+
+@media (max-width: 760px) {
+  .hero {
+    min-height: 760px;
+    height: 100dvh;
+  }
+
+  .heroContent {
+    bottom: 155px;
+  }
+
+  .heroContent h1 {
+    font-size: clamp(40px, 11vw, 56px);
+  }
+
+  .heroContent > p {
+    font-size: 16px;
+  }
+
+  .heroActions {
+    gap: 10px;
+  }
+
+  .heroActions button {
+    min-width: 0;
+    flex: 1;
+    padding-inline: 14px;
+  }
+
+  .heroActions .heroArrow {
+    flex: 0 0 52px;
+  }
+
+  .heroDots {
+    right: 18px;
+  }
+
+  .heroCategories {
+    overflow-x: auto;
+    grid-template-columns: repeat(3, minmax(190px, 1fr));
+    justify-content: start;
+  }
+
+  .sectionHeadingDark,
+  .sectionHeadingLight,
+  .benefits,
+  .searchBox {
+    width: calc(100% - 40px);
+  }
+
+  .sectionHeadingDark > div:last-child button:first-child,
+  .sectionHeadingLight > div:last-child button:first-child {
+    display: none;
+  }
+
+  .tourCard {
+    width: calc(100vw - 40px);
+    height: 390px;
+  }
+
+  .popularRail,
+  .destinationRail {
+    transform: translateX(20px);
+    gap: 18px;
+  }
+
+  .benefits article {
+    grid-template-columns: 105px 1fr;
+  }
+
+  .benefits article > span {
+    width: 105px;
+    height: 105px;
+  }
+
+  .searchBox {
+    padding: 35px 25px;
+  }
+
+  .searchBox h2 {
+    font-size: 32px;
+  }
+
+  .destinationCard {
+    width: calc(100vw - 54px);
+  }
+
+  .operator {
+    padding-inline: 20px;
+  }
+
+  .operator > div:nth-of-type(1) {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .destinationMiniRail {
+    display: flex;
+    overflow-x: auto;
+  }
+
+  .destinationMiniRail button {
+    min-width: 125px;
+  }
+
+  .promotion,
+  .journal {
+    padding-inline: 20px;
+  }
+
+  .journal > div {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 430px) {
+  .heroContent {
+    left: 18px;
+    width: calc(100% - 36px);
+    bottom: 145px;
+  }
+
+  .heroContent h1 {
+    font-size: 40px;
+  }
+
+  .heroContent > small {
+    margin-bottom: 7px;
+  }
+
+  .heroActions button:nth-child(2) {
+    display: none;
+  }
+
+  .tourCardContent {
+    left: 25px;
+    right: 25px;
+    bottom: 28px;
+  }
+
+  .tourCard h3 {
+    font-size: 23px;
+  }
+
+  .tourCard p {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .searchFields {
+    grid-template-columns: 1fr;
+  }
+
+  .destinationBody {
+    padding-inline: 25px;
+  }
+
+  .destinationCard footer {
+    padding-inline: 25px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .heroImage,
+  .tourCard img,
+  .destinationImage img {
+    transition: none;
+  }
+}

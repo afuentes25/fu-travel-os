@@ -1,0 +1,387 @@
+.bookingPanel {
+  position: sticky;
+  top: 202px;
+  max-height: calc(100dvh - 222px);
+  overflow: auto;
+  background: #fff;
+  color: #3e4559;
+  border-radius: 15px;
+  box-shadow: 0 0 25px rgba(0, 0, 0, .09);
+  scrollbar-width: thin;
+}
+
+.bookingVisual {
+  position: relative;
+  height: 142px;
+  overflow: hidden;
+  border-radius: 15px 15px 0 0;
+  color: #fff;
+}
+
+.bookingVisual::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(0deg, rgba(0,0,0,.8), rgba(0,0,0,.08));
+}
+
+.bookingVisual img {
+  object-fit: cover;
+}
+
+.bookingVisual > div {
+  position: absolute;
+  z-index: 1;
+  inset: auto 24px 18px;
+}
+
+.bookingVisual span {
+  color: #ff7f00;
+  font-size: 10px;
+  letter-spacing: .08em;
+}
+
+.bookingVisual h2 {
+  margin: 4px 0;
+  color: #fff;
+  font-size: 21px;
+  line-height: 1.05;
+}
+
+.bookingVisual p {
+  margin: 0;
+  color: rgba(255,255,255,.72);
+  font-size: 11px;
+}
+
+.bookingBody {
+  padding: 18px 24px 22px;
+}
+
+.bookingHead {
+  display: grid;
+  grid-template-columns: 1.35fr 1fr;
+  gap: 12px;
+  padding-bottom: 13px;
+  border-bottom: 1px solid #e5e5e5;
+}
+
+.bookingHead span {
+  display: grid;
+}
+
+.bookingHead small,
+.occupancyLine small {
+  color: #818693;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: .1em;
+}
+
+.bookingHead strong {
+  color: #3e4559;
+  font-size: 25px;
+  line-height: 1;
+  font-weight: 900;
+}
+
+.bookingHead b {
+  color: #3e4559;
+  font-size: 16px;
+}
+
+.bookingField {
+  display: grid;
+  gap: 5px;
+  margin-top: 12px;
+  color: #697080;
+  font-size: 12px;
+}
+
+.bookingField select {
+  width: 100%;
+  height: 44px;
+  padding: 0 12px;
+  border: 1px solid #dedede;
+  border-radius: 2px;
+  background: #fff;
+  color: #3e4559;
+  font: inherit;
+  font-size: 14px;
+}
+
+.travelerRows {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.travelerRows > div {
+  padding: 8px;
+  border: 1px solid #e2e2e2;
+}
+
+.travelerRows > div > span:first-child {
+  display: grid;
+}
+
+.travelerRows > div > span:first-child b {
+  font-size: 12px;
+}
+
+.travelerRows small {
+  color: #818693;
+  font-size: 9px;
+}
+
+.travelerRows > div > span:last-child {
+  display: grid;
+  grid-template-columns: 32px 1fr 32px;
+  align-items: center;
+  margin-top: 7px;
+  text-align: center;
+}
+
+.travelerRows button {
+  height: 32px;
+  border: 1px solid #d9d9d9;
+  border-radius: 50%;
+  background: #fff;
+  color: #3e4559;
+}
+
+.travelerRows button:hover,
+.travelerRows button:focus-visible {
+  border-color: #ff7f00;
+  color: #ff7f00;
+}
+
+.occupancyLine {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 9px;
+}
+
+.occupancyLine span {
+  display: grid;
+  padding: 8px 9px;
+  background: #f6f6f6;
+}
+
+.occupancyLine b {
+  font-size: 12px;
+}
+
+.capacityAlert {
+  margin: 8px 0 0 !important;
+  padding: 8px 10px;
+  border: 1px solid #ffc489;
+  border-radius: 5px;
+  background: #fff4e8;
+  color: #744218 !important;
+  font-size: 12px !important;
+  line-height: 1.35 !important;
+}
+
+.bookingFooter {
+  position: sticky;
+  bottom: -22px;
+  display: grid;
+  gap: 5px;
+  margin: 11px -24px -22px;
+  padding: 12px 24px 22px;
+  border-top: 1px solid #e5e5e5;
+  background: #fff;
+}
+
+.bookingFooter > span,
+.bookingFooter > strong {
+  display: flex;
+  justify-content: space-between;
+}
+
+.bookingFooter > span {
+  color: #818693;
+  font-size: 10px;
+}
+
+.bookingFooter > strong {
+  color: #3e4559;
+  font-size: 21px;
+}
+
+.bookingFooter > small {
+  color: #818693;
+  font-size: 9px;
+}
+
+.bookingFooter button,
+.bookingFooter a {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-radius: 2px;
+  font-size: 13px;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.bookingFooter button {
+  border: 0;
+  background: #ff7f00;
+  color: #fff;
+}
+
+.bookingFooter button:hover {
+  background: #e66f00;
+}
+
+.bookingFooter button:disabled {
+  opacity: .5;
+}
+
+.bookingFooter a {
+  border: 1px solid #3e4559;
+  color: #3e4559;
+}
+
+.mobileBookingBar,
+.sheetBackdrop {
+  display: none;
+}
+
+@media (max-width: 1000px) {
+  .bookingPanel {
+    display: none;
+  }
+
+  .mobileBookingBar {
+    position: fixed;
+    z-index: 700;
+    inset: auto 0 0;
+    min-height: 70px;
+    padding: 9px 14px calc(9px + env(safe-area-inset-bottom));
+    display: grid;
+    grid-template-columns: 1fr auto 48px;
+    gap: 8px;
+    align-items: center;
+    background: #111a37;
+    color: #fff;
+    transform: translateY(110%);
+    transition: transform .24s ease;
+  }
+
+  .mobileBookingBarVisible {
+    transform: translateY(0);
+  }
+
+  .mobileBookingBar span {
+    display: grid;
+  }
+
+  .mobileBookingBar small {
+    color: rgba(255,255,255,.64);
+    font-size: 9px;
+  }
+
+  .mobileBookingBar b {
+    font-size: 17px;
+  }
+
+  .mobileBookingBar button,
+  .mobileBookingBar a {
+    height: 48px;
+    display: grid;
+    place-items: center;
+    border: 0;
+    border-radius: 2px;
+  }
+
+  .mobileBookingBar button {
+    padding: 0 22px;
+    background: #ff7f00;
+    color: #fff;
+  }
+
+  .mobileBookingBar a {
+    background: #fff;
+    color: #111a37;
+  }
+
+  .sheetBackdrop {
+    position: fixed;
+    z-index: 1400;
+    inset: 0;
+    display: flex;
+    align-items: flex-end;
+    background: rgba(0,0,0,.65);
+  }
+
+  .bookingSheet {
+    width: 100%;
+    max-height: 94dvh;
+    overflow: hidden;
+    border-radius: 18px 18px 0 0;
+    background: #fff;
+    color: #3e4559;
+  }
+
+  .bookingSheet > header {
+    position: relative;
+    z-index: 3;
+    min-height: 62px;
+    padding: 0 18px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid #e5e5e5;
+    background: #fff;
+  }
+
+  .bookingSheet > header button {
+    width: 44px;
+    height: 44px;
+    border: 1px solid #ddd;
+    border-radius: 50%;
+    background: #fff;
+    color: #3e4559;
+  }
+
+  .bookingSheetScroll {
+    max-height: calc(94dvh - 62px);
+    overflow-y: auto;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  .bookingSheet .bookingVisual {
+    height: 125px;
+    border-radius: 0;
+  }
+
+  .bookingSheet .bookingBody {
+    padding: 16px 18px 20px;
+  }
+
+  .bookingSheet .bookingFooter {
+    bottom: -20px;
+    margin-inline: -18px;
+    padding-inline: 18px;
+    padding-bottom: calc(20px + env(safe-area-inset-bottom));
+  }
+}
+
+@media (max-width: 430px) {
+  .travelerRows {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mobileBookingBar {
+    transition: none;
+  }
+}

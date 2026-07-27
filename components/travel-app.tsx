@@ -74,6 +74,8 @@ import {
   LavellaFooter,
   LavellaHeader,
   LavellaHome,
+  LavellaCatalog,
+  LavellaTripDetail,
 } from "./themes/lavella/lavella-theme";
 
 type OpenTrip = (trip: TravelProduct) => void;
@@ -3787,6 +3789,13 @@ export function TravelApp({
   const content = trip ? (
     theme === "explorer" ? (
       <ExplorerDetail agency={agency} trip={trip} onNavigate={navigate} />
+    ) : theme === "lavella" ? (
+      <LavellaTripDetail
+        agency={agency}
+        trip={trip}
+        related={ownTrips.filter((item) => item.id !== trip.id)}
+        onNavigate={navigate}
+      />
     ) : (
       <SharedDetail
         agency={agency}
@@ -3796,19 +3805,17 @@ export function TravelApp({
       />
     )
   ) : route === "/viajes" || route === "/promociones" ? (
-    <SharedCatalog
-      agency={agency}
-      theme={theme}
-      Card={components.Card}
-      onOpen={(item) => navigate(travelUrl(item))}
-    />
+    theme === "lavella" ? (
+      <LavellaCatalog agency={agency} trips={ownTrips} onOpen={(item) => navigate(travelUrl(item))} />
+    ) : (
+      <SharedCatalog agency={agency} theme={theme} Card={components.Card} onOpen={(item) => navigate(travelUrl(item))} />
+    )
   ) : route === "/destinos" ? (
-    <SharedCatalog
-      agency={agency}
-      theme={theme}
-      Card={components.Card}
-      onOpen={(item) => navigate(travelUrl(item))}
-    />
+    theme === "lavella" ? (
+      <LavellaCatalog agency={agency} trips={ownTrips} onOpen={(item) => navigate(travelUrl(item))} />
+    ) : (
+      <SharedCatalog agency={agency} theme={theme} Card={components.Card} onOpen={(item) => navigate(travelUrl(item))} />
+    )
   ) : (
     <components.Home
       agency={agency}
@@ -3819,7 +3826,7 @@ export function TravelApp({
   );
   return (
     <div
-      className={`visual-v2 theme-v2-${theme}`}
+      className={`visual-v2 theme-v2-${theme} ${theme === "lavella" && trip ? "lavella-detail-route" : ""}`}
       style={
         {
           "--brand": agency.branding.primaryColor,

@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import { DM_Sans, Cormorant_Garamond, Roboto } from "next/font/google";
 import "./globals.css";
-import "./themes/lavella.css";
 
 const sans=DM_Sans({subsets:["latin"],variable:"--font-sans"});
 const serif=Cormorant_Garamond({subsets:["latin"],variable:"--font-serif",weight:["500","600","700"]});

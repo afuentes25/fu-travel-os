@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { agencies, departurePoints, travels } from "../data/demo/index";
 import { filterCatalog } from "../lib/catalog/index";
 import {
@@ -972,4 +973,94 @@ test("agencia sin redes no renderiza enlaces sociales", () => {
   const boutique = agencies.find((item) => item.slug === "boutique")!;
   assert.deepEqual(getAgencySocialLinks(boutique, "header"), []);
   assert.deepEqual(getAgencySocialLinks(boutique, "footer"), []);
+});
+
+test("Lavella usa renderers visuales propios y no monta panel Explorer", () => {
+  const detail = readFileSync(
+    "components/themes/lavella/lavella-trip-detail.tsx",
+    "utf8",
+  );
+  const booking = readFileSync(
+    "components/themes/lavella/lavella-booking-panel.tsx",
+    "utf8",
+  );
+  assert.match(detail, /LavellaTripHero/);
+  assert.match(detail, /LavellaTripSections/);
+  assert.doesNotMatch(detail + booking, /ExplorerBookingPanel/);
+});
+
+test("Lavella registra home, catálogo y detalle independientes", () => {
+  const theme = readFileSync(
+    "components/themes/lavella/lavella-theme.tsx",
+    "utf8",
+  );
+  assert.match(theme, /LavellaHome/);
+  assert.match(theme, /LavellaCatalog/);
+  assert.match(theme, /LavellaTripDetail/);
+});
+
+test("los estilos Lavella no se importan como hoja global del layout", () => {
+  const layout = readFileSync("app/layout.tsx", "utf8");
+  const commerce = readFileSync("app/themes/lavella-commerce.css", "utf8");
+  assert.doesNotMatch(layout, /lavella\.css/);
+  assert.match(commerce, /^\.lavella-commerce/m);
+  assert.doesNotMatch(commerce, /(^|\n)\s*\.(container|row|col|header|button|title|active)\b/m);
+});
+
+test("Lavella no carga scripts heredados del template", () => {
+  const files = [
+    "components/themes/lavella/lavella-home-hero.tsx",
+    "components/themes/lavella/lavella-mobile-menu.tsx",
+    "components/themes/lavella/lavella-trip-sections.tsx",
+  ].map((path) => readFileSync(path, "utf8")).join("\n");
+  assert.doesNotMatch(files, /jquery|slick\(|lightGallery|dangerouslySetInnerHTML/i);
+});
+
+test("detalle Lavella no depende de SharedDetail ni de markup Explorer", () => {
+  const files = [
+    "lavella-trip-detail.tsx",
+    "lavella-trip-hero.tsx",
+    "lavella-trip-gallery.tsx",
+    "lavella-trip-sections.tsx",
+    "lavella-booking-panel.tsx",
+  ]
+    .map((name) =>
+      readFileSync(`components/themes/lavella/${name}`, "utf8"),
+    )
+    .join("\n");
+  assert.doesNotMatch(files, /SharedDetail|ExplorerBookingPanel|className=["'`]explorer-/);
+  assert.match(files, /LavellaTripGallery/);
+  assert.match(files, /LavellaBookingPanel/);
+});
+
+test("reserva móvil Lavella incluye barra y bottom sheet propios", () => {
+  const booking = readFileSync(
+    "components/themes/lavella/lavella-booking-panel.tsx",
+    "utf8",
+  );
+  assert.match(booking, /mobileBookingBar/);
+  assert.match(booking, /bookingSheet/);
+  assert.match(booking, /IntersectionObserver/);
+  assert.match(booking, /aria-modal="true"/);
+});
+
+test("detalle Lavella conserva tenant y tema al iniciar carrito", () => {
+  const booking = readFileSync(
+    "components/themes/lavella/lavella-booking-panel.tsx",
+    "utf8",
+  );
+  assert.match(booking, /window\.location\.assign\(`\/carrito\$\{window\.location\.search\}`\)/);
+});
+
+test("CSS de detalle Lavella permanece aislado de home y otros temas", () => {
+  const detailCss = readFileSync(
+    "components/themes/lavella/lavella-detail.module.css",
+    "utf8",
+  );
+  const bookingCss = readFileSync(
+    "components/themes/lavella/lavella-booking.module.css",
+    "utf8",
+  );
+  assert.doesNotMatch(detailCss + bookingCss, /\.explorer-|\.boutique-|\.marketplace-/);
+  assert.doesNotMatch(detailCss + bookingCss, /\.home\b|\.catalog\b/);
 });

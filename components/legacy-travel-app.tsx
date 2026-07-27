@@ -1,4 +1,5 @@
 "use client";
+import "@/app/themes/lavella-commerce.css";
 import { useEffect, useMemo, useState } from "react";
 import { agencies, departurePoints, destinations, travels } from "@/data/demo";
 import { filterCatalog } from "@/lib/catalog";

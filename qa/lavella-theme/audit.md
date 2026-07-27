@@ -74,7 +74,8 @@ No se cargan scripts del ZIP ni endpoints PHP.
 
 ### Utilizados
 
-- Ningún archivo gráfico del ZIP.
+- Siete SVG funcionales/decorativos del ZIP: reloj, ubicación clara, búsqueda,
+  flecha de slide, estrella activa, estrella inactiva y cierre de menú.
 - Imágenes demo ya existentes y permitidas en `public/images`.
 - Roboto mediante `next/font/google`.
 - Iconos del paquete React ya instalado.
@@ -114,3 +115,76 @@ No se cargan scripts del ZIP ni endpoints PHP.
 - Sin scripts, iframes o formularios externos del template.
 - Video y descargas continúan pasando por los validadores existentes.
 - El ZIP y la extracción permanecen fuera de Git.
+
+## Auditoría visual detallada
+
+La primera integración interpretó Lavella desde una descripción general y no desde su composición real. La inspección visual del HTML ejecutado revela un lenguaje mucho más específico:
+
+- El home elegido es `index.html`.
+- El primer viewport es una portada de altura completa. Sobre la fotografía aparecen dos niveles de header: contacto y redes arriba; logotipo, navegación y búsqueda debajo.
+- El título del slide es compacto, pesado y alineado abajo a la izquierda; no es un display enorme de estilo editorial.
+- El hero utiliza un callout geográfico en el extremo derecho, paginación vertical y una franja inferior negra con seis categorías.
+- La home continúa sobre negro con cards horizontales de gran formato, no con un grid blanco de tarjetas estándar.
+- El buscador es una superficie blanca de aproximadamente 1200 px, con radio amplio, situada exactamente en la transición negro/gris.
+- Los destinos se muestran en cards blancas con imagen superior, bandera circular que rompe el borde y footer dividido.
+- El bloque editorial posterior es blanco y usa dos columnas de texto.
+- La promoción es una franja fotográfica oscura de gran altura.
+- El diario utiliza fondo fotográfico y cards editoriales.
+- El footer empieza con una navegación horizontal y después cuatro columnas sobre negro.
+
+### Header
+
+- Altura total desktop observada: aproximadamente 122 px.
+- Topbar: 40 px, contacto a la izquierda y cuatro iconos sociales a la derecha.
+- Navegación: logo de 36 px de alto visual, menú centrado y búsqueda a la derecha.
+- Línea inferior fina y subrayado blanco del enlace activo.
+- En móvil el original cambia a un menú lateral compacto; no usa el drawer fullscreen inventado en la primera integración.
+
+### Home hero
+
+- Altura: 100 vh.
+- Contenido principal: tercio inferior izquierdo.
+- Título: cerca de 48 px a 1280 px, peso 700.
+- Descripción: 18 px, peso 400.
+- Botones: píldora naranja, píldora transparente y flecha circular.
+- Control contextual derecho con icono de ubicación.
+- Dots verticales a la derecha.
+- Franja de categorías integrada dentro del hero.
+
+### Listado
+
+Se selecciona `tour-list.html`: cabecera fotográfica oscura, breadcrumb, título, buscador blanco de cinco campos y carrusel de destinos pequeños. El contenido usa una columna principal de cards grandes y un sidebar claro.
+
+### Detalle
+
+Se selecciona `single.html`, con apoyo cromático de `single-dark.html`: hero fotográfico de gran escala, metadata y CTA encima de la imagen, tres imágenes de galería que comienzan en la parte inferior del hero, cuerpo claro de dos columnas, programa vertical y sidebar comercial.
+
+### Breakpoints originales
+
+Los archivos usan puntos de corte específicos en 1600, 1440, 1400, 1230, 1076, 1000, 760, 686, 610, 430 y 358 px. La reconstrucción conserva los cambios estructurales principales en 1230, 1000, 760, 610 y 430 px.
+
+### Diagnóstico de la primera implementación
+
+- Hero con título de 112 px y metadata tipo Explorer.
+- Cards de tres columnas heredadas del catálogo compartido.
+- Detalle construido con `SharedDetail` y `ExplorerBookingPanel`.
+- Menú fullscreen no presente en Lavella.
+- Footer inventado de tres columnas.
+- Home con secciones y ritmos diferentes del original.
+- CSS compacto basado en overrides de componentes ajenos.
+
+La segunda implementación reemplaza estos elementos por DOM propio Lavella.
+
+### Resultado de la segunda implementación
+
+- `index.html` gobierna la secuencia, escala y composición del home.
+- `tour-list.html` gobierna el catálogo, su buscador de gran formato y el
+  patrón contenido/sidebar.
+- `single.html` gobierna hero, galería superpuesta, cuerpo y panel; se usa
+  `single-dark.html` únicamente como apoyo cromático.
+- El panel ya no monta `ExplorerBookingPanel`; consume las funciones
+  compartidas desde markup Lavella.
+- Los selectores principales viven en CSS Modules. El comercio heredado usa
+  una hoja global estrictamente limitada por `.lavella-commerce`.
+- No se cargan jQuery, Slick, LightGallery, Arctic Modal, scripts PHP ni CSS
+  global del template.
