@@ -48,6 +48,7 @@ import {
   lavellaRailTarget,
   lavellaSlideIndex,
   LAVELLA_SLIDER_TIMING,
+  subscribeLavellaMediaQuery,
   updateLavellaHoverPause,
   updateLavellaPauseReasons,
 } from "../components/themes/lavella/lavella-slider";
@@ -1212,7 +1213,7 @@ test("autoplay Lavella avanza y una sola slide no lo activa", () => {
   );
 });
 
-test("hero Lavella inicia autoplay sin interacción", () => {
+test("hero Lavella inicia autoplay sin interacción en WebKit móvil", () => {
   const noInitialPause = new Set<SliderPauseReason>();
   assert.equal(
     canLavellaAutoplay({
@@ -1222,16 +1223,28 @@ test("hero Lavella inicia autoplay sin interacción", () => {
     }),
     true,
   );
+  let legacyListener: (() => void) | undefined;
+  let removed = false;
+  const legacyMedia = {
+    matches: false,
+    addListener: (listener: () => void) => {
+      legacyListener = listener;
+    },
+    removeListener: (listener: () => void) => {
+      removed = listener === legacyListener;
+    },
+  } as unknown as MediaQueryList;
+  const unsubscribe = subscribeLavellaMediaQuery(legacyMedia, () => undefined);
+  assert.equal(typeof legacyListener, "function");
+  unsubscribe();
+  assert.equal(removed, true);
 });
 
-test("hero Lavella cambia antes de seis segundos en móvil", () => {
-  assert.ok(LAVELLA_SLIDER_TIMING.autoplayDelayMs < 6000);
-  assert.equal(lavellaSlideIndex(0, 1, 4), 1);
-});
-
-test("hero Lavella cambia antes de seis segundos en escritorio", () => {
-  assert.ok(LAVELLA_SLIDER_TIMING.autoplayDelayMs < 6000);
-  assert.equal(lavellaSlideIndex(1, 1, 4), 2);
+test("hero Lavella avanza dos veces antes de doce segundos", () => {
+  assert.ok(LAVELLA_SLIDER_TIMING.autoplayDelayMs * 2 < 12000);
+  const firstAdvance = lavellaSlideIndex(0, 1, 4);
+  assert.equal(firstAdvance, 1);
+  assert.equal(lavellaSlideIndex(firstAdvance, 1, 4), 2);
 });
 
 test("interacción pausa y después permite reanudar autoplay Lavella", () => {

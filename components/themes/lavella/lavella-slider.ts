@@ -11,6 +11,27 @@ export const LAVELLA_SLIDER_TIMING = {
   resumeAfterInteractionMs: 7000,
 } as const;
 
+export function subscribeLavellaMediaQuery(
+  media: MediaQueryList,
+  listener: () => void,
+) {
+  if (
+    typeof media.addEventListener === "function" &&
+    typeof media.removeEventListener === "function"
+  ) {
+    media.addEventListener("change", listener);
+    return () => media.removeEventListener("change", listener);
+  }
+  if (
+    typeof media.addListener === "function" &&
+    typeof media.removeListener === "function"
+  ) {
+    media.addListener(listener);
+    return () => media.removeListener(listener);
+  }
+  return () => undefined;
+}
+
 export function lavellaSlideIndex(
   current: number,
   step: number,

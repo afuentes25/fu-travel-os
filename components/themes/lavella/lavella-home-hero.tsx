@@ -15,6 +15,7 @@ import {
   canLavellaAutoplay,
   lavellaSlideIndex,
   LAVELLA_SLIDER_TIMING,
+  subscribeLavellaMediaQuery,
   type SliderPauseReason,
   updateLavellaHoverPause,
   updateLavellaPauseReasons,
@@ -34,6 +35,28 @@ const categoryLabels = [
   "Naturaleza",
   "Playa",
 ] as const;
+
+type LavellaAutoplayWindow = Window & {
+  __fuTravelLavellaAutoplay?: {
+    owner: symbol;
+    timer: number;
+  };
+};
+
+function startLavellaAutoplay(callback: () => void, delay: number) {
+  const browserWindow = window as LavellaAutoplayWindow;
+  const owner = Symbol("lavella-autoplay");
+  const active = browserWindow.__fuTravelLavellaAutoplay;
+  if (active) window.clearInterval(active.timer);
+  const timer = window.setInterval(callback, delay);
+  browserWindow.__fuTravelLavellaAutoplay = { owner, timer };
+
+  return () => {
+    if (browserWindow.__fuTravelLavellaAutoplay?.owner !== owner) return;
+    window.clearInterval(timer);
+    delete browserWindow.__fuTravelLavellaAutoplay;
+  };
+}
 
 function LavellaHeroArrow({ direction }: { direction: "previous" | "next" }) {
   return (
@@ -66,7 +89,6 @@ export function LavellaHomeHero({
   const touch = useRef<number | null>(null);
   const hoverCapable = useRef(false);
   const keyboardNavigation = useRef(false);
-  const autoplayTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const resumeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const settings = agency.settings.heroSliderSettings ?? {
     autoplay: true,
@@ -104,17 +126,23 @@ export function LavellaHomeHero({
       keyboardNavigation.current = false;
       setPauseReason("focus", false);
     };
-    syncMotion();
-    syncHover();
-    syncVisibility();
-    motionMedia.addEventListener("change", syncMotion);
-    hoverMedia.addEventListener("change", syncHover);
+    const unsubscribeMotion = subscribeLavellaMediaQuery(
+      motionMedia,
+      syncMotion,
+    );
+    const unsubscribeHover = subscribeLavellaMediaQuery(
+      hoverMedia,
+      syncHover,
+    );
     document.addEventListener("visibilitychange", syncVisibility);
     document.addEventListener("keydown", markKeyboardNavigation);
     document.addEventListener("pointerdown", markPointerNavigation);
+    syncMotion();
+    syncHover();
+    syncVisibility();
     return () => {
-      motionMedia.removeEventListener("change", syncMotion);
-      hoverMedia.removeEventListener("change", syncHover);
+      unsubscribeMotion();
+      unsubscribeHover();
       document.removeEventListener("visibilitychange", syncVisibility);
       document.removeEventListener("keydown", markKeyboardNavigation);
       document.removeEventListener("pointerdown", markPointerNavigation);
@@ -122,10 +150,6 @@ export function LavellaHomeHero({
   }, [setPauseReason]);
 
   useEffect(() => {
-    if (autoplayTimer.current) {
-      clearInterval(autoplayTimer.current);
-      autoplayTimer.current = null;
-    }
     if (
       !canLavellaAutoplay({
         autoplay: settings.autoplay,
@@ -135,15 +159,11 @@ export function LavellaHomeHero({
     ) {
       return;
     }
-    autoplayTimer.current = setInterval(() => {
-      setActive((value) => lavellaSlideIndex(value, 1, slides.length));
-    }, settings.autoplayDelayMs);
-    return () => {
-      if (autoplayTimer.current) {
-        clearInterval(autoplayTimer.current);
-        autoplayTimer.current = null;
-      }
-    };
+    return startLavellaAutoplay(
+      () =>
+        setActive((value) => lavellaSlideIndex(value, 1, slides.length)),
+      settings.autoplayDelayMs,
+    );
   }, [
     pauseReasons,
     settings.autoplay,
@@ -153,7 +173,6 @@ export function LavellaHomeHero({
 
   useEffect(
     () => () => {
-      if (autoplayTimer.current) clearInterval(autoplayTimer.current);
       if (resumeTimer.current) clearTimeout(resumeTimer.current);
     },
     [],
