@@ -9,14 +9,9 @@ import {
   clearLavellaCatalogFilters,
   countLavellaActiveFilters,
 } from "./lavella-catalog-filters";
+import { LavellaCatalogCard } from "./lavella-catalog-card";
 import { LavellaSearchBox } from "./lavella-search-box";
-import { LavellaTourCard } from "./lavella-tour-card";
 import type { LavellaCatalogProps } from "./lavella-types";
-import {
-  lavellaDate,
-  lavellaDeparture,
-  lavellaTransport,
-} from "./lavella-utils";
 
 export function LavellaCatalog({
   agency,
@@ -135,19 +130,15 @@ export function LavellaCatalog({
           className={`${styles.resultsLayout} ${filterPanelOpen ? styles.resultsLayoutWithFilters : ""}`}
         >
           <div className={styles.resultsList}>
-            {results.map((trip) => {
-              const departure = lavellaDeparture(trip);
-              return (
-                <div className={styles.listCard} key={trip.id}>
-                  <LavellaTourCard trip={trip} onOpen={onOpen} />
-                  <div className={styles.listMeta}>
-                    <span><b>{lavellaDate(departure?.startDate, true)}</b><small>Próxima salida</small></span>
-                    <span><b>{lavellaTransport(trip.transportTypes)}</b><small>Transporte</small></span>
-                    <button onClick={() => onOpen(trip)}>Ver detalles <FaArrowRight /></button>
-                  </div>
-                </div>
-              );
-            })}
+            <div className={styles.resultsGrid}>
+              {results.map((trip) => (
+                <LavellaCatalogCard
+                  key={trip.id}
+                  trip={trip}
+                  onOpen={onOpen}
+                />
+              ))}
+            </div>
             {!results.length && (
               <div className={styles.empty}>
                 <h3>No encontramos una ruta así.</h3>

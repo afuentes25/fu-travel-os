@@ -47,6 +47,7 @@ import {
   clearLavellaCatalogFilters,
   countLavellaActiveFilters,
 } from "../components/themes/lavella/lavella-catalog-filters";
+import { lavellaCatalogDuration } from "../components/themes/lavella/lavella-catalog-card-utils";
 import {
   canLavellaAutoplay,
   lavellaRailTarget,
@@ -1589,8 +1590,13 @@ test("catálogo Lavella conserva tenant y tema mediante navegación compartida",
     "components/themes/lavella/lavella-catalog.tsx",
     "utf8",
   );
+  const card = readFileSync(
+    "components/themes/lavella/lavella-catalog-card.tsx",
+    "utf8",
+  );
   const app = readFileSync("components/travel-app.tsx", "utf8");
-  assert.match(catalog, /onOpen\(trip\)/);
+  assert.match(catalog, /<LavellaCatalogCard[\s\S]*onOpen=\{onOpen\}/);
+  assert.match(card, /onClick=\{\(\) => onOpen\(trip\)\}/);
   assert.doesNotMatch(catalog, /history\.(?:pushState|replaceState)/);
   assert.match(
     app,
@@ -1601,6 +1607,61 @@ test("catálogo Lavella conserva tenant y tema mediante navegación compartida",
 test("Ordenar no cuenta como filtro Lavella", () => {
   assert.equal(countLavellaActiveFilters({ sort: "price-desc" }), 0);
   assert.equal(countLavellaActiveFilters({ sort: "duration", q: " " }), 0);
+});
+
+test("card de catálogo Lavella separa precio del heading", () => {
+  const card = readFileSync(
+    "components/themes/lavella/lavella-catalog-card.tsx",
+    "utf8",
+  );
+  const heading = card.match(/<h3>[\s\S]*?<\/h3>/)?.[0] ?? "";
+  assert.doesNotMatch(heading, /formatMoney|catalogCardPrice/);
+  assert.match(card, /className=\{styles\.catalogCardPrice\}/);
+});
+
+test("card de catálogo Lavella no renderiza badges vacíos", () => {
+  const card = readFileSync(
+    "components/themes/lavella/lavella-catalog-card.tsx",
+    "utf8",
+  );
+  assert.match(card, /const promotion = trip\.promotion\?\.trim\(\)/);
+  assert.match(card, /\{promotion && \(/);
+});
+
+test("card de catálogo Lavella pluraliza día y días", () => {
+  assert.equal(lavellaCatalogDuration(1), "1 día");
+  assert.equal(lavellaCatalogDuration(2), "2 días");
+});
+
+test("grid de catálogo Lavella mantiene tres, dos y una columnas", () => {
+  const css = readFileSync(
+    "components/themes/lavella/lavella-catalog.module.css",
+    "utf8",
+  );
+  assert.match(
+    css,
+    /\.resultsGrid \{[\s\S]*grid-template-columns: repeat\(3, minmax\(0, 1fr\)\)/,
+  );
+  assert.match(
+    css,
+    /@media \(max-width: 1000px\)[\s\S]*\.resultsGrid,[\s\S]*repeat\(2, minmax\(0, 1fr\)\)/,
+  );
+  assert.match(
+    css,
+    /@media \(max-width: 760px\)[\s\S]*\.resultsGrid,[\s\S]*grid-template-columns: 1fr/,
+  );
+});
+
+test("card de catálogo Lavella no expone valores técnicos", () => {
+  const utilities = readFileSync(
+    "components/themes/lavella/lavella-catalog-card-utils.ts",
+    "utf8",
+  );
+  assert.match(utilities, /ground: "Terrestre"/);
+  assert.match(utilities, /train: "Tren"/);
+  assert.match(utilities, /air: "Aéreo"/);
+  assert.match(utilities, /cruise: "Marítimo"/);
+  assert.doesNotMatch(utilities, />\s*(ground|scheduled|limited)\s*</i);
 });
 
 test("sidebar Lavella es sticky en escritorio con altura de viewport", () => {
