@@ -47,17 +47,46 @@
   color: #fff;
 }
 
-.heroImage {
-  object-fit: cover;
-  opacity: 0;
-  transform: scale(1.04);
-  transition:
-    opacity var(--lavella-slider-transition, 650ms) ease,
-    transform 7s ease;
+.heroSlide {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  transform: translate3d(100%, 0, 0);
+  transition: transform var(--lavella-slider-transition, 650ms)
+    cubic-bezier(0.645, 0.045, 0.355, 1);
+  pointer-events: none;
+  will-change: transform;
 }
 
-.heroImageActive {
-  opacity: 1;
+.heroSlideActive {
+  z-index: 2;
+  transform: translate3d(0, 0, 0);
+  pointer-events: auto;
+}
+
+.heroSlideEnterRight,
+.heroSlideExitRight {
+  transform: translate3d(100%, 0, 0);
+}
+
+.heroSlideEnterLeft,
+.heroSlideExitLeft {
+  transform: translate3d(-100%, 0, 0);
+}
+
+.heroSlideExitLeft,
+.heroSlideExitRight {
+  z-index: 1;
+}
+
+.heroImage {
+  object-fit: cover;
+  transform: scale(1.04);
+  transition: transform 7s ease;
+}
+
+.heroSlideActive .heroImage {
   transform: scale(1);
 }
 
@@ -1580,6 +1609,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .heroSlide,
   .heroImage,
   .tourCard img,
   .destinationImage img {

@@ -36,6 +36,8 @@ const categoryLabels = [
   "Playa",
 ] as const;
 
+type SlideDirection = "next" | "previous";
+
 type LavellaAutoplayWindow = Window & {
   __fuTravelLavellaAutoplay?: {
     owner: symbol;
@@ -83,6 +85,7 @@ export function LavellaHomeHero({
 }: Pick<LavellaHomeProps, "agency" | "trips" | "onOpen" | "onNavigate">) {
   const slides = trips.slice(0, 4);
   const [active, setActive] = useState(0);
+  const [direction, setDirection] = useState<SlideDirection>("next");
   const [pauseReasons, setPauseReasons] = useState<
     ReadonlySet<SliderPauseReason>
   >(() => new Set());
@@ -90,11 +93,12 @@ export function LavellaHomeHero({
   const hoverCapable = useRef(false);
   const keyboardNavigation = useRef(false);
   const resumeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const transitionTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const transitionLocked = useRef(false);
   const settings = agency.settings.heroSliderSettings ?? {
     autoplay: true,
     ...LAVELLA_SLIDER_TIMING,
   };
-  const current = slides[active] ?? trips[0];
   const setPauseReason = useCallback(
     (reason: SliderPauseReason, paused: boolean) => {
       setPauseReasons((value) =>
@@ -102,6 +106,24 @@ export function LavellaHomeHero({
       );
     },
     [],
+  );
+  const reducedMotion = pauseReasons.has("reduced-motion");
+  const changeSlide = useCallback(
+    (step: number) => {
+      if (transitionLocked.current || slides.length < 2) return false;
+      setDirection(step < 0 ? "previous" : "next");
+      setActive((value) => lavellaSlideIndex(value, step, slides.length));
+      if (!reducedMotion) {
+        transitionLocked.current = true;
+        if (transitionTimer.current) clearTimeout(transitionTimer.current);
+        transitionTimer.current = setTimeout(() => {
+          transitionTimer.current = null;
+          transitionLocked.current = false;
+        }, settings.transitionDurationMs);
+      }
+      return true;
+    },
+    [reducedMotion, settings.transitionDurationMs, slides.length],
   );
 
   useEffect(() => {
@@ -160,11 +182,11 @@ export function LavellaHomeHero({
       return;
     }
     return startLavellaAutoplay(
-      () =>
-        setActive((value) => lavellaSlideIndex(value, 1, slides.length)),
+      () => changeSlide(1),
       settings.autoplayDelayMs,
     );
   }, [
+    changeSlide,
     pauseReasons,
     settings.autoplay,
     settings.autoplayDelayMs,
@@ -174,13 +196,12 @@ export function LavellaHomeHero({
   useEffect(
     () => () => {
       if (resumeTimer.current) clearTimeout(resumeTimer.current);
+      if (transitionTimer.current) clearTimeout(transitionTimer.current);
     },
     [],
   );
 
-  if (!current) return null;
-  const departure = lavellaDeparture(current);
-  const price = lavellaStartingPrice(current, departure);
+  if (slides.length === 0) return null;
   const pauseAfterInteraction = () => {
     setPauseReason("focus", false);
     setPauseReason("interaction", true);
@@ -195,8 +216,26 @@ export function LavellaHomeHero({
   };
   const move = (step: number) => {
     pauseAfterInteraction();
-    setActive((value) => lavellaSlideIndex(value, step, slides.length));
+    changeSlide(step);
   };
+  const selectSlide = (index: number) => {
+    if (index === active || transitionLocked.current) return;
+    pauseAfterInteraction();
+    setDirection(index < active ? "previous" : "next");
+    setActive(index);
+    if (!reducedMotion) {
+      transitionLocked.current = true;
+      if (transitionTimer.current) clearTimeout(transitionTimer.current);
+      transitionTimer.current = setTimeout(() => {
+        transitionTimer.current = null;
+        transitionLocked.current = false;
+      }, settings.transitionDurationMs);
+    }
+  };
+  const outgoingIndex =
+    direction === "next"
+      ? lavellaSlideIndex(active, -1, slides.length)
+      : lavellaSlideIndex(active, 1, slides.length);
   const controlsDisabled = slides.length < 2;
   return (
     <section
@@ -242,36 +281,61 @@ export function LavellaHomeHero({
         touch.current = null;
       }}
     >
-      {slides.map((trip, index) => (
-        <Image
-          className={`${styles.heroImage} ${index === active ? styles.heroImageActive : ""}`}
-          key={trip.id}
-          src={trip.featuredImage}
-          alt=""
-          fill
-          priority={index === 0}
-          sizes="100vw"
-        />
-      ))}
-      <div className={styles.heroOverlay} />
-      <div className={styles.heroContent}>
-        <small>{lavellaCategory(current)}</small>
-        <h1>{current.title}</h1>
-        <p>{current.subtitle}</p>
-        <div className={styles.heroActions}>
-          <button onClick={() => onOpen(current)}>Elegir este viaje</button>
-          <button onClick={() => onNavigate("/viajes")}>Ver todos</button>
-        </div>
-      </div>
-      <aside className={styles.heroCallout}>
-        <FaLocationDot />
-        <span>
-          <small>Próxima salida · {lavellaDate(departure?.startDate)}</small>
-          <b>
-            Desde {formatMoney(price.amount, price.currency)}
-          </b>
-        </span>
-      </aside>
+      {slides.map((trip, index) => {
+        const isActive = index === active;
+        const isOutgoing = index === outgoingIndex;
+        const positionClass = isActive
+          ? styles.heroSlideActive
+          : isOutgoing
+            ? direction === "next"
+              ? styles.heroSlideExitLeft
+              : styles.heroSlideExitRight
+            : direction === "next"
+              ? styles.heroSlideEnterRight
+              : styles.heroSlideEnterLeft;
+        const departure = lavellaDeparture(trip);
+        const price = lavellaStartingPrice(trip, departure);
+        return (
+          <article
+            className={`${styles.heroSlide} ${positionClass}`}
+            key={trip.id}
+            aria-hidden={!isActive}
+            inert={!isActive}
+          >
+            <Image
+              className={styles.heroImage}
+              src={trip.featuredImage}
+              alt=""
+              fill
+              priority={index === 0}
+              sizes="100vw"
+            />
+            <div className={styles.heroOverlay} />
+            <div className={styles.heroContent}>
+              <small>{lavellaCategory(trip)}</small>
+              <h1>{trip.title}</h1>
+              <p>{trip.subtitle}</p>
+              <div className={styles.heroActions}>
+                <button onClick={() => onOpen(trip)}>
+                  Elegir este viaje
+                </button>
+                <button onClick={() => onNavigate("/viajes")}>
+                  Ver todos
+                </button>
+              </div>
+            </div>
+            <aside className={styles.heroCallout}>
+              <FaLocationDot />
+              <span>
+                <small>
+                  Próxima salida · {lavellaDate(departure?.startDate)}
+                </small>
+                <b>Desde {formatMoney(price.amount, price.currency)}</b>
+              </span>
+            </aside>
+          </article>
+        );
+      })}
       <div className={styles.heroControls} aria-label="Controles del carrusel">
         <button
           className={styles.heroArrow}
@@ -301,10 +365,7 @@ export function LavellaHomeHero({
           <button
             key={trip.id}
             className={index === active ? styles.heroDotActive : ""}
-            onClick={() => {
-              pauseAfterInteraction();
-              setActive(index);
-            }}
+            onClick={() => selectSlide(index)}
             aria-label={`Mostrar viaje ${index + 1}`}
             aria-current={index === active ? "true" : undefined}
             disabled={controlsDisabled}

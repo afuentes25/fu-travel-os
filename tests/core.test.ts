@@ -1165,6 +1165,52 @@ test("flecha izquierda Lavella retrocede y flecha derecha avanza", () => {
   assert.equal(lavellaSlideIndex(3, 1, 4), 0);
 });
 
+test("siguiente del hero Lavella usa dirección next", () => {
+  const hero = readFileSync(
+    "components/themes/lavella/lavella-home-hero.tsx",
+    "utf8",
+  );
+  assert.match(hero, /setDirection\(step < 0 \? "previous" : "next"\)/);
+  assert.match(hero, /onClick=\{\(\) => move\(1\)\}/);
+});
+
+test("anterior del hero Lavella usa dirección previous", () => {
+  const hero = readFileSync(
+    "components/themes/lavella/lavella-home-hero.tsx",
+    "utf8",
+  );
+  assert.match(hero, /onClick=\{\(\) => move\(-1\)\}/);
+  assert.match(hero, /styles\.heroSlideExitRight/);
+  assert.match(hero, /styles\.heroSlideEnterLeft/);
+});
+
+test("autoplay y wrap 04 a 01 del hero Lavella usan next", () => {
+  const hero = readFileSync(
+    "components/themes/lavella/lavella-home-hero.tsx",
+    "utf8",
+  );
+  assert.match(hero, /startLavellaAutoplay\(\s*\(\) => changeSlide\(1\)/);
+  assert.equal(lavellaSlideIndex(3, 1, 4), 0);
+  assert.match(hero, /styles\.heroSlideExitLeft/);
+  assert.match(hero, /styles\.heroSlideEnterRight/);
+});
+
+test("reduced motion evita la animación horizontal Lavella", () => {
+  const hero = readFileSync(
+    "components/themes/lavella/lavella-home-hero.tsx",
+    "utf8",
+  );
+  const css = readFileSync(
+    "components/themes/lavella/lavella-home.module.css",
+    "utf8",
+  );
+  assert.match(hero, /if \(!reducedMotion\)/);
+  assert.match(
+    css,
+    /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*\.heroSlide,[\s\S]*transition: none;/,
+  );
+});
+
 test("controles Lavella tienen labels inequívocos y SVG propios", () => {
   const hero = readFileSync(
     "components/themes/lavella/lavella-home-hero.tsx",
