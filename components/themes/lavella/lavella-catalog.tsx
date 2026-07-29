@@ -1,10 +1,14 @@
 "use client";
 
 import Image from "next/image";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { FaArrowLeft, FaArrowRight, FaSliders } from "react-icons/fa6";
 import { filterCatalog, type CatalogFilters } from "@/lib/catalog";
 import styles from "./lavella-catalog.module.css";
+import {
+  clearLavellaCatalogFilters,
+  countLavellaActiveFilters,
+} from "./lavella-catalog-filters";
 import { LavellaSearchBox } from "./lavella-search-box";
 import { LavellaTourCard } from "./lavella-tour-card";
 import type { LavellaCatalogProps } from "./lavella-types";
@@ -20,10 +24,44 @@ export function LavellaCatalog({
   onOpen,
 }: LavellaCatalogProps) {
   const [filters, setFilters] = useState<CatalogFilters>({ sort: "next" });
-  const [mobileFilters, setMobileFilters] = useState(false);
+  const [filterPanelOpen, setFilterPanelOpen] = useState(false);
   const results = useMemo(() => filterCatalog(trips, filters), [trips, filters]);
+  const activeFilterCount = countLavellaActiveFilters(filters);
   const update = (key: keyof CatalogFilters, value: string | boolean) =>
     setFilters((current) => ({ ...current, [key]: value }));
+  const clearFilters = () =>
+    setFilters((current) => clearLavellaCatalogFilters(current));
+
+  useEffect(() => {
+    if (!filterPanelOpen) return;
+    const mobileQuery = window.matchMedia("(max-width: 1000px)");
+    const originalOverflow = document.body.style.overflow;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setFilterPanelOpen(false);
+    };
+    const syncScrollLock = () => {
+      document.body.style.overflow = mobileQuery.matches
+        ? "hidden"
+        : originalOverflow;
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    if (typeof mobileQuery.addEventListener === "function") {
+      mobileQuery.addEventListener("change", syncScrollLock);
+    } else {
+      mobileQuery.addListener(syncScrollLock);
+    }
+    syncScrollLock();
+    return () => {
+      window.removeEventListener("keydown", closeOnEscape);
+      if (typeof mobileQuery.removeEventListener === "function") {
+        mobileQuery.removeEventListener("change", syncScrollLock);
+      } else {
+        mobileQuery.removeListener(syncScrollLock);
+      }
+      document.body.style.overflow = originalOverflow;
+    };
+  }, [filterPanelOpen]);
+
   return (
     <main className={styles.catalog} data-lavella-surface="light">
       <section
@@ -53,27 +91,49 @@ export function LavellaCatalog({
       </section>
 
       <section className={styles.resultsArea}>
-        <header>
+        <header className={styles.resultsHeading}>
           <div>
             <small>VIAJES DISPONIBLES</small>
             <h2>{results.length} rutas para descubrir</h2>
           </div>
-          <div className={styles.resultsTools}>
-            <button className={styles.mobileFilterButton} onClick={() => setMobileFilters(true)}>
-              <FaSliders /> Filtros
+        </header>
+        <div className={styles.filterBar}>
+          <button
+            className={`${styles.filterToggle} ${activeFilterCount ? styles.filterToggleActive : ""}`}
+            type="button"
+            onClick={() => setFilterPanelOpen((open) => !open)}
+            aria-expanded={filterPanelOpen}
+            aria-controls="lavella-catalog-filters"
+          >
+            <FaSliders />
+            {activeFilterCount
+              ? `Filtros (${activeFilterCount})`
+              : "Filtros"}
+          </button>
+          {activeFilterCount > 0 && (
+            <button
+              className={styles.toolbarClear}
+              type="button"
+              onClick={clearFilters}
+            >
+              Limpiar
             </button>
-            <label>
+          )}
+          <label className={styles.sortControl}>
+              <span>
               Ordenar
+              </span>
               <select value={String(filters.sort)} onChange={(event) => update("sort", event.target.value)}>
                 <option value="next">Próxima salida</option>
                 <option value="price-asc">Menor precio</option>
                 <option value="price-desc">Mayor precio</option>
                 <option value="duration">Duración</option>
               </select>
-            </label>
-          </div>
-        </header>
-        <div className={styles.resultsLayout}>
+          </label>
+        </div>
+        <div
+          className={`${styles.resultsLayout} ${filterPanelOpen ? styles.resultsLayoutWithFilters : ""}`}
+        >
           <div className={styles.resultsList}>
             {results.map((trip) => {
               const departure = lavellaDeparture(trip);
@@ -92,7 +152,7 @@ export function LavellaCatalog({
               <div className={styles.empty}>
                 <h3>No encontramos una ruta así.</h3>
                 <p>Prueba con menos filtros.</p>
-                <button onClick={() => setFilters({ sort: "next" })}>Restablecer</button>
+                <button onClick={clearFilters}>Restablecer</button>
               </div>
             )}
             <nav className={styles.pagination} aria-label="Paginación">
@@ -104,11 +164,31 @@ export function LavellaCatalog({
             </nav>
           </div>
 
+          {filterPanelOpen && (
+            <button
+              className={styles.filterBackdrop}
+              type="button"
+              aria-label="Cerrar filtros"
+              onClick={() => setFilterPanelOpen(false)}
+            />
+          )}
           <aside
-            className={`${styles.sidebar} ${mobileFilters ? styles.sidebarOpen : ""}`}
+            id="lavella-catalog-filters"
+            className={`${styles.sidebar} ${filterPanelOpen ? styles.sidebarOpen : ""}`}
             data-lavella-surface="light"
+            aria-hidden={!filterPanelOpen}
+            inert={!filterPanelOpen}
           >
-            <header><h3>Filtrar viajes</h3><button onClick={() => setMobileFilters(false)}>Cerrar</button></header>
+            <header>
+              <h3>Filtrar viajes</h3>
+              <button
+                type="button"
+                onClick={() => setFilterPanelOpen(false)}
+                aria-label="Cerrar panel de filtros"
+              >
+                Cerrar
+              </button>
+            </header>
             <label>
               Palabra clave
               <input
@@ -161,14 +241,29 @@ export function LavellaCatalog({
               />
               Solo promociones
             </label>
-            <button className={styles.clear} onClick={() => setFilters({ sort: "next" })}>
-              Limpiar filtros
-            </button>
             <div className={styles.sidebarHelp}>
               <small>¿NECESITAS AYUDA?</small>
               <h3>Encontramos la ruta contigo.</h3>
               <p>{agency.contact.email}</p>
             </div>
+            <footer className={styles.panelActions}>
+              <button
+                className={styles.applyFilters}
+                type="button"
+                onClick={() => setFilterPanelOpen(false)}
+              >
+                Ver {results.length} {results.length === 1 ? "viaje" : "viajes"}
+              </button>
+              {activeFilterCount > 0 && (
+                <button
+                  className={styles.clear}
+                  type="button"
+                  onClick={clearFilters}
+                >
+                  Limpiar filtros
+                </button>
+              )}
+            </footer>
           </aside>
         </div>
       </section>

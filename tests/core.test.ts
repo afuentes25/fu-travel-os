@@ -44,6 +44,10 @@ import {
 } from "../lib/pricing/index";
 import { lavellaDeparture } from "../components/themes/lavella/lavella-utils";
 import {
+  clearLavellaCatalogFilters,
+  countLavellaActiveFilters,
+} from "../components/themes/lavella/lavella-catalog-filters";
+import {
   canLavellaAutoplay,
   lavellaRailTarget,
   lavellaSlideIndex,
@@ -1540,6 +1544,63 @@ test("home Lavella solicita ocho próximas expediciones", () => {
     "utf8",
   );
   assert.match(home, /trips\.slice\(0, 8\)/);
+});
+
+test("contador Lavella incluye únicamente filtros activos", () => {
+  assert.equal(
+    countLavellaActiveFilters({
+      q: "playa",
+      scope: "",
+      region: "mexico",
+      transport: "todos",
+      promotion: true,
+      availability: false,
+      sort: "price-asc",
+    }),
+    3,
+  );
+});
+
+test("panel de filtros Lavella abre y cierra con controles accesibles", () => {
+  const catalog = readFileSync(
+    "components/themes/lavella/lavella-catalog.tsx",
+    "utf8",
+  );
+  assert.match(catalog, /setFilterPanelOpen\(\(open\) => !open\)/);
+  assert.match(catalog, /aria-expanded=\{filterPanelOpen\}/);
+  assert.match(catalog, /aria-label="Cerrar filtros"/);
+  assert.match(catalog, /event\.key === "Escape"/);
+});
+
+test("limpiar filtros Lavella conserva solo el ordenamiento", () => {
+  assert.deepEqual(
+    clearLavellaCatalogFilters({
+      q: "Europa",
+      region: "europe",
+      promotion: true,
+      sort: "duration",
+    }),
+    { sort: "duration" },
+  );
+});
+
+test("catálogo Lavella conserva tenant y tema mediante navegación compartida", () => {
+  const catalog = readFileSync(
+    "components/themes/lavella/lavella-catalog.tsx",
+    "utf8",
+  );
+  const app = readFileSync("components/travel-app.tsx", "utf8");
+  assert.match(catalog, /onOpen\(trip\)/);
+  assert.doesNotMatch(catalog, /history\.(?:pushState|replaceState)/);
+  assert.match(
+    app,
+    /new URLSearchParams\(\{ tenant: agency\.slug, theme \}\)/,
+  );
+});
+
+test("Ordenar no cuenta como filtro Lavella", () => {
+  assert.equal(countLavellaActiveFilters({ sort: "price-desc" }), 0);
+  assert.equal(countLavellaActiveFilters({ sort: "duration", q: " " }), 0);
 });
 
 test("sidebar Lavella es sticky en escritorio con altura de viewport", () => {
