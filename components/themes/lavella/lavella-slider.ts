@@ -32,6 +32,18 @@ export function updateLavellaPauseReasons(
   return next;
 }
 
+export function updateLavellaHoverPause(
+  current: ReadonlySet<SliderPauseReason>,
+  paused: boolean,
+  hoverCapable: boolean,
+) {
+  return updateLavellaPauseReasons(
+    current,
+    "hover",
+    hoverCapable && paused,
+  );
+}
+
 export function canLavellaAutoplay({
   autoplay,
   slideCount,

@@ -47,6 +47,7 @@ import {
   canLavellaAutoplay,
   lavellaSlideIndex,
   LAVELLA_SLIDER_TIMING,
+  updateLavellaHoverPause,
   updateLavellaPauseReasons,
 } from "../components/themes/lavella/lavella-slider";
 import type { SliderPauseReason } from "../components/themes/lavella/lavella-slider";
@@ -1227,6 +1228,29 @@ test("interacción pausa y después permite reanudar autoplay Lavella", () => {
   );
 });
 
+test("hover no pausa autoplay Lavella en dispositivos táctiles", () => {
+  const touchHover = updateLavellaHoverPause(
+    new Set<SliderPauseReason>(),
+    true,
+    false,
+  );
+  assert.equal(touchHover.has("hover"), false);
+  assert.equal(
+    canLavellaAutoplay({
+      autoplay: true,
+      slideCount: 4,
+      pauseReasons: touchHover,
+    }),
+    true,
+  );
+  const mouseHover = updateLavellaHoverPause(
+    new Set<SliderPauseReason>(),
+    true,
+    true,
+  );
+  assert.equal(mouseHover.has("hover"), true);
+});
+
 test("visibilidad de pestaña pausa y reanuda autoplay Lavella", () => {
   const hidden = updateLavellaPauseReasons(
     new Set<SliderPauseReason>(),
@@ -1265,6 +1289,36 @@ test("slider Lavella mantiene un solo intervalo y limpia ambos timers", () => {
   assert.match(hero, /clearTimeout/);
   assert.match(hero, /visibilitychange/);
   assert.match(hero, /prefers-reduced-motion/);
+  assert.match(hero, /\(hover: hover\) and \(pointer: fine\)/);
+});
+
+test("flechas de carruseles y lupa conservan centrado y submit", () => {
+  const home = readFileSync(
+    "components/themes/lavella/lavella-home.tsx",
+    "utf8",
+  );
+  const search = readFileSync(
+    "components/themes/lavella/lavella-search-box.tsx",
+    "utf8",
+  );
+  const css = readFileSync(
+    "components/themes/lavella/lavella-home.module.css",
+    "utf8",
+  );
+  assert.equal((home.match(/className=\{styles\.carouselArrowButton\}/g) ?? []).length, 4);
+  assert.match(
+    css,
+    /\.carouselArrowButton[\s\S]*display: inline-grid;[\s\S]*place-items: center;[\s\S]*padding: 0;[\s\S]*line-height: 0;/,
+  );
+  assert.match(
+    css,
+    /\.carouselArrowButton > svg \{[\s\S]*display: block;[\s\S]*width: 18px;[\s\S]*height: 18px;/,
+  );
+  assert.match(search, /className=\{styles\.searchSubmit\} type="submit"/);
+  assert.match(
+    css,
+    /\.searchSubmit \{[\s\S]*display: inline-grid;[\s\S]*place-items: center;[\s\S]*padding: 0;[\s\S]*line-height: 0;/,
+  );
 });
 
 test("slider Lavella deshabilita controles cuando solo existe una slide", () => {

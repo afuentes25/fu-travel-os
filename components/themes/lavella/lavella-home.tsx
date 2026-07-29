@@ -35,8 +35,8 @@ export function LavellaHome({
           </div>
           <div>
             <button onClick={() => onNavigate("/viajes")}>Ver todos</button>
-            <button aria-label="Anterior"><FaArrowLeft /></button>
-            <button aria-label="Siguiente"><FaArrowRight /></button>
+            <button className={styles.carouselArrowButton} aria-label="Anterior"><FaArrowLeft /></button>
+            <button className={styles.carouselArrowButton} aria-label="Siguiente"><FaArrowRight /></button>
           </div>
         </header>
         <div className={styles.popularRail}>
@@ -103,12 +103,14 @@ export function LavellaHome({
           <div>
             <button onClick={() => onNavigate("/destinos")}>Ver todos los destinos</button>
             <button
+              className={styles.carouselArrowButton}
               aria-label="Destino anterior"
               onClick={() => moveDestinations(-1)}
             >
               <FaArrowLeft />
             </button>
             <button
+              className={styles.carouselArrowButton}
               aria-label="Destino siguiente"
               onClick={() => moveDestinations(1)}
             >

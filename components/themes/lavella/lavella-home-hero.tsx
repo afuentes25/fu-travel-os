@@ -16,6 +16,7 @@ import {
   lavellaSlideIndex,
   LAVELLA_SLIDER_TIMING,
   type SliderPauseReason,
+  updateLavellaHoverPause,
   updateLavellaPauseReasons,
 } from "./lavella-slider";
 import type { LavellaHomeProps } from "./lavella-types";
@@ -63,6 +64,7 @@ export function LavellaHomeHero({
     ReadonlySet<SliderPauseReason>
   >(() => new Set());
   const touch = useRef<number | null>(null);
+  const hoverCapable = useRef(false);
   const autoplayTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const resumeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const settings = agency.settings.heroSliderSettings ?? {
@@ -80,15 +82,29 @@ export function LavellaHomeHero({
   );
 
   useEffect(() => {
-    const media = matchMedia("(prefers-reduced-motion: reduce)");
-    const syncMotion = () => setPauseReason("reduced-motion", media.matches);
+    const motionMedia = matchMedia("(prefers-reduced-motion: reduce)");
+    const hoverMedia = matchMedia("(hover: hover) and (pointer: fine)");
+    const syncMotion = () =>
+      setPauseReason("reduced-motion", motionMedia.matches);
+    const syncHover = () => {
+      hoverCapable.current = hoverMedia.matches;
+      if (!hoverMedia.matches) {
+        setPauseReasons((value) =>
+          updateLavellaHoverPause(value, false, false),
+        );
+        setPauseReason("focus", false);
+      }
+    };
     const syncVisibility = () => setPauseReason("hidden", document.hidden);
     syncMotion();
+    syncHover();
     syncVisibility();
-    media.addEventListener("change", syncMotion);
+    motionMedia.addEventListener("change", syncMotion);
+    hoverMedia.addEventListener("change", syncHover);
     document.addEventListener("visibilitychange", syncVisibility);
     return () => {
-      media.removeEventListener("change", syncMotion);
+      motionMedia.removeEventListener("change", syncMotion);
+      hoverMedia.removeEventListener("change", syncHover);
       document.removeEventListener("visibilitychange", syncVisibility);
     };
   }, [setPauseReason]);
@@ -135,10 +151,14 @@ export function LavellaHomeHero({
   const departure = lavellaDeparture(current);
   const price = lavellaStartingPrice(current, departure);
   const pauseAfterInteraction = () => {
+    setPauseReason("focus", false);
     setPauseReason("interaction", true);
     if (resumeTimer.current) clearTimeout(resumeTimer.current);
     resumeTimer.current = setTimeout(
-      () => setPauseReason("interaction", false),
+      () => {
+        resumeTimer.current = null;
+        setPauseReason("interaction", false);
+      },
       settings.resumeAfterInteractionMs,
     );
   };
@@ -154,14 +174,32 @@ export function LavellaHomeHero({
       style={{ "--lavella-slider-transition": `${settings.transitionDurationMs}ms` } as CSSProperties}
       aria-roledescription="carrusel"
       aria-label="Viajes destacados"
-      onMouseEnter={() => setPauseReason("hover", true)}
-      onMouseLeave={() => setPauseReason("hover", false)}
-      onFocusCapture={() => setPauseReason("focus", true)}
+      onMouseEnter={() =>
+        setPauseReasons((value) =>
+          updateLavellaHoverPause(value, true, hoverCapable.current),
+        )
+      }
+      onMouseLeave={() =>
+        setPauseReasons((value) =>
+          updateLavellaHoverPause(value, false, hoverCapable.current),
+        )
+      }
+      onFocusCapture={(event) =>
+        setPauseReason(
+          "focus",
+          event.target instanceof HTMLElement &&
+            event.target.matches(":focus-visible"),
+        )
+      }
       onBlurCapture={(event) => {
         if (!event.currentTarget.contains(event.relatedTarget))
           setPauseReason("focus", false);
       }}
       onTouchStart={(event) => {
+        setPauseReasons((value) =>
+          updateLavellaHoverPause(value, false, false),
+        );
+        setPauseReason("focus", false);
         touch.current = event.touches[0]?.clientX ?? null;
       }}
       onTouchEnd={(event) => {
