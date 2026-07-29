@@ -7,6 +7,7 @@ import styles from "./lavella-home.module.css";
 import { LavellaDestinationCard } from "./lavella-destination-card";
 import { LavellaHomeHero } from "./lavella-home-hero";
 import { LavellaSearchBox } from "./lavella-search-box";
+import { lavellaRailTarget } from "./lavella-slider";
 import { LavellaTourCard } from "./lavella-tour-card";
 import type { LavellaHomeProps } from "./lavella-types";
 import { lavellaWhatsApp, openLavellaWhatsApp } from "./lavella-utils";
@@ -17,7 +18,24 @@ export function LavellaHome({
   onOpen,
   onNavigate,
 }: LavellaHomeProps) {
+  const popularRail = useRef<HTMLDivElement>(null);
   const destinationsRail = useRef<HTMLDivElement>(null);
+  const movePopular = (direction: -1 | 1) => {
+    const rail = popularRail.current;
+    const card = rail?.firstElementChild;
+    if (!(rail && card instanceof HTMLElement)) return;
+    const gap = Number.parseFloat(getComputedStyle(rail).columnGap) || 0;
+    const maxScroll = rail.scrollWidth - rail.clientWidth;
+    rail.scrollTo({
+      left: lavellaRailTarget({
+        currentScroll: rail.scrollLeft,
+        maxScroll,
+        itemStep: card.getBoundingClientRect().width + gap,
+        direction,
+      }),
+      behavior: "smooth",
+    });
+  };
   const moveDestinations = (direction: number) =>
     destinationsRail.current?.scrollBy({
       left: direction * 444,
@@ -35,11 +53,25 @@ export function LavellaHome({
           </div>
           <div>
             <button onClick={() => onNavigate("/viajes")}>Ver todos</button>
-            <button className={styles.carouselArrowButton} aria-label="Anterior"><FaArrowLeft /></button>
-            <button className={styles.carouselArrowButton} aria-label="Siguiente"><FaArrowRight /></button>
+            <button
+              className={styles.carouselArrowButton}
+              type="button"
+              aria-label="Viaje popular anterior"
+              onClick={() => movePopular(-1)}
+            >
+              <FaArrowLeft />
+            </button>
+            <button
+              className={styles.carouselArrowButton}
+              type="button"
+              aria-label="Siguiente viaje popular"
+              onClick={() => movePopular(1)}
+            >
+              <FaArrowRight />
+            </button>
           </div>
         </header>
-        <div className={styles.popularRail}>
+        <div className={styles.popularRail} ref={popularRail}>
           {trips.slice(0, 4).map((trip, index) => (
             <LavellaTourCard
               key={trip.id}

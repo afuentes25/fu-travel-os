@@ -45,6 +45,7 @@ import {
 import { lavellaDeparture } from "../components/themes/lavella/lavella-utils";
 import {
   canLavellaAutoplay,
+  lavellaRailTarget,
   lavellaSlideIndex,
   LAVELLA_SLIDER_TIMING,
   updateLavellaHoverPause,
@@ -1211,6 +1212,28 @@ test("autoplay Lavella avanza y una sola slide no lo activa", () => {
   );
 });
 
+test("hero Lavella inicia autoplay sin interacción", () => {
+  const noInitialPause = new Set<SliderPauseReason>();
+  assert.equal(
+    canLavellaAutoplay({
+      autoplay: true,
+      slideCount: 4,
+      pauseReasons: noInitialPause,
+    }),
+    true,
+  );
+});
+
+test("hero Lavella cambia antes de seis segundos en móvil", () => {
+  assert.ok(LAVELLA_SLIDER_TIMING.autoplayDelayMs < 6000);
+  assert.equal(lavellaSlideIndex(0, 1, 4), 1);
+});
+
+test("hero Lavella cambia antes de seis segundos en escritorio", () => {
+  assert.ok(LAVELLA_SLIDER_TIMING.autoplayDelayMs < 6000);
+  assert.equal(lavellaSlideIndex(1, 1, 4), 2);
+});
+
 test("interacción pausa y después permite reanudar autoplay Lavella", () => {
   const paused = updateLavellaPauseReasons(
     new Set<SliderPauseReason>(),
@@ -1290,6 +1313,9 @@ test("slider Lavella mantiene un solo intervalo y limpia ambos timers", () => {
   assert.match(hero, /visibilitychange/);
   assert.match(hero, /prefers-reduced-motion/);
   assert.match(hero, /\(hover: hover\) and \(pointer: fine\)/);
+  assert.match(hero, /keyboardNavigation\.current &&/);
+  assert.match(hero, /onPointerMove/);
+  assert.doesNotMatch(hero, /onMouseEnter/);
 });
 
 test("flechas de carruseles y lupa conservan centrado y submit", () => {
@@ -1318,6 +1344,53 @@ test("flechas de carruseles y lupa conservan centrado y submit", () => {
   assert.match(
     css,
     /\.searchSubmit \{[\s\S]*display: inline-grid;[\s\S]*place-items: center;[\s\S]*padding: 0;[\s\S]*line-height: 0;/,
+  );
+});
+
+test("flechas de Viajes populares desplazan el rail y conservan labels", () => {
+  assert.equal(
+    lavellaRailTarget({
+      currentScroll: 83,
+      maxScroll: 2200,
+      itemStep: 764,
+      direction: -1,
+    }),
+    2200,
+  );
+  assert.equal(
+    lavellaRailTarget({
+      currentScroll: 764,
+      maxScroll: 2200,
+      itemStep: 764,
+      direction: -1,
+    }),
+    0,
+  );
+  assert.equal(
+    lavellaRailTarget({
+      currentScroll: 0,
+      maxScroll: 2200,
+      itemStep: 764,
+      direction: 1,
+    }),
+    764,
+  );
+  const home = readFileSync(
+    "components/themes/lavella/lavella-home.tsx",
+    "utf8",
+  );
+  assert.match(home, /ref=\{popularRail\}/);
+  assert.match(home, /aria-label="Viaje popular anterior"/);
+  assert.match(home, /aria-label="Siguiente viaje popular"/);
+  assert.match(home, /onClick=\{\(\) => movePopular\(-1\)\}/);
+  assert.match(home, /onClick=\{\(\) => movePopular\(1\)\}/);
+  assert.equal(
+    (
+      home.match(
+        /className=\{styles\.carouselArrowButton\}[\s\S]{0,120}type="button"/g,
+      ) ?? []
+    ).length,
+    2,
   );
 });
 

@@ -65,6 +65,7 @@ export function LavellaHomeHero({
   >(() => new Set());
   const touch = useRef<number | null>(null);
   const hoverCapable = useRef(false);
+  const keyboardNavigation = useRef(false);
   const autoplayTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const resumeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const settings = agency.settings.heroSliderSettings ?? {
@@ -96,16 +97,27 @@ export function LavellaHomeHero({
       }
     };
     const syncVisibility = () => setPauseReason("hidden", document.hidden);
+    const markKeyboardNavigation = (event: KeyboardEvent) => {
+      if (event.key === "Tab") keyboardNavigation.current = true;
+    };
+    const markPointerNavigation = () => {
+      keyboardNavigation.current = false;
+      setPauseReason("focus", false);
+    };
     syncMotion();
     syncHover();
     syncVisibility();
     motionMedia.addEventListener("change", syncMotion);
     hoverMedia.addEventListener("change", syncHover);
     document.addEventListener("visibilitychange", syncVisibility);
+    document.addEventListener("keydown", markKeyboardNavigation);
+    document.addEventListener("pointerdown", markPointerNavigation);
     return () => {
       motionMedia.removeEventListener("change", syncMotion);
       hoverMedia.removeEventListener("change", syncHover);
       document.removeEventListener("visibilitychange", syncVisibility);
+      document.removeEventListener("keydown", markKeyboardNavigation);
+      document.removeEventListener("pointerdown", markPointerNavigation);
     };
   }, [setPauseReason]);
 
@@ -174,12 +186,13 @@ export function LavellaHomeHero({
       style={{ "--lavella-slider-transition": `${settings.transitionDurationMs}ms` } as CSSProperties}
       aria-roledescription="carrusel"
       aria-label="Viajes destacados"
-      onMouseEnter={() =>
+      onPointerMove={(event) => {
+        if (event.pointerType !== "mouse") return;
         setPauseReasons((value) =>
           updateLavellaHoverPause(value, true, hoverCapable.current),
-        )
-      }
-      onMouseLeave={() =>
+        );
+      }}
+      onPointerLeave={() =>
         setPauseReasons((value) =>
           updateLavellaHoverPause(value, false, hoverCapable.current),
         )
@@ -187,6 +200,7 @@ export function LavellaHomeHero({
       onFocusCapture={(event) =>
         setPauseReason(
           "focus",
+          keyboardNavigation.current &&
           event.target instanceof HTMLElement &&
             event.target.matches(":focus-visible"),
         )

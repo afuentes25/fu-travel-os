@@ -20,6 +20,26 @@ export function lavellaSlideIndex(
   return (current + step + slideCount) % slideCount;
 }
 
+export function lavellaRailTarget({
+  currentScroll,
+  maxScroll,
+  itemStep,
+  direction,
+}: {
+  currentScroll: number;
+  maxScroll: number;
+  itemStep: number;
+  direction: -1 | 1;
+}) {
+  if (maxScroll <= 0) return 0;
+  if (direction < 0 && currentScroll <= itemStep / 2) return maxScroll;
+  if (direction > 0 && currentScroll >= maxScroll - 1) return 0;
+  return Math.min(
+    maxScroll,
+    Math.max(0, currentScroll + direction * itemStep),
+  );
+}
+
 export function updateLavellaPauseReasons(
   current: ReadonlySet<SliderPauseReason>,
   reason: SliderPauseReason,

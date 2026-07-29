@@ -384,10 +384,17 @@
 }
 
 .popularRail {
-  width: max-content;
-  transform: translateX(calc((100vw - 1200px) / 2));
+  width: 100%;
+  padding: 0 40px 8px max(40px, calc((100vw - 1200px) / 2));
   display: flex;
   gap: 34px;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  scrollbar-width: none;
+}
+
+.popularRail::-webkit-scrollbar {
+  display: none;
 }
 
 .tourCard {
@@ -396,6 +403,7 @@
   flex: 0 0 auto;
   border-radius: 12px;
   overflow: hidden;
+  scroll-snap-align: start;
 }
 
 .tourCard > button {
@@ -1330,6 +1338,11 @@
   .destinationRail {
     transform: translateX(20px);
     gap: 18px;
+  }
+
+  .popularRail {
+    padding-left: 20px;
+    transform: none;
   }
 
   .destinationRail {
