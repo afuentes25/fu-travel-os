@@ -16,13 +16,17 @@ export function LavellaTourCard({
 }: LavellaCardProps) {
   const departure = lavellaDeparture(trip);
   const price = lavellaStartingPrice(trip, departure);
+  const promotion = trip.promotion?.trim();
   if (variant === "classic") {
     return (
       <article className={styles.tourClassicCard} data-lavella-surface="image">
-        <button onClick={() => onOpen(trip)} aria-label={`Ver ${trip.title}`}>
+        <button
+          onClick={() => onOpen(trip)}
+          aria-label={`Ver detalles de ${trip.title}`}
+        >
           <Image src={trip.featuredImage} alt="" fill sizes="(max-width:760px) 92vw, (max-width:1100px) 45vw, 24vw" />
           <span className={styles.tourClassicShade} />
-          {trip.promotion && <em>{trip.promotion}</em>}
+          {promotion && <em>{promotion}</em>}
           <div className={styles.tourClassicContent}>
             <small>{trip.cities[0] ?? trip.countries[0]}</small>
             <h3>{trip.title}</h3>
@@ -38,10 +42,13 @@ export function LavellaTourCard({
   }
   return (
     <article className={`${styles.tourCard} ${featured ? styles.tourCardFeatured : ""}`}>
-      <button onClick={() => onOpen(trip)} aria-label={`Ver ${trip.title}`}>
+      <button
+        onClick={() => onOpen(trip)}
+        aria-label={`Ver detalles de ${trip.title}`}
+      >
         <Image src={trip.featuredImage} alt="" fill sizes={featured ? "65vw" : "(max-width:760px) 92vw, 48vw"} />
         <span className={styles.tourShade} />
-        {trip.promotion && <em>{trip.promotion}</em>}
+        {promotion && <em>{promotion}</em>}
         <div className={styles.tourCardContent}>
           <h3>
             {trip.title} <i>|</i>{" "}

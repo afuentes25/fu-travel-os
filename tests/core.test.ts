@@ -47,7 +47,10 @@ import {
   clearLavellaCatalogFilters,
   countLavellaActiveFilters,
 } from "../components/themes/lavella/lavella-catalog-filters";
-import { lavellaCatalogDuration } from "../components/themes/lavella/lavella-catalog-card-utils";
+import {
+  LAVELLA_CATALOG_COLUMN_OPTIONS,
+  resolveLavellaCatalogColumns,
+} from "../components/themes/lavella/lavella-catalog-config";
 import {
   canLavellaAutoplay,
   lavellaRailTarget,
@@ -1590,13 +1593,8 @@ test("catálogo Lavella conserva tenant y tema mediante navegación compartida",
     "components/themes/lavella/lavella-catalog.tsx",
     "utf8",
   );
-  const card = readFileSync(
-    "components/themes/lavella/lavella-catalog-card.tsx",
-    "utf8",
-  );
   const app = readFileSync("components/travel-app.tsx", "utf8");
-  assert.match(catalog, /<LavellaCatalogCard[\s\S]*onOpen=\{onOpen\}/);
-  assert.match(card, /onClick=\{\(\) => onOpen\(trip\)\}/);
+  assert.match(catalog, /<LavellaTourCard[\s\S]*onOpen=\{onOpen\}/);
   assert.doesNotMatch(catalog, /history\.(?:pushState|replaceState)/);
   assert.match(
     app,
@@ -1609,59 +1607,37 @@ test("Ordenar no cuenta como filtro Lavella", () => {
   assert.equal(countLavellaActiveFilters({ sort: "duration", q: " " }), 0);
 });
 
-test("card de catálogo Lavella separa precio del heading", () => {
-  const card = readFileSync(
-    "components/themes/lavella/lavella-catalog-card.tsx",
+test("catálogo Lavella reutiliza la card compacta de Próximas expediciones", () => {
+  const catalog = readFileSync(
+    "components/themes/lavella/lavella-catalog.tsx",
     "utf8",
   );
-  const heading = card.match(/<h3>[\s\S]*?<\/h3>/)?.[0] ?? "";
-  assert.doesNotMatch(heading, /formatMoney|catalogCardPrice/);
-  assert.match(card, /className=\{styles\.catalogCardPrice\}/);
+  assert.match(catalog, /<LavellaTourCard[\s\S]*variant="classic"/);
+  assert.doesNotMatch(catalog, /LavellaCatalogCard/);
 });
 
-test("card de catálogo Lavella no renderiza badges vacíos", () => {
-  const card = readFileSync(
-    "components/themes/lavella/lavella-catalog-card.tsx",
-    "utf8",
-  );
-  assert.match(card, /const promotion = trip\.promotion\?\.trim\(\)/);
-  assert.match(card, /\{promotion && \(/);
+test("configuración Lavella acepta tres o cuatro columnas y usa cuatro por defecto", () => {
+  const agency = structuredClone(agencies[0]);
+  const admin = readFileSync("components/legacy-travel-app.tsx", "utf8");
+  assert.deepEqual(LAVELLA_CATALOG_COLUMN_OPTIONS, [3, 4]);
+  assert.equal(resolveLavellaCatalogColumns(agency), 4);
+  agency.settings.lavella = { catalogColumns: 3 };
+  assert.equal(resolveLavellaCatalogColumns(agency), 3);
+  agency.settings.lavella = { catalogColumns: 4 };
+  assert.equal(resolveLavellaCatalogColumns(agency), 4);
+  assert.match(admin, /Columnas del catálogo/);
+  assert.match(admin, /LAVELLA_CATALOG_COLUMN_OPTIONS\.map/);
 });
 
-test("card de catálogo Lavella pluraliza día y días", () => {
-  assert.equal(lavellaCatalogDuration(1), "1 día");
-  assert.equal(lavellaCatalogDuration(2), "2 días");
-});
-
-test("grid de catálogo Lavella mantiene tres, dos y una columnas", () => {
+test("grid compacto del catálogo conserva una columna en móvil", () => {
   const css = readFileSync(
     "components/themes/lavella/lavella-catalog.module.css",
     "utf8",
   );
   assert.match(
     css,
-    /\.resultsGrid \{[\s\S]*grid-template-columns: repeat\(3, minmax\(0, 1fr\)\)/,
-  );
-  assert.match(
-    css,
-    /@media \(max-width: 1000px\)[\s\S]*\.resultsGrid,[\s\S]*repeat\(2, minmax\(0, 1fr\)\)/,
-  );
-  assert.match(
-    css,
     /@media \(max-width: 760px\)[\s\S]*\.resultsGrid,[\s\S]*grid-template-columns: 1fr/,
   );
-});
-
-test("card de catálogo Lavella no expone valores técnicos", () => {
-  const utilities = readFileSync(
-    "components/themes/lavella/lavella-catalog-card-utils.ts",
-    "utf8",
-  );
-  assert.match(utilities, /ground: "Terrestre"/);
-  assert.match(utilities, /train: "Tren"/);
-  assert.match(utilities, /air: "Aéreo"/);
-  assert.match(utilities, /cruise: "Marítimo"/);
-  assert.doesNotMatch(utilities, />\s*(ground|scheduled|limited)\s*</i);
 });
 
 test("sidebar Lavella es sticky en escritorio con altura de viewport", () => {

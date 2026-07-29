@@ -9,8 +9,9 @@ import {
   clearLavellaCatalogFilters,
   countLavellaActiveFilters,
 } from "./lavella-catalog-filters";
-import { LavellaCatalogCard } from "./lavella-catalog-card";
+import { resolveLavellaCatalogColumns } from "./lavella-catalog-config";
 import { LavellaSearchBox } from "./lavella-search-box";
+import { LavellaTourCard } from "./lavella-tour-card";
 import type { LavellaCatalogProps } from "./lavella-types";
 
 export function LavellaCatalog({
@@ -22,6 +23,7 @@ export function LavellaCatalog({
   const [filterPanelOpen, setFilterPanelOpen] = useState(false);
   const results = useMemo(() => filterCatalog(trips, filters), [trips, filters]);
   const activeFilterCount = countLavellaActiveFilters(filters);
+  const catalogColumns = resolveLavellaCatalogColumns(agency);
   const update = (key: keyof CatalogFilters, value: string | boolean) =>
     setFilters((current) => ({ ...current, [key]: value }));
   const clearFilters = () =>
@@ -130,12 +132,19 @@ export function LavellaCatalog({
           className={`${styles.resultsLayout} ${filterPanelOpen ? styles.resultsLayoutWithFilters : ""}`}
         >
           <div className={styles.resultsList}>
-            <div className={styles.resultsGrid}>
+            <div
+              className={`${styles.resultsGrid} ${
+                catalogColumns === 3
+                  ? styles.catalogColumnsThree
+                  : styles.catalogColumnsFour
+              }`}
+            >
               {results.map((trip) => (
-                <LavellaCatalogCard
+                <LavellaTourCard
                   key={trip.id}
                   trip={trip}
                   onOpen={onOpen}
+                  variant="classic"
                 />
               ))}
             </div>

@@ -34,6 +34,10 @@ import {
   validateTravelerDrafts,
 } from "@/lib/travelers";
 import { whatsappUrl } from "@/lib/whatsapp";
+import {
+  LAVELLA_CATALOG_COLUMN_OPTIONS,
+  resolveLavellaCatalogColumns,
+} from "@/components/themes/lavella/lavella-catalog-config";
 import type {
   Agency,
   CartLine,
@@ -2635,6 +2639,25 @@ function ThemeManager({
           >
             {agency.theme === t ? "Tema activo" : "Previsualizar"}
           </button>
+          {t === "lavella" && (
+            <label>
+              Columnas del catálogo
+              <select
+                defaultValue={resolveLavellaCatalogColumns(agency)}
+                onChange={(event) =>
+                  act(
+                    `Catálogo Lavella configurado en ${event.target.value} columnas para ${agency.name}.`,
+                  )
+                }
+              >
+                {LAVELLA_CATALOG_COLUMN_OPTIONS.map((columns) => (
+                  <option key={columns} value={columns}>
+                    {columns} columnas
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
         </article>
       ))}
     </div>

@@ -220,6 +220,10 @@ export type AgencyBranding = {
   heroDescription: string;
   buttonStyle: "rounded" | "square" | "pill";
 };
+export type LavellaCatalogColumns = 3 | 4;
+export type LavellaThemeSettings = {
+  catalogColumns?: LavellaCatalogColumns;
+};
 export type AgencySettings = {
   visibleSections: string[];
   modules: string[];
@@ -232,6 +236,7 @@ export type AgencySettings = {
   extraVisibility?: ExtraVisibility;
   heroSliderSettings?: HeroSliderSettings;
   exchangeRatePolicy?: ExchangeRatePolicy;
+  lavella?: LavellaThemeSettings;
 };
 export type Agency = {
   id: string;
