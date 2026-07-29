@@ -1,4 +1,4 @@
-export type TravelTheme = "explorer" | "boutique" | "marketplace" | "lavella";
+export type TravelTheme = "explorer" | "lavella";
 export type ThemeId = TravelTheme;
 export type AgencyPlan = "start" | "commerce" | "growth" | "scale";
 export type AgencyStatus = "draft" | "active" | "suspended";

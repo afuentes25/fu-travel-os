@@ -5,9 +5,8 @@ Fecha de revisión: 26 de julio de 2026
 ## Alcance
 
 Esta fase refina únicamente el renderer visual Lavella y amplía los datos demo
-compartidos. Explorer, Boutique y Marketplace conservan sus renderers; los
-siete viajes nuevos aparecen en los cuatro temas porque pertenecen a la capa de
-datos de Crisenix.
+compartidos. Los siete viajes nuevos aparecen en Explorer y Lavella porque
+pertenecen a la capa de datos de Crisenix.
 
 Referencias locales auditadas:
 
@@ -143,8 +142,7 @@ Se incorporaron siete productos con ID y slug estables:
 Duraciones, tarifas publicadas, fechas y decisiones de modelado están
 documentadas en [source-data.md](source-data.md). Ninguna tarifa ausente se
 rellena por analogía. Los siete productos usan la configuración modular de
-secciones y pueden consultarse con `tenant=crisenix` en Explorer, Boutique,
-Marketplace y Lavella.
+secciones y pueden consultarse con `tenant=crisenix` en Explorer y Lavella.
 
 ## Arquitectura multimoneda
 

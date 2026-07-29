@@ -194,14 +194,10 @@ export const localItineraryLeadCaptureService: ItineraryLeadCaptureService = {
 
 export const TRIP_SECTION_RENDERERS = {
   explorer: { id: "explorer-cinematic" },
-  boutique: { id: "boutique-editorial" },
-  marketplace: { id: "marketplace-operational" },
   lavella: { id: "lavella-native" },
 } as const satisfies Record<TravelTheme, { id: string }>;
 
 export const TRIP_SECTION_RENDERER_KEYS = {
   explorer: TRIP_SECTION_RENDERERS.explorer.id,
-  boutique: TRIP_SECTION_RENDERERS.boutique.id,
-  marketplace: TRIP_SECTION_RENDERERS.marketplace.id,
   lavella: TRIP_SECTION_RENDERERS.lavella.id,
 } as const;

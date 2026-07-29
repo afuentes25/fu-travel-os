@@ -22,12 +22,12 @@ export const agencies: Agency[] = [
   ] }, availabilityDisplayMode: "hidden", travelerCategories: [{ id: "adult", label: "Adultos", minAge: 12, pricingRule: "adult", active: true, order: 1 }, { id: "child", label: "Menores", minAge: 3, maxAge: 11, pricingRule: "child", active: true, order: 2 }], extraVisibility: "hidden", heroSliderSettings: { autoplay: true, autoplayDelayMs: 5000, transitionDurationMs: 650, resumeAfterInteractionMs: 7000 } } },
   {
     id: "a-crisenix", slug: "crisenix", name: "Crisenix Demo", status: "active",
-    theme: "marketplace", plan: "scale", currency: "MXN",
+    theme: "lavella", plan: "scale", currency: "MXN",
     timezone: "America/Mexico_City", locale: "es-MX",
     contact: { whatsapp: "525500000202", email: "ventas@crisenix.demo" },
     branding: {
       logoText: "CRISENIX", primaryColor: "#173f86", accentColor: "#f05a3e",
-      heroImage: "/images/marketplace-hero.webp",
+      heroImage: "/images/destination-europe.webp",
       heroTitle: "Viajes para todos, opciones para comparar",
       heroDescription: "Catálogo nacional e internacional con fechas, tarifas y disponibilidad.",
       buttonStyle: "square",
@@ -50,12 +50,10 @@ export const agencies: Agency[] = [
       },
     },
   },
-  { id: "a-boutique", slug: "boutique", name: "Maison Voyage Demo", status: "active", theme: "boutique", plan: "commerce", currency: "USD", timezone: "America/Mexico_City", locale: "es-MX", contact: { whatsapp: "525500000303", email: "concierge@maison.demo", instagram: "maison.demo" }, branding: { logoText: "MAISON / VOYAGE", primaryColor: "#3d4536", accentColor: "#a45f47", heroImage: "/images/boutique-hero.webp", heroTitle: "El arte de viajar despacio", heroDescription: "Lunas de miel y experiencias privadas diseñadas con intención.", buttonStyle: "pill" }, settings: { visibleSections: ["story", "featured", "destinations", "testimonials"], modules: ["catalog", "booking", "concierge"], legalNotice: "Experiencias y precios creados exclusivamente para esta demostración." } },
 ];
 export const domains: AgencyDomain[] = [
   { id: "d1", agencyId: "a-furiver", hostname: "furiver.travel.fu.land", type: "subdomain", isPrimary: true, status: "active" },
   { id: "d2", agencyId: "a-crisenix", hostname: "crisenix.travel.fu.land", type: "subdomain", isPrimary: true, status: "active" },
-  { id: "d3", agencyId: "a-boutique", hostname: "agenciaejemplo.com", type: "custom_domain", isPrimary: true, status: "active" },
 ];
 export const departurePoints: AgencyDeparturePoint[] = [
   ["p1","a-furiver","Metro Aragón","Gustavo A. Madero"],
@@ -66,7 +64,6 @@ export const departurePoints: AgencyDeparturePoint[] = [
   ["p6","a-crisenix","Guelatao","Iztapalapa"],
   ["p8","a-crisenix","Revolución","Cuauhtémoc"],
   ["p9","a-crisenix","Aeropuerto por confirmar","Ciudad de México"],
-  ["p7","a-boutique","Terminal Ejecutiva","Miguel Hidalgo"],
 ].map(([id,agencyId,name,city]) => ({ id, agencyId, name, city, address: `Punto público de encuentro, zona ${name}`, state: "Ciudad de México", reference: "Ubicación exacta al confirmar", mapUrl: "https://maps.google.com", isActive: true }));
 
 const catalog: Array<[string,string,string,string,string,string,number,number,string,string[],string,string?]> = [
@@ -79,9 +76,6 @@ const catalog: Array<[string,string,string,string,string,string,number,number,st
   ["crisenix","Europa en Contrastes","Madrid, París, Ámsterdam y Berlín","europe","circuit","air",12,1599,"USD",["culture","seasonal"],"Europa","Reserva anticipada"],
   ["crisenix","Colombia Viva","Bogotá, cafetales y Cartagena","south_america","vacation_package","air",8,1399,"USD",["culture","gastronomy"],"Colombia"],
   ["crisenix","Valle de Bravo Express","Lago, bosque y tarde libre","mexico","day_tour","ground",1,990,"MXN",["nature","adventure"],"Estado de México"],
-  ["boutique","Santorini Íntimo","Una luna de miel entre calderas y mar","europe","custom_trip","air",8,4890,"USD",["romance","premium"],"Grecia","Detalle de bienvenida"],
-  ["boutique","Kioto en Calma","Templos, jardines y hospitalidad japonesa","asia","experience","air",9,5790,"USD",["culture","wellness","premium"],"Japón"],
-  ["boutique","Patagonia Privada","Glaciares, estancias y cielos australes","south_america","custom_trip","not_included",7,6250,"USD",["adventure","premium"],"Argentina","Traslado privado incluido"],
 ];
 const agencyId = (slug:string) => agencies.find(a=>a.slug===slug)!.id;
 const countryBy = (region:string, place:string) => region === "mexico" ? "México" : place === "Europa" ? "España" : place;
@@ -114,7 +108,7 @@ travels.forEach((travel) => {
 });
 
 type DemoExpansion = {
-  tenant: "furiver" | "crisenix" | "boutique";
+  tenant: "furiver" | "crisenix";
   title: string;
   place: string;
   country: string;
@@ -148,11 +142,6 @@ const demoExpansion: DemoExpansion[] = [
   {tenant:"crisenix",title:"Canadá de Costa a Bosque",place:"Vancouver",country:"Canadá",region:"north_america",type:"circuit",transport:"air",days:9,amount:2199,currency:"USD",image:2},
   {tenant:"crisenix",title:"Marruecos de Medinas",place:"Marrakech",country:"Marruecos",region:"africa",type:"circuit",transport:"air",days:11,amount:1999,currency:"USD",image:6},
   {tenant:"crisenix",title:"Turquía entre Continentes",place:"Estambul",country:"Turquía",region:"middle_east",type:"circuit",transport:"air",days:12,amount:1849,currency:"USD",image:3,promotion:"Impuestos preferentes"},
-  {tenant:"boutique",title:"Amalfi en Residencia",place:"Ravello",country:"Italia",region:"europe",type:"custom_trip",transport:"air",days:8,amount:6490,currency:"USD",image:8,promotion:"Diseño privado"},
-  {tenant:"boutique",title:"Provenza para Dos",place:"Aix-en-Provence",country:"Francia",region:"europe",type:"experience",transport:"mixed",days:7,amount:5890,currency:"USD",image:3},
-  {tenant:"boutique",title:"Bali Ritual y Descanso",place:"Ubud",country:"Indonesia",region:"asia",type:"custom_trip",transport:"air",days:10,amount:7190,currency:"USD",image:5},
-  {tenant:"boutique",title:"Islas Griegas en Velero",place:"Milos",country:"Grecia",region:"europe",type:"cruise",transport:"cruise",days:9,amount:7890,currency:"USD",image:8,promotion:"Navegación privada"},
-  {tenant:"boutique",title:"Buenos Aires de Autor",place:"Buenos Aires",country:"Argentina",region:"south_america",type:"experience",transport:"air",days:6,amount:4290,currency:"USD",image:4},
 ];
 demoExpansion.forEach((spec, offset) => {
   const source = travels.find((travel) => travel.agencyId === agencyId(spec.tenant))!;
@@ -663,7 +652,7 @@ function configureTripPage(trip: TravelProduct, options: { video?: boolean; lead
     images: index < 2 ? [{ id: `${trip.id}-day-image-${index}`, url: trip.gallery[index] ?? trip.featuredImage, alt: day.title, order: 1 }] : [],
   }));
   trip.itinerarySettings = {
-    displayMode: trip.agencyId === "a-boutique" ? "all_open" : "first_open",
+    displayMode: "first_open",
     allowExpandAll: true, allowCollapseAll: true, showTimes: true, showImages: true,
     showStops: true, showHighlights: true, showMeals: true, showAccommodation: true,
   };
@@ -807,7 +796,6 @@ const configurableDemos = [
   { agency: "a-furiver", hotel: true, options: { video: false, lead: true, airport: false, route: true } },
   { agency: "a-crisenix", hotel: false, options: { video: false, lead: false, airport: false, route: false } },
   { agency: "a-crisenix", hotel: true, options: { video: false, lead: true, airport: true, route: true } },
-  { agency: "a-boutique", hotel: true, options: { video: true, lead: true, airport: true, route: true } },
 ] as const;
 for (const demo of configurableDemos) {
   const trip = travels.find((item) => item.agencyId === demo.agency && (item.accommodationMode === "hotel_occupancy") === demo.hotel && !item.pageConfiguration);

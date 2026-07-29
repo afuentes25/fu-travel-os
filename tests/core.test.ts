@@ -58,10 +58,12 @@ import {
 } from "../lib/travelers/index";
 import { getAgencySocialLinks, isValidSocialUrl } from "../lib/social/index";
 import {
+  isValidTheme,
   normalizeHostname,
   resolveTenant,
   resolveTheme,
 } from "../lib/tenancy/index";
+import { demoQuerySchema } from "../lib/validation/index";
 import { whatsappUrl } from "../lib/whatsapp/index";
 import {
   DEFAULT_TRIP_SECTIONS,
@@ -209,11 +211,6 @@ test("información importante y FAQ solo existen con contenido útil", () => {
   assert.ok(trip.importantInformation!.items.length > 0);
   assert.ok(trip.faqContent!.items.every((item) => item.question && item.answer));
 });
-test("cada tema conserva una clave de renderer diferenciada", () => {
-  assert.notEqual(TRIP_SECTION_RENDERER_KEYS.explorer, TRIP_SECTION_RENDERER_KEYS.boutique);
-  assert.notEqual(TRIP_SECTION_RENDERER_KEYS.boutique, TRIP_SECTION_RENDERER_KEYS.marketplace);
-});
-
 const barrancasTrip = () => travels.find((trip) => trip.slug === "barrancas-del-cobre")!;
 test("viaje de cinco días usa secciones configurables", () => {
   const trip = barrancasTrip();
@@ -317,17 +314,6 @@ test("Lavella queda registrado sin reemplazar el renderer Explorer", () => {
   assert.equal(TRIP_SECTION_RENDERER_KEYS.lavella, "lavella-native");
   assert.notEqual(TRIP_SECTION_RENDERER_KEYS.lavella, TRIP_SECTION_RENDERER_KEYS.explorer);
 });
-test("configuración de Boutique no se altera por Barrancas", () => {
-  const trip = travels.find((item) => item.agencyId === agencies[2].id && item.pageConfiguration)!;
-  assert.equal(trip.agencyId, agencies[2].id);
-  assert.equal(TRIP_SECTION_RENDERER_KEYS.boutique, "boutique-editorial");
-});
-test("configuración de Marketplace no se altera por Barrancas", () => {
-  const trip = travels.find((item) => item.agencyId === agencies[1].id && item.pageConfiguration)!;
-  assert.equal(trip.agencyId, agencies[1].id);
-  assert.equal(TRIP_SECTION_RENDERER_KEYS.marketplace, "marketplace-operational");
-});
-
 test("resuelve tenant por hostname, query demo y fallback local", () => {
   assert.equal(resolveTenant("FURIVER.TRAVEL.FU.LAND:443").slug, "furiver");
   assert.equal(resolveTenant("localhost:3000", "crisenix").slug, "crisenix");
@@ -337,11 +323,56 @@ test("resuelve tenant por hostname, query demo y fallback local", () => {
     "agenciaejemplo.com",
   );
 });
-test("query válida de tema tiene prioridad", () =>
-  assert.equal(resolveTheme(agencies[0], "boutique"), "boutique"));
-test("Lavella es seleccionable y un tema inválido conserva el tema de agencia", () => {
+test("Explorer y Lavella son los únicos temas registrados", () => {
+  assert.deepEqual(Object.keys(TRIP_SECTION_RENDERER_KEYS).sort(), [
+    "explorer",
+    "lavella",
+  ]);
+  assert.equal(isValidTheme("explorer"), true);
+  assert.equal(isValidTheme("lavella"), true);
+});
+test("los temas retirados son inválidos y usan el fallback general", () => {
+  const removedThemes = [
+    ["bou", "tique"].join(""),
+    ["market", "place"].join(""),
+  ];
+  for (const value of removedThemes) {
+    assert.equal(isValidTheme(value), false);
+    assert.equal(resolveTheme(agencies[0], value), "explorer");
+    assert.equal(
+      demoQuerySchema.safeParse({ theme: value }).success,
+      false,
+    );
+  }
+});
+test("los selectores públicos y administrativos contienen exactamente dos temas", () => {
+  for (const file of [
+    "components/travel-app.tsx",
+    "components/legacy-travel-app.tsx",
+  ]) {
+    const source = readFileSync(file, "utf8");
+    const options = [...source.matchAll(/<option value="([^"]+)">(?:Explorer|Lavella)<\/option>/g)]
+      .map((match) => match[1]);
+    assert.deepEqual(options, ["explorer", "lavella"]);
+  }
+});
+test("no se importan renderers ni se cargan estilos de temas retirados", () => {
+  const removedThemes = [
+    ["bou", "tique"].join(""),
+    ["market", "place"].join(""),
+  ];
+  const source = [
+    readFileSync("components/travel-app.tsx", "utf8"),
+    readFileSync("components/legacy-travel-app.tsx", "utf8"),
+    readFileSync("app/globals.css", "utf8"),
+  ].join("\n");
+  for (const value of removedThemes) {
+    assert.equal(source.toLowerCase().includes(value), false);
+  }
+});
+test("Lavella es seleccionable y un tema inválido usa Explorer", () => {
   assert.equal(resolveTheme(agencies[0], "lavella"), "lavella");
-  assert.equal(resolveTheme(agencies[0], "tema-inexistente"), agencies[0].theme);
+  assert.equal(resolveTheme(agencies[0], "tema-inexistente"), "explorer");
 });
 test("catálogo busca, filtra y ordena sin mutar origen", () => {
   const own = travels.filter((t) => t.agencyId === agencies[1].id);
@@ -996,12 +1027,6 @@ test("redes Explorer respetan activación, orden y ubicación", () => {
     getAgencySocialLinks(furiver, "footer").every((link) => link.enabled),
   );
 });
-test("agencia sin redes no renderiza enlaces sociales", () => {
-  const boutique = agencies.find((item) => item.slug === "boutique")!;
-  assert.deepEqual(getAgencySocialLinks(boutique, "header"), []);
-  assert.deepEqual(getAgencySocialLinks(boutique, "footer"), []);
-});
-
 test("Lavella usa renderers visuales propios y no monta panel Explorer", () => {
   const detail = readFileSync(
     "components/themes/lavella/lavella-trip-detail.tsx",
@@ -1088,7 +1113,14 @@ test("CSS de detalle Lavella permanece aislado de home y otros temas", () => {
     "components/themes/lavella/lavella-booking.module.css",
     "utf8",
   );
-  assert.doesNotMatch(detailCss + bookingCss, /\.explorer-|\.boutique-|\.marketplace-/);
+  const removedClassFragments = [
+    ["bou", "tique"].join(""),
+    ["market", "place"].join(""),
+  ];
+  assert.doesNotMatch(detailCss + bookingCss, /\.explorer-/);
+  for (const fragment of removedClassFragments) {
+    assert.equal((detailCss + bookingCss).includes(`.${fragment}-`), false);
+  }
   assert.doesNotMatch(detailCss + bookingCss, /\.home\b|\.catalog\b/);
 });
 
@@ -1319,14 +1351,9 @@ test("slugs de viajes fuente son únicos en el catálogo compartido", () => {
   assert.equal(new Set(slugs).size, slugs.length);
 });
 
-test("los siete viajes usan un único dato compartido para los cuatro temas", () => {
+test("los siete viajes usan un único dato compartido para los dos temas", () => {
   const registry = readFileSync("components/travel-app.tsx", "utf8");
-  for (const theme of [
-    "explorer",
-    "boutique",
-    "marketplace",
-    "lavella",
-  ]) {
+  for (const theme of ["explorer", "lavella"]) {
     assert.match(registry, new RegExp(`${theme}:`));
   }
   assert.equal(
@@ -1334,6 +1361,22 @@ test("los siete viajes usan un único dato compartido para los cuatro temas", ()
     7,
   );
 });
+
+for (const activeTheme of ["explorer", "lavella"] as const) {
+  test(`carrito conserva el tema ${activeTheme}`, () => {
+    const shell = readFileSync("components/travel-app.tsx", "utf8");
+    const commerce = readFileSync("components/legacy-travel-app.tsx", "utf8");
+    assert.equal(resolveTheme(agencies[0], activeTheme), activeTheme);
+    assert.match(shell, /initialTheme=\{theme\}/);
+    assert.match(commerce, /to \+ window\.location\.search/);
+  });
+  test(`checkout conserva el tema ${activeTheme}`, () => {
+    const commerce = readFileSync("components/legacy-travel-app.tsx", "utf8");
+    assert.equal(resolveTheme(agencies[0], activeTheme), activeTheme);
+    assert.match(commerce, /const theme = resolveTheme\(agency,/);
+    assert.match(commerce, /new URLSearchParams\(window\.location\.search\)/);
+  });
+}
 
 test("duraciones y noches de los siete viajes coinciden con las fuentes", () => {
   assert.deepEqual(
@@ -1919,24 +1962,4 @@ test("estados de salida prevalecen sobre un conteo operativo", () => {
     }),
     "Cancelada",
   );
-});
-
-test("Marketplace y detalle compartido consumen la visibilidad configurada", () => {
-  const source = readFileSync("components/travel-app.tsx", "utf8");
-  const marketplaceCard = source.slice(
-    source.indexOf("function MarketplaceCard"),
-    source.indexOf("function ExplorerSearch"),
-  );
-  const marketplaceTable = source.slice(
-    source.indexOf("function MarketplaceTable"),
-    source.indexOf("function SharedBookingPanel"),
-  );
-  const sharedDetail = source.slice(
-    source.indexOf("function SharedDetail"),
-    source.indexOf("export function TravelApp"),
-  );
-  assert.match(marketplaceCard, /availabilityLabel\(agency, trip, departure\)/);
-  assert.match(marketplaceTable, /availabilityLabel\(agency, trip, departure\)/);
-  assert.match(sharedDetail, /availabilityLabel\(agency, trip, departure\)/);
-  assert.match(sharedDetail, /availabilityLabel\(agency, trip, item\)/);
 });

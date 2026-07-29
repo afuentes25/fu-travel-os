@@ -15,6 +15,10 @@ export function resolveTenant(hostname: string, demoTenant?: string | null): Age
   const subdomain = normalized.endsWith(".travel.fu.land") ? normalized.replace(".travel.fu.land", "") : "";
   return agencies.find((a) => a.slug === subdomain) ?? agencies[0];
 }
+export function isValidTheme(value?: string | null): value is TravelTheme {
+  return value === "explorer" || value === "lavella";
+}
 export function resolveTheme(agency: Agency, requested?: string | null): TravelTheme {
-  return requested === "explorer" || requested === "boutique" || requested === "marketplace" || requested === "lavella" ? requested : agency.theme;
+  void agency;
+  return isValidTheme(requested) ? requested : "explorer";
 }

@@ -76,8 +76,6 @@ Todas las rutas usan `tenant=crisenix&theme=lavella`.
 | Evidencia | Viewport | Estado comprobado |
 | --- | ---: | --- |
 | [Explorer](regressions/01-crisenix-explorer-catalog.png) | 1366 × 768 | Viajes Crisenix disponibles |
-| [Boutique](regressions/02-crisenix-boutique-catalog.png) | 1366 × 768 | Viajes Crisenix disponibles |
-| [Marketplace](regressions/03-crisenix-marketplace-catalog.png) | 1366 × 768 | Viajes Crisenix disponibles |
 | [Lavella](regressions/04-crisenix-lavella-catalog.png) | 1366 × 768 | Viajes Crisenix disponibles |
 
 ## Viewports complementarios revisados

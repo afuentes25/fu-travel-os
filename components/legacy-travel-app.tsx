@@ -31,7 +31,6 @@ import {
   applyTravelerDataToLines,
   draftsFromLines,
   travelerFollowUpMessage,
-  travelerWhatsAppSummary,
   validateTravelerDrafts,
 } from "@/lib/travelers";
 import { whatsappUrl } from "@/lib/whatsapp";
@@ -118,8 +117,6 @@ function DemoBar({
           onChange={(e) => onChange("theme", e.target.value)}
         >
           <option value="explorer">Explorer</option>
-          <option value="boutique">Boutique</option>
-          <option value="marketplace">Marketplace</option>
           <option value="lavella">Lavella</option>
         </select>
       </label>
@@ -298,18 +295,13 @@ function SearchBox({ onSearch }: { onSearch: (q: string) => void }) {
 }
 function Home({
   agency,
-  theme,
   onOpen,
 }: {
   agency: Agency;
-  theme: TravelTheme;
   onOpen: (t: TravelProduct) => void;
 }) {
   const own = travels.filter((t) => t.agencyId === agency.id);
-  const stats =
-    theme === "marketplace"
-      ? ["12 países", "24 salidas", "2 monedas"]
-      : ["12 años creando rutas", "4.9 de 5 viajeros", "Atención humana"];
+  const stats = ["12 años creando rutas", "4.9 de 5 viajeros", "Atención humana"];
   return (
     <main>
       <section
@@ -342,11 +334,7 @@ function Home({
       <section className="intro">
         <div>
           <div className="eyebrow">SELECCIÓN DE LA CASA</div>
-          <h2>
-            {theme === "boutique"
-              ? "Historias para vivir despacio"
-              : "Tu próxima historia comienza aquí"}
-          </h2>
+          <h2>Tu próxima historia comienza aquí</h2>
         </div>
         <p>
           Rutas originales, fechas reales y precios claros. Tú eliges el
@@ -2625,7 +2613,7 @@ function ThemeManager({
 }) {
   return (
     <div className="theme-grid">
-      {(["explorer", "boutique", "marketplace", "lavella"] as const).map((t) => (
+      {(["explorer", "lavella"] as const).map((t) => (
         <article className={agency.theme === t ? "selected" : ""} key={t}>
           <div className={`theme-preview ${t}`}>
             <i />
@@ -2636,9 +2624,7 @@ function ThemeManager({
           <p>
             {t === "explorer"
               ? "Fotográfico, enérgico y orientado a excursiones."
-              : t === "boutique"
-                ? "Editorial, elegante y enfocado en storytelling."
-                : "Denso, comparable y optimizado para catálogo amplio."}
+              : "Clásico, luminoso y basado en el sistema visual Lavella."}
           </p>
           <button
             onClick={() =>
@@ -2879,7 +2865,7 @@ export function TravelApp({
         <Lead agency={agency} />
       </main>
     );
-  else content = <Home agency={agency} theme={theme} onOpen={open} />;
+  else content = <Home agency={agency} onOpen={open} />;
   return (
     <div
       className={`app theme-${theme} ${theme === "lavella" ? "theme-v2-lavella lavella-commerce" : ""}`}

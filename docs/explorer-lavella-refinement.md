@@ -2,7 +2,7 @@
 
 ## Alcance
 
-Auditoría y segunda fase visual realizada únicamente sobre Explorer/Furiver. Se conservaron sin cambios la resolución de tenants, modelos, catálogo, filtros, precios, carrito, checkout, selección de salida, abordajes y mensajes de WhatsApp. Boutique y Marketplace continúan usando sus componentes existentes.
+Auditoría y segunda fase visual realizada únicamente sobre Explorer/Furiver. Se conservaron sin cambios la resolución de tenants, modelos, catálogo, filtros, precios, carrito, checkout, selección de salida, abordajes y mensajes de WhatsApp.
 
 ## Auditoría inicial
 

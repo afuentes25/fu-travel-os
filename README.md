@@ -12,15 +12,15 @@ npm run dev
 Pruebas demo:
 
 - `http://localhost:3000/?tenant=furiver&theme=explorer`
-- `http://localhost:3000/?tenant=crisenix&theme=marketplace`
-- `http://localhost:3000/?tenant=boutique&theme=boutique`
+- `http://localhost:3000/?tenant=furiver&theme=lavella`
+- `http://localhost:3000/?tenant=crisenix&theme=lavella`
 - Agregar `&view=admin` para abrir el panel.
 
 ## Arquitectura
 
 - `app/`: App Router, rutas públicas y metadata noindex.
 - `components/`: interfaz pública, reserva, checkout y administración.
-- `data/demo/`: tres agencias, dominios, puntos, destinos, salidas y doce viajes.
+- `data/demo/`: dos agencias, dominios, puntos, destinos, salidas y viajes demo.
 - `lib/tenancy/`: resolución segura por dominio, subdominio, query demo y fallback.
 - `lib/catalog/`: filtros y ordenación.
 - `lib/pricing/`: recálculo confiable y validación del carrito.

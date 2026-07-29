@@ -19,10 +19,9 @@ import {
   FaXTwitter,
   FaYoutube,
 } from "react-icons/fa6";
-import { agencies, departurePoints, destinations, travels } from "@/data/demo";
+import { agencies, destinations, travels } from "@/data/demo";
 import {
   filterCatalog,
-  getAvailabilityLabel,
   type CatalogFilters,
 } from "@/lib/catalog";
 import {
@@ -35,7 +34,6 @@ import {
 import {
   formatMoney,
   isDepartureBookable,
-  priceLine,
   priceLinePending,
 } from "@/lib/pricing";
 import {
@@ -49,7 +47,6 @@ import {
   draftsFromLines,
   reconcileTravelerDrafts,
 } from "@/lib/travelers";
-import { whatsappUrl } from "@/lib/whatsapp";
 import {
   formatTripDuration,
   getEffectiveRateAmount,
@@ -79,7 +76,6 @@ import type {
 } from "@/types";
 import { TravelApp as LegacyTravelApp } from "./legacy-travel-app";
 import {
-  LavellaCard,
   LavellaFooter,
   LavellaHeader,
   LavellaHome,
@@ -104,14 +100,11 @@ type FooterProps = { agency: Agency; onNavigate: (path: string) => void };
 type ThemeComponents = {
   Header: ComponentType<HeaderProps>;
   Home: ComponentType<HomeProps>;
-  Card: ComponentType<CardProps>;
   Footer: ComponentType<FooterProps>;
 };
 
 const heroImages: Record<TravelTheme, string> = {
   explorer: "/images/explorer-hero.webp",
-  boutique: "/images/boutique-hero.webp",
-  marketplace: "/images/marketplace-hero.webp",
   lavella: "/images/explorer-hero.webp",
 };
 const navItems = ["Viajes", "Destinos", "Promociones", "Nosotros", "Contacto"];
@@ -166,11 +159,6 @@ const availabilityMode = (
   trip.availabilityDisplayMode ??
   agency.settings.availabilityDisplayMode ??
   "status_only";
-const availabilityLabel = (
-  agency: Agency,
-  trip: TravelProduct,
-  departure: TravelProduct["departures"][number],
-) => getAvailabilityLabel(availabilityMode(agency, trip), departure);
 const occupancyName = (occupancy?: string) =>
   ({
     single: "Sencilla",
@@ -330,13 +318,7 @@ function Logo({ agency, light = false }: { agency: Agency; light?: boolean }) {
       <span className="v2-logo-symbol">F</span>
       <span>
         {agency.branding.logoText}
-        <small>
-          {agency.theme === "explorer"
-            ? "VIAJES Y EXPERIENCIAS"
-            : agency.theme === "marketplace"
-              ? "VIAJES Y CIRCUITOS"
-              : "TRAVEL STUDIO"}
-        </small>
+        <small>{agency.theme === "explorer" ? "VIAJES Y EXPERIENCIAS" : "TRAVEL STUDIO"}</small>
       </span>
     </span>
   );
@@ -496,123 +478,6 @@ function ExplorerHeader({ agency, cartCount, onNavigate }: HeaderProps) {
   );
 }
 
-function BoutiqueHeader({ agency, cartCount, onNavigate }: HeaderProps) {
-  const [open, setOpen] = useState(false);
-  return (
-    <header className="boutique-header">
-      <div className="boutique-mini">DISEÑO DE VIAJES · CIUDAD DE MÉXICO</div>
-      <div className="boutique-nav">
-        <button
-          className="v2-menu boutique-menu"
-          onClick={() => setOpen(!open)}
-          aria-expanded={open}
-        >
-          Menú
-        </button>
-        <nav className={open ? "is-open" : ""} aria-label="Navegación Boutique">
-          {["Viajes", "Destinos", "Nosotros"].map((item) => (
-            <button
-              key={item}
-              onClick={() => onNavigate(`/${item.toLowerCase()}`)}
-            >
-              {item}
-            </button>
-          ))}
-        </nav>
-        <button onClick={() => onNavigate("/")} aria-label="Inicio">
-          <Logo agency={agency} />
-        </button>
-        <div className="boutique-actions">
-          <button onClick={() => onNavigate("/contacto")}>Concierge</button>
-          <button
-            onClick={() => onNavigate("/carrito")}
-            aria-label={`Carrito, ${cartCount} viajes`}
-          >
-            Reserva ({cartCount})
-          </button>
-        </div>
-      </div>
-    </header>
-  );
-}
-
-function MarketplaceHeader({ agency, cartCount, onNavigate }: HeaderProps) {
-  const [open, setOpen] = useState(false);
-  return (
-    <>
-      <div className="market-topbar">
-        <span>Atención demo: {agency.contact.email}</span>
-        <span>Moneda: MXN / USD</span>
-        <span>Salidas desde CDMX · GDL · MTY</span>
-      </div>
-      <header className="market-header">
-        <button onClick={() => onNavigate("/")} aria-label="Inicio">
-          <Logo agency={agency} />
-        </button>
-        <label className="market-header-search">
-          <span>Buscar</span>
-          <input
-            placeholder="Destino, código o ciudad"
-            onKeyDown={(event) =>
-              event.key === "Enter" &&
-              onNavigate(
-                `/viajes?q=${encodeURIComponent(event.currentTarget.value)}`,
-              )
-            }
-          />
-        </label>
-        <a
-          className="market-phone"
-          href={`https://wa.me/${agency.contact.whatsapp}`}
-          target="_blank"
-          rel="noreferrer"
-        >
-          <small>RESERVAS Y DUDAS</small>55 0000 0202
-        </a>
-        <button className="market-cart" onClick={() => onNavigate("/carrito")}>
-          Mi viaje <b>{cartCount}</b>
-        </button>
-        <button
-          className="v2-menu"
-          onClick={() => setOpen(!open)}
-          aria-expanded={open}
-        >
-          Menú
-        </button>
-      </header>
-      <nav
-        className={`market-nav ${open ? "is-open" : ""}`}
-        aria-label="Categorías Marketplace"
-      >
-        {[
-          "Destinos",
-          "Circuitos",
-          "Playa",
-          "Internacional",
-          "Experiencias",
-          "Promociones",
-        ].map((item) => (
-          <button
-            key={item}
-            onClick={() =>
-              onNavigate(
-                item === "Promociones"
-                  ? "/promociones"
-                  : `/viajes?categoria=${item.toLowerCase()}`,
-              )
-            }
-          >
-            {item}
-          </button>
-        ))}
-        <button className="market-book" onClick={() => onNavigate("/viajes")}>
-          Cotizar un viaje
-        </button>
-      </nav>
-    </>
-  );
-}
-
 function ExplorerCard({ trip, onOpen }: CardProps) {
   const departure = available(trip);
   const agency = agencies.find((item) => item.id === trip.agencyId)!;
@@ -667,110 +532,6 @@ function ExplorerCard({ trip, onOpen }: CardProps) {
   );
 }
 
-function BoutiqueCard({ trip, onOpen }: CardProps) {
-  return (
-    <article className="boutique-card">
-      <button className="boutique-card-image" onClick={() => onOpen(trip)}>
-        <Image
-          src={trip.featuredImage}
-          alt=""
-          fill
-          sizes="(max-width: 720px) 100vw, 33vw"
-        />
-      </button>
-      <div className="boutique-card-copy">
-        <span>
-          {trip.countries[0]} · {trip.durationDays} días
-        </span>
-        <h3>{trip.title}</h3>
-        <p>{trip.summary}</p>
-        <div>
-          <small>
-            Desde {formatMoney(trip.basePrice.amount, trip.basePrice.currency)}
-          </small>
-          <button onClick={() => onOpen(trip)}>Descubrir →</button>
-        </div>
-      </div>
-    </article>
-  );
-}
-
-function MarketplaceCard({ trip, onOpen }: CardProps) {
-  const departure = available(trip);
-  const agency = agencies.find((item) => item.id === trip.agencyId)!;
-  const availability = availabilityLabel(agency, trip, departure);
-  return (
-    <article className="market-card">
-      <div className="market-card-image">
-        <Image
-          src={trip.featuredImage}
-          alt=""
-          fill
-          sizes="(max-width: 720px) 100vw, 24vw"
-        />
-        {trip.promotion && <span>{trip.promotion}</span>}
-      </div>
-      <div className="market-card-main">
-        <div className="market-card-code">
-          {trip.code} ·{" "}
-          {trip.scope === "national" ? "NACIONAL" : "INTERNACIONAL"}
-        </div>
-        <h3>{trip.title}</h3>
-        <p>
-          <b>{trip.countries.join(", ")}</b>
-          <br />
-          {trip.cities.slice(0, 3).join(" · ")}
-        </p>
-        <div className="market-tags">
-          <span>
-            {trip.durationDays}d / {trip.durationNights}n
-          </span>
-          <span>{trip.transportTypes[0]}</span>
-          <span>{trip.departures.length} salidas</span>
-        </div>
-      </div>
-      <div className="market-card-price">
-        <small>Próxima: {dateLabel(departure.startDate)}</small>
-        <span>Desde</span>
-        <strong>
-          {formatMoney(trip.basePrice.amount, trip.basePrice.currency)}
-        </strong>
-        {!trip.basePrice.taxesIncluded && (
-          <small>
-            {trip.basePrice.taxesAmount === undefined
-              ? "Impuestos por confirmar"
-              : `+ ${formatMoney(
-                  trip.basePrice.taxesAmount,
-                  trip.basePrice.currency,
-                )} imp.`}
-          </small>
-        )}
-        <small>
-          Anticipo{" "}
-          {formatMoney(
-            trip.basePrice.depositAmount ?? 0,
-            trip.basePrice.currency,
-          )}
-        </small>
-        {availability && (
-          <b
-            className={
-              departure.saleStatus === "limited" ||
-              (availabilityMode(agency, trip) === "remaining_places" &&
-                departure.availableSpaces < 6)
-                ? "is-limited"
-                : ""
-            }
-          >
-            {availability}
-          </b>
-        )}
-        <button onClick={() => onOpen(trip)}>Ver programa</button>
-      </div>
-    </article>
-  );
-}
-
 function ExplorerSearch({
   onNavigate,
 }: {
@@ -813,103 +574,6 @@ function ExplorerSearch({
       <button>
         Buscar rutas <span aria-hidden="true">↗</span>
       </button>
-    </form>
-  );
-}
-
-function BoutiqueSearch({
-  onNavigate,
-}: {
-  onNavigate: (path: string) => void;
-}) {
-  return (
-    <div className="boutique-search">
-      <span>ENCUENTRA TU PRÓXIMA HISTORIA</span>
-      <button onClick={() => onNavigate("/viajes")}>
-        Destino <b>Cualquier lugar</b>
-      </button>
-      <button onClick={() => onNavigate("/viajes")}>
-        Momento <b>Cuando estés listo</b>
-      </button>
-      <button onClick={() => onNavigate("/viajes")}>
-        Intención <b>Celebrar y descubrir</b>
-      </button>
-      <button
-        className="boutique-search-go"
-        onClick={() => onNavigate("/viajes")}
-      >
-        Explorar colección
-      </button>
-    </div>
-  );
-}
-
-function MarketplaceSearch({
-  onNavigate,
-}: {
-  onNavigate: (path: string) => void;
-}) {
-  const [destination, setDestination] = useState("");
-  return (
-    <form
-      className="market-search"
-      onSubmit={(event) => {
-        event.preventDefault();
-        onNavigate(`/viajes?q=${encodeURIComponent(destination)}`);
-      }}
-    >
-      <div className="market-search-tabs">
-        <b>Paquetes y circuitos</b>
-        <span>Excursiones</span>
-        <span>Experiencias</span>
-      </div>
-      <div className="market-search-fields">
-        <label>
-          Destino
-          <input
-            value={destination}
-            onChange={(event) => setDestination(event.target.value)}
-            placeholder="País, ciudad o región"
-          />
-        </label>
-        <label>
-          Tipo de viaje
-          <select>
-            <option>Todos los tipos</option>
-            <option>Circuito</option>
-            <option>Playa</option>
-            <option>Tour</option>
-          </select>
-        </label>
-        <label>
-          Mes
-          <select>
-            <option>Cualquier mes</option>
-            <option>Agosto 2026</option>
-            <option>Septiembre 2026</option>
-            <option>Octubre 2026</option>
-          </select>
-        </label>
-        <label>
-          Duración
-          <select>
-            <option>Cualquier duración</option>
-            <option>1–4 días</option>
-            <option>5–9 días</option>
-            <option>10+ días</option>
-          </select>
-        </label>
-        <label>
-          Origen
-          <select>
-            <option>CDMX · todos</option>
-            <option>Oceanía</option>
-            <option>Naucalpan</option>
-            <option>Guelatao</option>
-          </select>
-        </label>
-        <button>Buscar viajes</button>
-      </div>
     </form>
   );
 }
@@ -1356,286 +1020,6 @@ function ExplorerHome({ agency, trips, onOpen, onNavigate }: HomeProps) {
   );
 }
 
-function BoutiqueHome({ agency, trips, onOpen, onNavigate }: HomeProps) {
-  const curated = trips.slice(0, 4);
-  return (
-    <main className="boutique-home">
-      <section className="boutique-hero">
-        <div className="boutique-hero-copy">
-          <span>MAISON VOYAGE · EST. 2026</span>
-          <h1>
-            El arte
-            <br />
-            de viajar
-            <br />
-            <em>despacio.</em>
-          </h1>
-          <p>{agency.branding.heroDescription}</p>
-          <button onClick={() => onNavigate("/viajes")}>
-            Comenzar una conversación
-          </button>
-        </div>
-        <div className="boutique-hero-image">
-          <Image src={heroImages.boutique} alt="" fill priority sizes="60vw" />
-          <span>01 — MEDITERRÁNEO</span>
-        </div>
-        <blockquote>
-          “Cada viaje comienza con una pregunta: ¿cómo quieres recordarlo?”
-        </blockquote>
-      </section>
-      <BoutiqueSearch onNavigate={onNavigate} />
-      <section className="boutique-intro">
-        <span>NUESTRA MIRADA</span>
-        <h2>
-          No vendemos itinerarios.
-          <br />
-          Diseñamos <em>formas de estar</em>
-          <br />
-          en el mundo.
-        </h2>
-        <p>
-          Tiempo, sensibilidad y conocimiento local. Curamos cada experiencia
-          para que tenga ritmo propio.
-        </p>
-      </section>
-      <section className="boutique-collection">
-        <header>
-          <span>COLECCIÓN 2026</span>
-          <h2>
-            Viajes elegidos
-            <br />
-            con intención
-          </h2>
-          <button onClick={() => onNavigate("/viajes")}>
-            Ver toda la colección →
-          </button>
-        </header>
-        <div>
-          {curated.map((trip) => (
-            <BoutiqueCard key={trip.id} trip={trip} onOpen={onOpen} />
-          ))}
-        </div>
-      </section>
-      <section className="boutique-story">
-        <div className="boutique-story-image">
-          <Image
-            src={trips[4]?.featuredImage ?? trips[0].featuredImage}
-            alt=""
-            fill
-            sizes="50vw"
-          />
-        </div>
-        <div>
-          <span>NUESTRA HISTORIA</span>
-          <h2>Viajar bien es saber qué dejar fuera.</h2>
-          <p>
-            Menos traslados apresurados. Más conversaciones, sobremesas y
-            lugares donde quedarse un poco más.
-          </p>
-          <div className="boutique-signature">Maison Voyage</div>
-          <button onClick={() => onNavigate("/nosotros")}>
-            Conocer nuestra filosofía
-          </button>
-        </div>
-      </section>
-      <section className="boutique-editorial">
-        <span>EL VIAJE DEL MES</span>
-        <h2>{trips[0].title}</h2>
-        <p>{trips[0].description}</p>
-        <button onClick={() => onOpen(trips[0])}>
-          Leer la historia completa →
-        </button>
-      </section>
-      <section className="boutique-journal">
-        <header>
-          <span>NOTAS DE VIAJE</span>
-          <h2>Para inspirar la próxima partida</h2>
-        </header>
-        <div>
-          {[
-            "La belleza de llegar sin prisa",
-            "Cinco mesas frente al mar",
-            "Qué llevar cuando viajas ligero",
-          ].map((title, index) => (
-            <article key={title}>
-              <span>0{index + 1}</span>
-              <h3>{title}</h3>
-              <p>
-                Una breve mirada editorial para imaginar el viaje antes de
-                partir.
-              </p>
-              <button>Leer nota →</button>
-            </article>
-          ))}
-        </div>
-      </section>
-      <section className="boutique-final">
-        <span>UN VIAJE HECHO PARA TI</span>
-        <h2>Cuéntanos qué estás celebrando.</h2>
-        <p>
-          Diseñaremos una propuesta personal, sin fórmulas ni itinerarios
-          prefabricados.
-        </p>
-        <button onClick={() => onNavigate("/contacto")}>
-          Hablar con concierge
-        </button>
-      </section>
-    </main>
-  );
-}
-
-function MarketplaceHome({ agency, trips, onOpen, onNavigate }: HomeProps) {
-  const featured = trips[0];
-  return (
-    <main className="market-home">
-      <section className="market-hero">
-        <Image
-          src={heroImages.marketplace}
-          alt=""
-          fill
-          priority
-          sizes="100vw"
-        />
-        <div className="market-hero-shade" />
-        <div className="market-hero-copy">
-          <span>MÁS DE {trips.length} PROGRAMAS DISPONIBLES</span>
-          <h1>
-            Encuentra el viaje
-            <br />
-            que sí cabe en tus planes.
-          </h1>
-          <p>
-            Compara fechas, rutas, impuestos y lugares disponibles antes de
-            reservar.
-          </p>
-        </div>
-        <MarketplaceSearch onNavigate={onNavigate} />
-      </section>
-      <section className="market-categories">
-        {[
-          ["◉", "Tours", "Un día"],
-          ["⌁", "Circuitos", "Multi-destino"],
-          ["≈", "Playa", "Todo incluido"],
-          ["✈", "Internacional", "8 regiones"],
-          ["◇", "Experiencias", "Especiales"],
-          ["✦", "A tu medida", "Personalizados"],
-        ].map(([icon, name, detail]) => (
-          <button
-            key={name}
-            onClick={() =>
-              onNavigate(`/viajes?categoria=${name.toLowerCase()}`)
-            }
-          >
-            <i>{icon}</i>
-            <b>{name}</b>
-            <small>{detail}</small>
-          </button>
-        ))}
-      </section>
-      <section className="market-feature">
-        <div className="market-feature-image">
-          <Image src={featured.featuredImage} alt="" fill sizes="50vw" />
-          <span>VIAJE DESTACADO</span>
-        </div>
-        <div>
-          <small>
-            {featured.code} · {featured.countries.join(", ")}
-          </small>
-          <h2>{featured.title}</h2>
-          <p>{featured.description}</p>
-          <div className="market-feature-facts">
-            <span>
-              <b>{featured.durationDays}</b>días
-            </span>
-            <span>
-              <b>{featured.cities.length}</b>ciudades
-            </span>
-            <span>
-              <b>{featured.departures.length}</b>salidas
-            </span>
-          </div>
-          <strong>
-            {formatMoney(
-              featured.basePrice.amount,
-              featured.basePrice.currency,
-            )}
-          </strong>
-          <small>+ impuestos cuando aplique</small>
-          <button onClick={() => onOpen(featured)}>
-            Ver programa y fechas
-          </button>
-        </div>
-      </section>
-      <section className="market-offers">
-        <header>
-          <div>
-            <span>OFERTAS ACTIVAS</span>
-            <h2>Viajes con beneficio especial</h2>
-          </div>
-          <button onClick={() => onNavigate("/promociones")}>
-            Ver todas las ofertas →
-          </button>
-        </header>
-        <div className="market-home-grid">
-          {trips
-            .filter((trip) => trip.promotion)
-            .slice(0, 6)
-            .map((trip) => (
-              <MarketplaceCard key={trip.id} trip={trip} onOpen={onOpen} />
-            ))}
-        </div>
-      </section>
-      <section className="market-departures">
-        <header>
-          <span>CALENDARIO COMERCIAL</span>
-          <h2>Próximas salidas</h2>
-        </header>
-        {trips.slice(0, 8).map((trip) => {
-          const departure = available(trip);
-          return (
-            <button key={trip.id} onClick={() => onOpen(trip)}>
-              <time>{dateLabel(departure.startDate)}</time>
-              <span>
-                <b>{trip.title}</b>
-                <small>{trip.cities.slice(0, 2).join(" · ")}</small>
-              </span>
-              <em>
-                {departure.availableSpaces < 6 ? "Limitada" : "Disponible"}
-              </em>
-              <strong>
-                {formatMoney(trip.basePrice.amount, trip.basePrice.currency)}
-              </strong>
-              <i>→</i>
-            </button>
-          );
-        })}
-      </section>
-      <section className="market-why">
-        <div>
-          <span>FU TRAVEL OS DEMO</span>
-          <h2>
-            Compra informada,
-            <br />
-            operación acompañada.
-          </h2>
-        </div>
-        {[
-          "Precios desglosados",
-          "Fechas estructuradas",
-          "Abordajes confirmados",
-          "Atención por WhatsApp",
-        ].map((item, index) => (
-          <article key={item}>
-            <b>0{index + 1}</b>
-            <h3>{item}</h3>
-            <p>Información visible y verificable durante todo el proceso.</p>
-          </article>
-        ))}
-      </section>
-    </main>
-  );
-}
-
 function ExplorerFooter({ agency, onNavigate }: FooterProps) {
   return (
     <footer className="explorer-footer">
@@ -1662,98 +1046,15 @@ function ExplorerFooter({ agency, onNavigate }: FooterProps) {
     </footer>
   );
 }
-function BoutiqueFooter({ agency, onNavigate }: FooterProps) {
-  return (
-    <footer className="boutique-footer">
-      <span>MAISON VOYAGE</span>
-      <h2>El mundo, bien mirado.</h2>
-      <div>
-        <nav>
-          {navItems.slice(0, 4).map((item) => (
-            <button
-              key={item}
-              onClick={() => onNavigate(`/${item.toLowerCase()}`)}
-            >
-              {item}
-            </button>
-          ))}
-        </nav>
-        <p>
-          Concierge
-          <br />
-          {agency.contact.email}
-          <br />
-          {agency.contact.whatsapp}
-        </p>
-      </div>
-      <small>
-        Ciudad de México · Viajes diseñados individualmente · Demo 2026
-      </small>
-    </footer>
-  );
-}
-function MarketplaceFooter({ agency, onNavigate }: FooterProps) {
-  return (
-    <footer className="market-footer">
-      <div>
-        <Logo agency={agency} light />
-        <p>
-          Catálogo nacional e internacional con información clara para comparar
-          y reservar.
-        </p>
-      </div>
-      {[
-        ["Explora", ["Nacionales", "Internacionales", "Playa", "Circuitos"]],
-        ["Ayuda", ["Cómo reservar", "Formas de pago", "Políticas", "Contacto"]],
-        [
-          "Agencia",
-          ["Nosotros", "Puntos de salida", "Promociones", "WhatsApp"],
-        ],
-      ].map(([title, items]) => (
-        <nav key={title as string}>
-          <b>{title}</b>
-          {(items as string[]).map((item) => (
-            <button key={item} onClick={() => onNavigate("/viajes")}>
-              {item}
-            </button>
-          ))}
-        </nav>
-      ))}
-      <section>
-        <b>Recibe nuevas salidas</b>
-        <input placeholder="tu@correo.com" />
-        <button>Suscribirme</button>
-      </section>
-      <small>
-        © 2026 {agency.name} · Datos y pagos simulados · No indexable
-      </small>
-    </footer>
-  );
-}
-
-const themeRegistry: Record<TravelTheme, ThemeComponents> = {
+const themeRenderers: Record<TravelTheme, ThemeComponents> = {
   explorer: {
     Header: ExplorerHeader,
     Home: ExplorerHome,
-    Card: ExplorerCard,
     Footer: ExplorerFooter,
-  },
-  boutique: {
-    Header: BoutiqueHeader,
-    Home: BoutiqueHome,
-    Card: BoutiqueCard,
-    Footer: BoutiqueFooter,
-  },
-  marketplace: {
-    Header: MarketplaceHeader,
-    Home: MarketplaceHome,
-    Card: MarketplaceCard,
-    Footer: MarketplaceFooter,
   },
   lavella: {
     Header: LavellaHeader,
     Home: LavellaHome,
-    Card: LavellaCard,
     Footer: LavellaFooter,
   },
 };
@@ -1826,8 +1127,6 @@ function DemoControls({
           onChange={(event) => onChange("theme", event.target.value)}
         >
           <option value="explorer">Explorer</option>
-          <option value="boutique">Boutique</option>
-          <option value="marketplace">Marketplace</option>
           <option value="lavella">Lavella</option>
         </select>
       </label>
@@ -1845,15 +1144,11 @@ function DemoControls({
   );
 }
 
-function SharedCatalog({
+function ExplorerCatalog({
   agency,
-  theme,
-  Card,
   onOpen,
 }: {
   agency: Agency;
-  theme: TravelTheme;
-  Card: ComponentType<CardProps>;
   onOpen: OpenTrip;
 }) {
   const query = currentParams().get("q") ?? "";
@@ -1861,7 +1156,6 @@ function SharedCatalog({
     q: query,
     sort: "next",
   });
-  const [table, setTable] = useState(theme === "marketplace");
   const [mobileFilters, setMobileFilters] = useState(false);
   const own = travels.filter((trip) => trip.agencyId === agency.id);
   const results = filterCatalog(own, filters);
@@ -1873,256 +1167,110 @@ function SharedCatalog({
     usd: own.filter((trip) => trip.basePrice.currency === "USD").length,
   };
   return (
-    <main className={`v2-catalog ${theme}-catalog`}>
+    <main className="v2-catalog explorer-catalog">
       <header className="v2-catalog-hero">
-        {theme !== "boutique" && (
-          <Image
-            src={
-              theme === "explorer"
-                ? heroImages.explorer
-                : theme === "lavella"
-                  ? heroImages.lavella
-                : heroImages.marketplace
-            }
-            alt=""
-            fill
-            priority
-            sizes="100vw"
-          />
-        )}
+        <Image
+          src={heroImages.explorer}
+          alt=""
+          fill
+          priority
+          sizes="100vw"
+        />
         <div>
-          <span>
-            {theme === "marketplace"
-              ? "CATÁLOGO DE PROGRAMAS"
-              : theme === "lavella"
-                ? "VIAJES Y EXPERIENCIAS"
-              : "COLECCIÓN DE VIAJES"}
-          </span>
-          <h1>
-            {theme === "explorer"
-              ? "Elige tu próxima coordenada."
-              : theme === "lavella"
-                ? "Encuentra una ruta que valga la pena recordar."
-              : theme === "boutique"
-                ? "Una colección para viajar distinto."
-                : `${results.length} viajes para comparar`}
-          </h1>
-          <p>
-            {theme === "marketplace"
-              ? "Precios, impuestos, ciudades, fechas y disponibilidad en un solo lugar."
-              : "Filtra sin perder la inspiración."}
-          </p>
+          <span>COLECCIÓN DE VIAJES</span>
+          <h1>Elige tu próxima coordenada.</h1>
+          <p>Filtra sin perder la inspiración.</p>
         </div>
       </header>
-      {theme === "boutique" && (
-        <div className="boutique-filter-strip">
+      <div className="v2-catalog-layout">
+        <aside className={`v2-filters ${mobileFilters ? "is-open" : ""}`}>
+          <header>
+            <h2>Filtrar resultados</h2>
+            <button onClick={() => setMobileFilters(false)}>Cerrar</button>
+          </header>
           <label>
-            Buscar
+            Palabra clave
             <input
               value={String(filters.q ?? "")}
               onChange={(event) => update("q", event.target.value)}
-              placeholder="Destino o experiencia"
+              placeholder="Destino, ciudad, código"
             />
           </label>
-          <label>
-            Alcance
-            <select
-              value={String(filters.scope ?? "")}
-              onChange={(event) => update("scope", event.target.value)}
-            >
-              <option value="">Todo el mundo</option>
-              <option value="national">México</option>
-              <option value="international">Internacional</option>
-            </select>
-          </label>
-          <label>
-            Orden
-            <select
-              value={String(filters.sort)}
-              onChange={(event) => update("sort", event.target.value)}
-            >
-              <option value="next">Próxima salida</option>
-              <option value="price-asc">Precio ascendente</option>
-              <option value="duration">Duración</option>
-            </select>
-          </label>
-          <button onClick={() => setFilters({ sort: "next" })}>
-            Restablecer
-          </button>
-        </div>
-      )}
-      <div className="v2-catalog-layout">
-        {theme !== "boutique" && (
-          <aside className={`v2-filters ${mobileFilters ? "is-open" : ""}`}>
-            <header>
-              <h2>Filtrar resultados</h2>
-              <button onClick={() => setMobileFilters(false)}>Cerrar</button>
-            </header>
+          <fieldset>
+            <legend>Alcance</legend>
             <label>
-              Palabra clave
               <input
-                value={String(filters.q ?? "")}
-                onChange={(event) => update("q", event.target.value)}
-                placeholder="Destino, ciudad, código"
+                type="radio"
+                name="scope"
+                checked={!filters.scope}
+                onChange={() => update("scope", "")}
               />
-            </label>
-            <fieldset>
-              <legend>Alcance</legend>
-              <label>
-                <input
-                  type="radio"
-                  name="scope"
-                  checked={!filters.scope}
-                  onChange={() => update("scope", "")}
-                />{" "}
-                Todos <b>{own.length}</b>
-              </label>
-              <label>
-                <input
-                  type="radio"
-                  name="scope"
-                  checked={filters.scope === "national"}
-                  onChange={() => update("scope", "national")}
-                />{" "}
-                Nacional <b>{counts.national}</b>
-              </label>
-              <label>
-                <input
-                  type="radio"
-                  name="scope"
-                  checked={filters.scope === "international"}
-                  onChange={() => update("scope", "international")}
-                />{" "}
-                Internacional <b>{counts.international}</b>
-              </label>
-            </fieldset>
-            <label>
-              Región
-              <select
-                value={String(filters.region ?? "")}
-                onChange={(event) => update("region", event.target.value)}
-              >
-                <option value="">Todas</option>
-                <option value="mexico">México</option>
-                <option value="europe">Europa</option>
-                <option value="south_america">Sudamérica</option>
-                <option value="asia">Asia</option>
-                <option value="central_america_caribbean">Caribe</option>
-              </select>
+              Todos <b>{own.length}</b>
             </label>
             <label>
-              Transporte
-              <select
-                value={String(filters.transport ?? "")}
-                onChange={(event) => update("transport", event.target.value)}
-              >
-                <option value="">Todos</option>
-                <option value="ground">Terrestre</option>
-                <option value="air">Aéreo</option>
-                <option value="cruise">Crucero</option>
-                <option value="mixed">Mixto</option>
-              </select>
+              <input
+                type="radio"
+                name="scope"
+                checked={filters.scope === "national"}
+                onChange={() => update("scope", "national")}
+              />
+              Nacional <b>{counts.national}</b>
             </label>
             <label>
-              Moneda
-              <select
-                value={String(filters.currency ?? "")}
-                onChange={(event) => update("currency", event.target.value)}
-              >
-                <option value="">MXN y USD</option>
-                <option value="MXN">MXN ({own.length - counts.usd})</option>
-                <option value="USD">USD ({counts.usd})</option>
-              </select>
+              <input
+                type="radio"
+                name="scope"
+                checked={filters.scope === "international"}
+                onChange={() => update("scope", "international")}
+              />
+              Internacional <b>{counts.international}</b>
             </label>
-            {theme === "marketplace" && (
-              <>
-                <label>
-                  País
-                  <select>
-                    <option>Todos los países</option>
-                    {[...new Set(own.flatMap((trip) => trip.countries))].map(
-                      (country) => (
-                        <option key={country}>{country}</option>
-                      ),
-                    )}
-                  </select>
-                </label>
-                <label>
-                  Ciudad
-                  <select>
-                    <option>Todas las ciudades</option>
-                    {[...new Set(own.flatMap((trip) => trip.cities))]
-                      .slice(0, 14)
-                      .map((city) => (
-                        <option key={city}>{city}</option>
-                      ))}
-                  </select>
-                </label>
-                <label>
-                  Tipo de salida
-                  <select>
-                    <option>Bloqueo y regular</option>
-                    <option>Salida terrestre</option>
-                    <option>Salida aérea</option>
-                  </select>
-                </label>
-                <label>
-                  Mes
-                  <select>
-                    <option>Todos los meses</option>
-                    <option>Agosto 2026</option>
-                    <option>Septiembre 2026</option>
-                    <option>Octubre 2026</option>
-                  </select>
-                </label>
-                <label>
-                  Duración
-                  <select>
-                    <option>Cualquier duración</option>
-                    <option>1–4 días</option>
-                    <option>5–9 días</option>
-                    <option>10+ días</option>
-                  </select>
-                </label>
-                <label>
-                  Origen
-                  <select>
-                    <option>Todos los orígenes</option>
-                    <option>Oceanía</option>
-                    <option>Naucalpan</option>
-                    <option>Guelatao</option>
-                  </select>
-                </label>
-                <label className="filter-check">
-                  <input
-                    type="checkbox"
-                    checked={Boolean(filters.promotion)}
-                    onChange={(event) =>
-                      update("promotion", event.target.checked)
-                    }
-                  />{" "}
-                  Solo promociones
-                </label>
-                <label className="filter-check">
-                  <input
-                    type="checkbox"
-                    checked={Boolean(filters.availability)}
-                    onChange={(event) =>
-                      update("availability", event.target.checked)
-                    }
-                  />{" "}
-                  Con disponibilidad
-                </label>
-              </>
-            )}
-            <button
-              className="clear-filters"
-              onClick={() => setFilters({ sort: "next" })}
+          </fieldset>
+          <label>
+            Región
+            <select
+              value={String(filters.region ?? "")}
+              onChange={(event) => update("region", event.target.value)}
             >
-              Limpiar todos los filtros
-            </button>
-          </aside>
-        )}
+              <option value="">Todas</option>
+              <option value="mexico">México</option>
+              <option value="europe">Europa</option>
+              <option value="south_america">Sudamérica</option>
+              <option value="asia">Asia</option>
+              <option value="central_america_caribbean">Caribe</option>
+            </select>
+          </label>
+          <label>
+            Transporte
+            <select
+              value={String(filters.transport ?? "")}
+              onChange={(event) => update("transport", event.target.value)}
+            >
+              <option value="">Todos</option>
+              <option value="ground">Terrestre</option>
+              <option value="air">Aéreo</option>
+              <option value="cruise">Crucero</option>
+              <option value="mixed">Mixto</option>
+            </select>
+          </label>
+          <label>
+            Moneda
+            <select
+              value={String(filters.currency ?? "")}
+              onChange={(event) => update("currency", event.target.value)}
+            >
+              <option value="">MXN y USD</option>
+              <option value="MXN">MXN ({own.length - counts.usd})</option>
+              <option value="USD">USD ({counts.usd})</option>
+            </select>
+          </label>
+          <button
+            className="clear-filters"
+            onClick={() => setFilters({ sort: "next" })}
+          >
+            Limpiar todos los filtros
+          </button>
+        </aside>
         <section className="v2-results">
           <div className="v2-results-toolbar">
             <button
@@ -2134,22 +1282,6 @@ function SharedCatalog({
             <span>
               <b>{results.length}</b> programas encontrados
             </span>
-            {theme === "marketplace" && (
-              <div className="view-toggle">
-                <button
-                  className={!table ? "active" : ""}
-                  onClick={() => setTable(false)}
-                >
-                  Tarjetas
-                </button>
-                <button
-                  className={table ? "active" : ""}
-                  onClick={() => setTable(true)}
-                >
-                  Tabla
-                </button>
-              </div>
-            )}
             <label>
               Ordenar por
               <select
@@ -2171,321 +1303,16 @@ function SharedCatalog({
                 Limpiar filtros
               </button>
             </div>
-          ) : table && theme === "marketplace" ? (
-            <MarketplaceTable
-              agency={agency}
-              trips={results}
-              onOpen={onOpen}
-            />
           ) : (
-            <div className={`v2-card-grid ${theme}-results-grid`}>
+            <div className="v2-card-grid explorer-results-grid">
               {results.map((trip) => (
-                <Card key={trip.id} trip={trip} onOpen={onOpen} />
+                <ExplorerCard key={trip.id} trip={trip} onOpen={onOpen} />
               ))}
             </div>
           )}
         </section>
       </div>
     </main>
-  );
-}
-
-function MarketplaceTable({
-  agency,
-  trips,
-  onOpen,
-}: {
-  agency: Agency;
-  trips: TravelProduct[];
-  onOpen: OpenTrip;
-}) {
-  return (
-    <div className="market-table">
-      <div className="market-table-head">
-        <span>Código / programa</span>
-        <span>Duración</span>
-        <span>Países y ciudades</span>
-        <span>Próxima salida / origen</span>
-        <span>Precio</span>
-        <span>Disponibilidad</span>
-      </div>
-      {trips.map((trip) => {
-        const departure = available(trip);
-        const availability = availabilityLabel(agency, trip, departure);
-        const point = departurePoints.find(
-          (item) =>
-            item.id === departure.boardingOptions[0]?.agencyDeparturePointId,
-        );
-        return (
-          <article key={trip.id}>
-            <span>
-              <small>{trip.code}</small>
-              <button onClick={() => onOpen(trip)}>{trip.title}</button>
-              <em>{trip.promotion}</em>
-            </span>
-            <span>
-              <b>{trip.durationDays} días</b>
-              <small>
-                {trip.durationNights} noches · {trip.transportTypes[0]}
-              </small>
-            </span>
-            <span>
-              <b>{trip.countries.join(", ")}</b>
-              <small>{trip.cities.join(" · ")}</small>
-            </span>
-            <span>
-              <b>{dateLabel(departure.startDate, true)}</b>
-              <small>
-                {point?.name ?? "Por confirmar"} · {trip.departures.length}{" "}
-                fechas
-              </small>
-            </span>
-            <span>
-              <b>
-                {formatMoney(trip.basePrice.amount, trip.basePrice.currency)}
-              </b>
-              <small>
-                {trip.basePrice.taxesIncluded
-                  ? "Impuestos incluidos"
-                  : trip.basePrice.taxesAmount === undefined
-                    ? "Impuestos por confirmar"
-                    : `+ ${formatMoney(trip.basePrice.taxesAmount, trip.basePrice.currency)} imp.`}
-              </small>
-              <small>
-                Anticipo{" "}
-                {formatMoney(
-                  trip.basePrice.depositAmount ?? 0,
-                  trip.basePrice.currency,
-                )}
-              </small>
-            </span>
-            <span>
-              {availability && (
-                <b
-                  className={
-                    departure.saleStatus === "limited" ||
-                    (availabilityMode(agency, trip) === "remaining_places" &&
-                      departure.availableSpaces < 6)
-                      ? "is-limited"
-                      : ""
-                  }
-                >
-                  {availability}
-                </b>
-              )}
-              <button onClick={() => onOpen(trip)}>Ver programa →</button>
-            </span>
-          </article>
-        );
-      })}
-    </div>
-  );
-}
-
-function SharedBookingPanel({
-  agency,
-  trip,
-  theme,
-}: {
-  agency: Agency;
-  trip: TravelProduct;
-  theme: TravelTheme;
-}) {
-  const [departureId, setDepartureId] = useState(available(trip).id);
-  const departure = trip.departures.find((item) => item.id === departureId)!;
-  const validBoarding = departure.boardingOptions.filter(
-    (item) => item.status !== "sold_out" && item.status !== "disabled",
-  );
-  const [boardingId, setBoardingId] = useState(validBoarding[0]?.id ?? "");
-  const [travelers, setTravelers] = useState(2);
-  const [rateId, setRateId] = useState(trip.pricingOptions[0].id);
-  const [extraIds, setExtraIds] = useState<string[]>([]);
-  const line: CartLine = {
-    id: `line-${trip.id}`,
-    agencyId: agency.id,
-    travelId: trip.id,
-    departureId,
-    boardingOptionId: boardingId,
-    pricingOptionId: rateId,
-    travelers,
-    extraIds,
-  };
-  let priced: ReturnType<typeof priceLine> | undefined;
-  try {
-    priced = priceLine(line);
-  } catch {
-    priced = undefined;
-  }
-  const changeDeparture = (id: string) => {
-    setDepartureId(id);
-    const next = trip.departures
-      .find((item) => item.id === id)
-      ?.boardingOptions.find(
-        (item) => item.status !== "sold_out" && item.status !== "disabled",
-      );
-    setBoardingId(next?.id ?? "");
-  };
-  const add = () => {
-    if (!priced) return;
-    const existing = JSON.parse(
-      localStorage.getItem("fu-travel-demo-cart") ?? "[]",
-    ) as CartLine[];
-    if (existing.length && existing[0].agencyId !== agency.id) {
-      window.alert("El carrito pertenece a otra agencia.");
-      return;
-    }
-    localStorage.setItem(
-      "fu-travel-demo-cart",
-      JSON.stringify([...existing.filter((item) => item.id !== line.id), line]),
-    );
-    window.location.assign(`/carrito${window.location.search}`);
-  };
-  return (
-    <aside className={`v2-booking ${theme}-booking`}>
-      <header>
-        <span>
-          {theme === "boutique" ? "Tu propuesta" : "Reserva este viaje"}
-        </span>
-        <small>{trip.code}</small>
-        <strong>
-          {formatMoney(trip.basePrice.amount, trip.basePrice.currency)}
-        </strong>
-        <em>por persona desde</em>
-      </header>
-      <label>
-        Salida programada
-        <select
-          value={departureId}
-          onChange={(event) => changeDeparture(event.target.value)}
-        >
-          {trip.departures.map((item) => {
-            const availability = availabilityLabel(agency, trip, item);
-            return (
-              <option
-                key={item.id}
-                value={item.id}
-                disabled={item.saleStatus === "sold_out"}
-              >
-                {dateLabel(item.startDate, true)}
-                {availability ? ` · ${availability}` : ""}
-              </option>
-            );
-          })}
-        </select>
-      </label>
-      <fieldset>
-        <legend>Punto de salida</legend>
-        {validBoarding.map((option) => {
-          const point = departurePoints.find(
-            (item) => item.id === option.agencyDeparturePointId,
-          )!;
-          return (
-            <label
-              className={boardingId === option.id ? "selected" : ""}
-              key={option.id}
-            >
-              <input
-                type="radio"
-                name="v2-boarding"
-                checked={boardingId === option.id}
-                onChange={() => setBoardingId(option.id)}
-              />
-              <span>
-                <b>{point.name}</b>
-                <small>
-                  {point.city} · {option.departureTime}
-                </small>
-                <em>
-                  {option.surchargeAmount
-                    ? `+ ${formatMoney(option.surchargeAmount, option.currency ?? trip.basePrice.currency)}`
-                    : "Sin suplemento"}
-                </em>
-              </span>
-            </label>
-          );
-        })}
-      </fieldset>
-      <div className="v2-booking-two">
-        <label>
-          Viajeros
-          <input
-            type="number"
-            min="1"
-            max={8}
-            value={travelers}
-            onChange={(event) => setTravelers(Number(event.target.value))}
-          />
-        </label>
-        <label>
-          Tarifa
-          <select
-            value={rateId}
-            onChange={(event) => setRateId(event.target.value)}
-          >
-            {trip.pricingOptions.map((item) => (
-              <option key={item.id} value={item.id}>
-                {item.label}
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
-      <fieldset className="v2-extras">
-        <legend>Experiencias adicionales</legend>
-        {trip.extras.map((extra) => (
-          <label key={extra.id}>
-            <input
-              type="checkbox"
-              checked={extraIds.includes(extra.id)}
-              onChange={() =>
-                setExtraIds((items) =>
-                  items.includes(extra.id)
-                    ? items.filter((item) => item !== extra.id)
-                    : [...items, extra.id],
-                )
-              }
-            />
-            <span>
-              {extra.name}
-              <b>{formatMoney(extra.price, extra.currency)}</b>
-            </span>
-          </label>
-        ))}
-      </fieldset>
-      {priced && (
-        <div className="v2-total">
-          <span>
-            Subtotal{" "}
-            <b>{formatMoney(priced.subtotal, trip.basePrice.currency)}</b>
-          </span>
-          <span>
-            Impuestos + abordaje{" "}
-            <b>
-              {formatMoney(
-                priced.taxes + priced.surcharge,
-                trip.basePrice.currency,
-              )}
-            </b>
-          </span>
-          <strong>
-            Total estimado{" "}
-            <b>{formatMoney(priced.total, trip.basePrice.currency)}</b>
-          </strong>
-          <small>
-            Anticipo desde{" "}
-            {formatMoney(priced.deposit, trip.basePrice.currency)}
-          </small>
-        </div>
-      )}
-      <button className="v2-booking-add" disabled={!priced} onClick={add}>
-        Agregar al carrito
-      </button>
-      {priced && (
-        <a href={whatsappUrl(agency, priced)} target="_blank" rel="noreferrer">
-          Consultar por WhatsApp ↗
-        </a>
-      )}
-    </aside>
   );
 }
 
@@ -3480,281 +2307,6 @@ function ExplorerDetail({
   );
 }
 
-function SharedConfigurableSections({ agency, trip, theme }: { agency: Agency; trip: TravelProduct; theme: Exclude<TravelTheme, "explorer"> }) {
-  const sections = resolveTripSections(trip);
-  const video = getSafeVideoPresentation(trip.videoContent);
-  return <div className={`shared-configurable-sections ${theme}-section-renderer`}>
-    <nav className="shared-trip-nav" aria-label="Contenido del viaje">{getStickyTripSections(trip).map((section)=><a key={section.id} href={`#${section.id}`}>{section.anchorLabel ?? section.type}</a>)}</nav>
-    {sections.filter((section)=>section.type!=="related_trips").map((section)=>{
-      const heading=section.title??section.anchorLabel;
-      if(section.type==="summary"){const price=getTripDisplayStartingPrice({trip});return <section id={section.id} key={section.id}><span className="section-label">RESUMEN</span><h2>{heading}</h2><p>{trip.summaryContent?.shortDescription}</p><div className="shared-summary-row"><b>{formatTripDuration(trip.durationDays,trip.durationNights)}</b><b>{formatMoney(price.amount,price.currency)} <small>{price.label}</small></b></div></section>}
-      if(section.type==="video"&&video)return <section id={section.id} key={section.id} className="shared-video"><span className="section-label">VIDEO</span><h2>{trip.videoContent?.title??heading}</h2>{video.mode==="iframe"?<iframe src={video.url} title={trip.videoContent?.title??"Video del viaje"} loading="lazy"/>:<a href={video.url} target="_blank" rel="noreferrer">Ver video</a>}<p>{trip.videoContent?.caption}</p></section>;
-      if(section.type==="gallery")return <section id={section.id} key={section.id}><span className="section-label">GALERÍA</span><h2>{heading}</h2><div className="shared-gallery">{(trip.galleryImages??[]).slice(0,3).map((image)=><Image key={image.id} src={image.url} alt={image.alt} width={420} height={280}/>)}</div></section>;
-      if(section.type==="itinerary")return <section id={section.id} key={section.id}><span className="section-label">ITINERARIO</span><h2>{heading}</h2>{trip.itinerary.map((day)=><details key={day.id??day.day} open={trip.itinerarySettings?.displayMode==="all_open"||day.day===1&&trip.itinerarySettings?.displayMode==="first_open"}><summary><b>{String(day.day).padStart(2,"0")}</b><span>{day.title}</span><i>+</i></summary><p>{day.description}</p></details>)}</section>;
-      if(section.type==="included")return <section id={section.id} key={section.id} className="v2-includes"><div><h3>Incluye</h3>{trip.inclusionsContent?.included.map((item)=><p key={item.id}>✓ {item.text}</p>)}</div><div><h3>No incluye</h3>{trip.inclusionsContent?.excluded.map((item)=><p key={item.id}>— {item.text}</p>)}</div></section>;
-      if(section.type==="map")return <section id={section.id} key={section.id}><span className="section-label">RUTA</span><h2>{heading}</h2><div className="shared-route">{getOrderedRouteStops(trip.mapSettings).map((stop)=><span key={stop.id}><b>{stop.dayNumber}</b>{stop.name}</span>)}</div></section>;
-      if(section.type==="departures")return <section id={section.id} key={section.id} className="v2-date-list"><span className="section-label">FECHAS</span><h2>{heading}</h2>{trip.departures.map((item)=>{const availability=availabilityLabel(agency,trip,item);return <div key={item.id}><time>{dateLabel(item.startDate,true)}</time><span>{formatMoney(getTripDisplayStartingPrice({trip,departure:item}).amount,trip.basePrice.currency)}</span>{availability&&<b>{availability}</b>}</div>})}</section>;
-      if(section.type==="rates")return <section id={section.id} key={section.id} className="v2-rate-section"><span className="section-label">TARIFAS</span><h2>{heading}</h2>{trip.pricingOptions.map((rate)=><div key={rate.id}><span><b>{rate.label}</b><small>{rate.occupancy==="double"?"Precio de referencia":rate.occupancy}</small></span><strong>{formatMoney(rate.amount,rate.currency)}</strong></div>)}</section>;
-      if(section.type==="recommendations")return <section id={section.id} key={section.id}><span className="section-label">RECOMENDACIONES</span><h2>{heading}</h2><ul>{getRecommendationItems(trip).map((item)=><li key={item.id}>{item.text}</li>)}</ul></section>;
-      if(section.type==="departure_points")return <section id={section.id} key={section.id}><span className="section-label">PUNTOS DE SALIDA</span><h2>{heading}</h2>{getPublicDeparturePoints(trip.publicDeparturePoints).map((point)=><article className="shared-point" key={point.id}><b>{point.name}{point.airportCode?` · ${point.airportCode}`:""}</b><p>{[point.city,point.reference,point.meetingTime].filter(Boolean).join(" · ")}</p></article>)}</section>;
-      if(section.type==="important_information")return <section id={section.id} key={section.id}><span className="section-label">INFORMACIÓN IMPORTANTE</span><h2>{heading}</h2>{trip.importantInformation?.items.map((item)=><article className="shared-information" key={item.id}><h3>{item.title}</h3><p>{item.description}</p></article>)}</section>;
-      if(section.type==="faq")return <section id={section.id} key={section.id}><span className="section-label">PREGUNTAS FRECUENTES</span><h2>{heading}</h2>{trip.faqContent?.items.map((item)=><details key={item.id}><summary>{item.question}<i>+</i></summary><p>{item.answer}</p></details>)}</section>;
-      return null;
-    })}
-  </div>;
-}
-
-function SharedDetail({
-  agency,
-  trip,
-  theme,
-  onNavigate,
-}: {
-  agency: Agency;
-  trip: TravelProduct;
-  theme: TravelTheme;
-  onNavigate: (path: string) => void;
-}) {
-  const departure = available(trip);
-  const availability = availabilityLabel(agency, trip, departure);
-  return (
-    <main className={`v2-detail ${theme}-detail`}>
-      {theme === "explorer" && (
-        <section className="explorer-detail-hero">
-          <Image src={trip.featuredImage} alt="" fill priority sizes="100vw" />
-          <button onClick={() => onNavigate("/viajes")}>← Catálogo</button>
-          <div>
-            <span>
-              {trip.code} · {trip.countries.join(", ")}
-            </span>
-            <h1>{trip.title}</h1>
-            <p>{trip.subtitle}</p>
-          </div>
-          <aside>
-            <b>{trip.durationDays}</b>
-            <span>días de ruta</span>
-          </aside>
-        </section>
-      )}
-      {theme === "boutique" && (
-        <section className="boutique-detail-hero">
-          <button onClick={() => onNavigate("/viajes")}>
-            ← Volver a la colección
-          </button>
-          <div>
-            <span>{trip.countries.join(" · ")}</span>
-            <h1>{trip.title}</h1>
-            <p>{trip.summary}</p>
-            <small>
-              {trip.durationDays} días · desde{" "}
-              {formatMoney(trip.basePrice.amount, trip.basePrice.currency)}
-            </small>
-          </div>
-          <div className="boutique-detail-image">
-            <Image src={trip.featuredImage} alt="" fill priority sizes="60vw" />
-          </div>
-        </section>
-      )}
-      {theme === "marketplace" && (
-        <>
-          <section className="market-detail-head">
-            <button onClick={() => onNavigate("/viajes")}>← Resultados</button>
-            <div>
-              <span>
-                {trip.code} ·{" "}
-                {trip.scope === "national"
-                  ? "Programa nacional"
-                  : "Programa internacional"}
-              </span>
-              <h1>{trip.title}</h1>
-              <p>
-                {trip.countries.join(", ")} · {trip.cities.join(" · ")}
-              </p>
-            </div>
-            <div className="market-detail-price">
-              <small>Desde</small>
-              <strong>
-                {formatMoney(trip.basePrice.amount, trip.basePrice.currency)}
-              </strong>
-              <span>
-                {trip.basePrice.taxesIncluded
-                  ? "Impuestos incluidos"
-                  : trip.basePrice.taxesAmount === undefined
-                    ? "Impuestos por confirmar"
-                    : `+ ${formatMoney(trip.basePrice.taxesAmount, trip.basePrice.currency)} impuestos`}
-              </span>
-              <button
-                onClick={() =>
-                  document.getElementById("reserva")?.scrollIntoView()
-                }
-              >
-                Reservar
-              </button>
-            </div>
-          </section>
-          <section className="market-detail-facts">
-            {[
-              [trip.code, "Código"],
-              [`${trip.durationDays}d / ${trip.durationNights}n`, "Duración"],
-              [trip.countries.length, "Países"],
-              [trip.cities.length, "Ciudades"],
-              [trip.transportTypes.join(", "), "Transporte"],
-              [trip.departures.length, "Salidas"],
-              ...(availability ? [[availability, "Disponibilidad"]] : []),
-            ].map(([value, label]) => (
-              <span key={label}>
-                <b>{value}</b>
-                <small>{label}</small>
-              </span>
-            ))}
-          </section>
-          <nav className="market-detail-nav">
-            {[
-              "Descripción",
-              "Itinerario",
-              "Tarifas",
-              "Fechas",
-              "Abordajes",
-              "Condiciones",
-            ].map((item) => (
-              <a key={item} href={`#${item.toLowerCase()}`}>
-                {item}
-              </a>
-            ))}
-          </nav>
-        </>
-      )}
-      {theme === "lavella" && (
-        <section className="lavella-detail-hero">
-          <Image src={trip.featuredImage} alt="" fill priority sizes="100vw" />
-          <div className="lavella-detail-shade" />
-          <button onClick={() => onNavigate("/viajes")}>← Catálogo</button>
-          <div>
-            <span>{trip.code} · {trip.countries.join(" · ")}</span>
-            <h1>{trip.title}</h1>
-            <p>{trip.subtitle}</p>
-            <div>
-              <small>DESDE</small>
-              <strong>{formatMoney(getTripDisplayStartingPrice({ trip, departure }).amount, trip.basePrice.currency)}</strong>
-              <em>{formatTripDuration(trip.durationDays, trip.durationNights)} · {dateLabel(departure.startDate, true)}</em>
-            </div>
-            <button onClick={() => document.getElementById("reserva")?.scrollIntoView({ behavior: "smooth" })}>Reservar viaje ↗</button>
-          </div>
-        </section>
-      )}
-      <div className="v2-detail-layout">
-        <article className="v2-detail-story">
-          {theme !== "marketplace" && (
-            <div className="v2-detail-facts">
-              {[
-                [`${trip.durationDays} días`, "Duración"],
-                [trip.countries.join(", "), "País"],
-                [trip.transportTypes.join(", "), "Transporte"],
-                ...(availability ? [[availability, "Disponibilidad"]] : []),
-              ].map(([value, label]) => (
-                <span key={label}>
-                  <b>{value}</b>
-                  <small>{label}</small>
-                </span>
-              ))}
-            </div>
-          )}
-          {trip.pageConfiguration && theme !== "explorer" ? (
-            <SharedConfigurableSections
-              agency={agency}
-              trip={trip}
-              theme={theme}
-            />
-          ) : (
-          <>
-          <section id="descripción">
-            <span className="section-label">
-              {theme === "boutique" ? "LA HISTORIA" : "LA EXPERIENCIA"}
-            </span>
-            <h2>
-              {theme === "explorer"
-                ? "Una ruta para mirar más lejos."
-                : theme === "boutique"
-                  ? "Cada día tiene su propio ritmo."
-                  : "Descripción del programa"}
-            </h2>
-            <p>{trip.description}</p>
-          </section>
-          <section id="itinerario">
-            <span className="section-label">ITINERARIO</span>
-            <h2>
-              {theme === "boutique" ? "El viaje, día a día" : "Ruta programada"}
-            </h2>
-            {trip.itinerary.map((day) => (
-              <details key={day.day} open={day.day === 1}>
-                <summary>
-                  <b>{String(day.day).padStart(2, "0")}</b>
-                  <span>{day.title}</span>
-                  <i>+</i>
-                </summary>
-                <p>{day.description}</p>
-              </details>
-            ))}
-          </section>
-          <section id="tarifas" className="v2-rate-section">
-            <span className="section-label">TARIFAS Y OCUPACIÓN</span>
-            {trip.pricingOptions.map((rate) => (
-              <div key={rate.id}>
-                <span>
-                  <b>{rate.label}</b>
-                  <small>{rate.occupancy}</small>
-                </span>
-                <strong>{formatMoney(rate.amount, rate.currency)}</strong>
-              </div>
-            ))}
-          </section>
-          <section className="v2-includes">
-            <div>
-              <h3>Incluye</h3>
-              {trip.includes.map((item) => (
-                <p key={item}>✓ {item}</p>
-              ))}
-            </div>
-            <div>
-              <h3>No incluye</h3>
-              {trip.excludes.map((item) => (
-                <p key={item}>— {item}</p>
-              ))}
-            </div>
-          </section>
-          <section id="fechas" className="v2-date-list">
-            <span className="section-label">FECHAS Y SALIDAS</span>
-            {trip.departures.map((item) => {
-              const itemAvailability = availabilityLabel(agency, trip, item);
-              return (
-                <div key={item.id}>
-                  <time>{dateLabel(item.startDate, true)}</time>
-                  {itemAvailability && <b>{itemAvailability}</b>}
-                </div>
-              );
-            })}
-          </section>
-          <section id="condiciones">
-            <span className="section-label">CONDICIONES</span>
-            <p>{trip.policies.cancellation}</p>
-            <p>{trip.policies.payment}</p>
-            <p>{trip.policies.responsibility}</p>
-          </section>
-          </>
-          )}
-        </article>
-        <div id="reserva">
-          {theme === "lavella" ? (
-            <ExplorerBookingPanel agency={agency} trip={trip} />
-          ) : (
-            <SharedBookingPanel agency={agency} trip={trip} theme={theme} />
-          )}
-        </div>
-      </div>
-    </main>
-  );
-}
-
 export function TravelApp({
   hostname,
   initialTenant,
@@ -3837,23 +2389,16 @@ export function TravelApp({
           )}
       </>
     );
-  const components = themeRegistry[theme];
+  const components = themeRenderers[theme];
   const trip = ownTrips.find((item) => route === travelUrl(item));
   const content = trip ? (
     theme === "explorer" ? (
       <ExplorerDetail agency={agency} trip={trip} onNavigate={navigate} />
-    ) : theme === "lavella" ? (
+    ) : (
       <LavellaTripDetail
         agency={agency}
         trip={trip}
         related={ownTrips.filter((item) => item.id !== trip.id)}
-        onNavigate={navigate}
-      />
-    ) : (
-      <SharedDetail
-        agency={agency}
-        trip={trip}
-        theme={theme}
         onNavigate={navigate}
       />
     )
@@ -3861,13 +2406,13 @@ export function TravelApp({
     theme === "lavella" ? (
       <LavellaCatalog agency={agency} trips={ownTrips} onOpen={(item) => navigate(travelUrl(item))} />
     ) : (
-      <SharedCatalog agency={agency} theme={theme} Card={components.Card} onOpen={(item) => navigate(travelUrl(item))} />
+      <ExplorerCatalog agency={agency} onOpen={(item) => navigate(travelUrl(item))} />
     )
   ) : route === "/destinos" ? (
     theme === "lavella" ? (
       <LavellaCatalog agency={agency} trips={ownTrips} onOpen={(item) => navigate(travelUrl(item))} />
     ) : (
-      <SharedCatalog agency={agency} theme={theme} Card={components.Card} onOpen={(item) => navigate(travelUrl(item))} />
+      <ExplorerCatalog agency={agency} onOpen={(item) => navigate(travelUrl(item))} />
     )
   ) : (
     <components.Home

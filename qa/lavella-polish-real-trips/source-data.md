@@ -67,8 +67,6 @@ Las siguientes rutas usan los mismos IDs y precios:
 
 ```text
 ?tenant=crisenix&theme=explorer
-?tenant=crisenix&theme=boutique
-?tenant=crisenix&theme=marketplace
 ?tenant=crisenix&theme=lavella
 ```
 

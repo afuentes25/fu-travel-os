@@ -43,7 +43,7 @@ Explorer no replica literalmente la escala antigua de la plantilla. Mantiene Rob
 
 ### Explorer anterior
 
-- Usaba DM Sans y Cormorant Garamond; la serif provenía de la dirección Boutique/editorial, no de Lavella.
+- Usaba DM Sans y Cormorant Garamond; la serif provenía de una dirección editorial ajena a Lavella.
 - El hero concentraba título, CTAs y datos en dos grupos que se superponían con facilidad en móvil.
 - El precio estaba presente, pero no operaba como zona comercial protagonista.
 - El CTA principal decía “Ver viaje”, no “Ver más”.
@@ -88,4 +88,4 @@ El slider debe ser determinista, tener autoplay moderado, detenerse por hover, f
 
 ## Restricciones preservadas
 
-No se modifican modelos, datos estructurados, pricing, tenancy, carrito, checkout, reservas, salidas, abordajes, tarifas, extras, WhatsApp, administración, Boutique ni Marketplace.
+No se modifican modelos, datos estructurados, pricing, tenancy, carrito, checkout, reservas, salidas, abordajes, tarifas, extras, WhatsApp ni administración.
