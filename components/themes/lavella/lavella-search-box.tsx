@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { FaMagnifyingGlass } from "react-icons/fa6";
+import { FaChevronDown, FaMagnifyingGlass } from "react-icons/fa6";
 import styles from "./lavella-home.module.css";
 
 export function LavellaSearchBox({
@@ -12,9 +12,12 @@ export function LavellaSearchBox({
   compact?: boolean;
 }) {
   const [query, setQuery] = useState("");
+  const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
   return (
     <form
-      className={`${styles.searchBox} ${compact ? styles.searchCompact : ""}`}
+      className={`${styles.searchBox} ${
+        compact ? styles.searchCompact : styles.searchHome
+      } ${mobileFiltersOpen ? styles.searchFiltersOpen : ""}`}
       onSubmit={(event) => {
         event.preventDefault();
         onSearch(query);
@@ -23,11 +26,11 @@ export function LavellaSearchBox({
       {!compact && (
         <header>
           <small>BUSCAR VIAJE</small>
-          <h2>¿Listo para descansar? Te ayudamos a encontrar la ruta.</h2>
+          <h2>¿A dónde quieres ir?</h2>
         </header>
       )}
       <div className={styles.searchFields}>
-        <label>
+        <label className={styles.searchKeyword}>
           Palabras clave
           <span>
             <input
@@ -38,7 +41,7 @@ export function LavellaSearchBox({
             <FaMagnifyingGlass />
           </span>
         </label>
-        <label>
+        <label className={styles.searchOptional}>
           Actividad
           <select defaultValue="">
             <option value="">Cualquiera</option>
@@ -47,7 +50,7 @@ export function LavellaSearchBox({
             <option>Aventura</option>
           </select>
         </label>
-        <label>
+        <label className={styles.searchDestination}>
           Destino
           <select defaultValue="">
             <option value="">Cualquiera</option>
@@ -55,7 +58,7 @@ export function LavellaSearchBox({
             <option>Internacional</option>
           </select>
         </label>
-        <label>
+        <label className={styles.searchOptional}>
           Duración
           <select defaultValue="">
             <option value="">Cualquiera</option>
@@ -64,11 +67,25 @@ export function LavellaSearchBox({
             <option>5+ días</option>
           </select>
         </label>
-        <label>
+        <label className={styles.searchOptional}>
           Fecha
           <input type="month" />
         </label>
-        <button aria-label="Buscar viajes"><FaMagnifyingGlass /></button>
+        {!compact && (
+          <button
+            className={styles.searchFilterToggle}
+            type="button"
+            aria-expanded={mobileFiltersOpen}
+            onClick={() => setMobileFiltersOpen((value) => !value)}
+          >
+            Más filtros
+            <FaChevronDown aria-hidden="true" />
+          </button>
+        )}
+        <button className={styles.searchSubmit} type="submit">
+          <FaMagnifyingGlass aria-hidden="true" />
+          <span>Buscar viajes</span>
+        </button>
       </div>
     </form>
   );

@@ -44,6 +44,13 @@ import {
 } from "../lib/pricing/index";
 import { lavellaDeparture } from "../components/themes/lavella/lavella-utils";
 import {
+  canLavellaAutoplay,
+  lavellaSlideIndex,
+  LAVELLA_SLIDER_TIMING,
+  updateLavellaPauseReasons,
+} from "../components/themes/lavella/lavella-slider";
+import type { SliderPauseReason } from "../components/themes/lavella/lavella-slider";
+import {
   DEFAULT_ROOM_CAPACITY_POLICY,
   getRoomCapacity,
   resolveRoomCapacityPolicy,
@@ -1148,41 +1155,125 @@ const crisenixFxPolicy = () =>
   agencies.find((agency) => agency.id === "a-crisenix")!.settings
     .exchangeRatePolicy!;
 
-test("flecha Lavella usa el SVG adquirido existente y corrección óptica", () => {
+test("flecha izquierda Lavella retrocede y flecha derecha avanza", () => {
+  assert.equal(lavellaSlideIndex(1, -1, 4), 0);
+  assert.equal(lavellaSlideIndex(1, 1, 4), 2);
+  assert.equal(lavellaSlideIndex(0, -1, 4), 3);
+  assert.equal(lavellaSlideIndex(3, 1, 4), 0);
+});
+
+test("controles Lavella tienen labels inequívocos y SVG propios", () => {
   const hero = readFileSync(
     "components/themes/lavella/lavella-home-hero.tsx",
     "utf8",
   );
+  assert.match(hero, /aria-label="Mostrar viaje anterior"/);
+  assert.match(hero, /aria-label="Mostrar siguiente viaje"/);
+  assert.match(hero, /LavellaHeroArrow direction="previous"/);
+  assert.match(hero, /LavellaHeroArrow direction="next"/);
+  assert.doesNotMatch(hero, />\s*[<>]\s*</);
+});
+
+test("flechas Lavella usan una estructura de centrado estable", () => {
   const css = readFileSync(
     "components/themes/lavella/lavella-home.module.css",
     "utf8",
   );
-  const svg = readFileSync("public/themes/lavella/slide-arrow.svg", "utf8");
-  assert.match(hero, /\/themes\/lavella\/slide-arrow\.svg/);
-  assert.doesNotMatch(hero, /left-arrow\.svg/);
-  assert.match(svg, /viewBox="0 0 20\.051 14\.097"/);
-  assert.match(css, /\.heroArrow img[\s\S]*translateX\(1px\)/);
+  assert.match(css, /\.heroArrow \{[\s\S]*display: inline-grid;[\s\S]*place-items: center;/);
+  assert.match(css, /\.heroArrowIcon \{[\s\S]*display: block;[\s\S]*width: 20px;[\s\S]*height: 20px;/);
+  assert.doesNotMatch(css, /\.heroArrowIcon[\s\S]{0,180}translate[XY]\(/);
 });
 
 test("autoplay Lavella usa 5000, transición 650 y reanudación 7000", () => {
-  const hero = readFileSync(
-    "components/themes/lavella/lavella-home-hero.tsx",
-    "utf8",
-  );
-  assert.match(hero, /LAVELLA_SLIDER_AUTOPLAY_MS = 5000/);
-  assert.match(hero, /LAVELLA_SLIDER_TRANSITION_MS = 650/);
-  assert.match(hero, /LAVELLA_SLIDER_RESUME_AFTER_INTERACTION_MS = 7000/);
+  assert.equal(LAVELLA_SLIDER_TIMING.autoplayDelayMs, 5000);
+  assert.equal(LAVELLA_SLIDER_TIMING.transitionDurationMs, 650);
+  assert.equal(LAVELLA_SLIDER_TIMING.resumeAfterInteractionMs, 7000);
 });
 
-test("slider Lavella usa un temporizador rearmable sin setInterval", () => {
+test("autoplay Lavella avanza y una sola slide no lo activa", () => {
+  assert.equal(lavellaSlideIndex(0, 1, 4), 1);
+  assert.equal(
+    canLavellaAutoplay({
+      autoplay: true,
+      slideCount: 4,
+      pauseReasons: new Set(),
+    }),
+    true,
+  );
+  assert.equal(
+    canLavellaAutoplay({
+      autoplay: true,
+      slideCount: 1,
+      pauseReasons: new Set(),
+    }),
+    false,
+  );
+});
+
+test("interacción pausa y después permite reanudar autoplay Lavella", () => {
+  const paused = updateLavellaPauseReasons(
+    new Set<SliderPauseReason>(),
+    "interaction",
+    true,
+  );
+  assert.equal(
+    canLavellaAutoplay({ autoplay: true, slideCount: 4, pauseReasons: paused }),
+    false,
+  );
+  const resumed = updateLavellaPauseReasons(paused, "interaction", false);
+  assert.equal(
+    canLavellaAutoplay({ autoplay: true, slideCount: 4, pauseReasons: resumed }),
+    true,
+  );
+});
+
+test("visibilidad de pestaña pausa y reanuda autoplay Lavella", () => {
+  const hidden = updateLavellaPauseReasons(
+    new Set<SliderPauseReason>(),
+    "hidden",
+    true,
+  );
+  assert.equal(hidden.has("hidden"), true);
+  const visible = updateLavellaPauseReasons(hidden, "hidden", false);
+  assert.equal(visible.size, 0);
+});
+
+test("reduced motion desactiva autoplay Lavella", () => {
+  const reduced = updateLavellaPauseReasons(
+    new Set<SliderPauseReason>(),
+    "reduced-motion",
+    true,
+  );
+  assert.equal(
+    canLavellaAutoplay({
+      autoplay: true,
+      slideCount: 4,
+      pauseReasons: reduced,
+    }),
+    false,
+  );
+});
+
+test("slider Lavella mantiene un solo intervalo y limpia ambos timers", () => {
   const hero = readFileSync(
     "components/themes/lavella/lavella-home-hero.tsx",
     "utf8",
   );
+  assert.equal((hero.match(/setInterval\(/g) ?? []).length, 1);
+  assert.match(hero, /clearInterval/);
   assert.match(hero, /setTimeout/);
-  assert.doesNotMatch(hero, /setInterval/);
+  assert.match(hero, /clearTimeout/);
   assert.match(hero, /visibilitychange/);
   assert.match(hero, /prefers-reduced-motion/);
+});
+
+test("slider Lavella deshabilita controles cuando solo existe una slide", () => {
+  const hero = readFileSync(
+    "components/themes/lavella/lavella-home-hero.tsx",
+    "utf8",
+  );
+  assert.match(hero, /const controlsDisabled = slides\.length < 2/);
+  assert.ok((hero.match(/disabled=\{controlsDisabled\}/g) ?? []).length >= 3);
 });
 
 test("destinos populares usa el carrusel proporcional de Lavella", () => {
@@ -1194,6 +1285,28 @@ test("destinos populares usa el carrusel proporcional de Lavella", () => {
   assert.match(home, /LavellaDestinationCard/);
   assert.match(home, /moveDestinations/);
   assert.doesNotMatch(home, /destinationMosaic/);
+});
+
+test("cards de destinos declaran superficie de imagen y tokens on-dark", () => {
+  const card = readFileSync(
+    "components/themes/lavella/lavella-destination-card.tsx",
+    "utf8",
+  );
+  const css = readFileSync(
+    "components/themes/lavella/lavella-home.module.css",
+    "utf8",
+  );
+  assert.match(card, /data-lavella-surface="image"/);
+  assert.match(card, /destinationImageOverlay/);
+  assert.match(
+    css,
+    /\.destinationImage \{[\s\S]*aspect-ratio: 20 \/ 13;[\s\S]*color: var\(--lavella-text-on-dark\)/,
+  );
+  assert.match(
+    css,
+    /\.destinationImageOverlay \{[\s\S]*rgba\(0, 0, 0, \.72\)[\s\S]*rgba\(0, 0, 0, \.08\)/,
+  );
+  assert.match(css, /\.destinationImageCode \{[\s\S]*var\(--lavella-text-on-dark\)/);
 });
 
 test("componentes Lavella declaran superficies claras, oscuras e imagen", () => {

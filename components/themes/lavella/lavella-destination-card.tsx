@@ -19,9 +19,12 @@ export function LavellaDestinationCard({
         aria-label={`Ver viajes a ${trip.cities[0] ?? trip.title}`}
       >
         <Image src={trip.featuredImage} alt="" fill sizes="(max-width:760px) 88vw, 31vw" />
+        <span className={styles.destinationImageOverlay} aria-hidden="true" />
+        <span className={styles.destinationImageCode}>
+          {trip.countries[0]?.slice(0, 2).toUpperCase() ?? "MX"}
+        </span>
       </button>
       <div className={styles.destinationBody}>
-        <span>{trip.countries[0]?.slice(0, 2).toUpperCase() ?? "MX"}</span>
         <h3>{trip.cities[0] ?? trip.title}</h3>
         <p>{trip.summary}</p>
       </div>
