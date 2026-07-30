@@ -206,11 +206,29 @@ export function LavellaBookingPanel({
   useEffect(() => {
     const hero = document.querySelector("[data-lavella-detail-hero]");
     if (!hero) return;
+    const footer = document.querySelector(
+      'footer[data-lavella-surface="dark"]',
+    );
+    const isVisible = (element: Element) => {
+      const bounds = element.getBoundingClientRect();
+      return bounds.bottom > 0 && bounds.top < window.innerHeight;
+    };
+    let heroVisible = isVisible(hero);
+    let footerVisible = footer ? isVisible(footer) : false;
+    const updateBar = () => setShowMobileBar(!heroVisible && !footerVisible);
     const observer = new IntersectionObserver(
-      ([entry]) => setShowMobileBar(!entry.isIntersecting),
-      { threshold: 0.08 },
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.target === hero) heroVisible = entry.isIntersecting;
+          if (entry.target === footer) footerVisible = entry.isIntersecting;
+        });
+        updateBar();
+      },
+      { threshold: 0.01, rootMargin: "0px 0px 72px 0px" },
     );
     observer.observe(hero);
+    if (footer) observer.observe(footer);
+    updateBar();
     return () => observer.disconnect();
   }, []);
   useEffect(() => {

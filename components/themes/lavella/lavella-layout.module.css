@@ -186,13 +186,19 @@
 .mobileClose {
   width: 48px;
   height: 48px;
+  padding: 0;
+  display: inline-grid;
+  place-items: center;
   border: 1px solid #404040;
   border-radius: 50%;
   background: transparent;
+  line-height: 0;
 }
 
 .mobileClose img {
-  width: 16px;
+  width: 18px;
+  height: 18px;
+  display: block;
   filter: brightness(0) invert(1);
 }
 
