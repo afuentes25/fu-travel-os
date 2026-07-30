@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import { useEffect, useMemo, useState } from "react";
-import { FaArrowLeft, FaArrowRight, FaSliders } from "react-icons/fa6";
+import { FaSliders } from "react-icons/fa6";
 import { filterCatalog, type CatalogFilters } from "@/lib/catalog";
 import styles from "./lavella-catalog.module.css";
 import {
@@ -10,6 +10,7 @@ import {
   countLavellaActiveFilters,
 } from "./lavella-catalog-filters";
 import { resolveLavellaCatalogColumns } from "./lavella-catalog-config";
+import { LavellaArrowIcon } from "./lavella-arrow-icon";
 import { LavellaSearchBox } from "./lavella-search-box";
 import { LavellaTourCard } from "./lavella-tour-card";
 import type { LavellaCatalogProps } from "./lavella-types";
@@ -156,11 +157,15 @@ export function LavellaCatalog({
               </div>
             )}
             <nav className={styles.pagination} aria-label="Paginación">
-              <button aria-label="Página anterior"><FaArrowLeft /></button>
+              <button aria-label="Página anterior">
+                <LavellaArrowIcon direction="previous" />
+              </button>
               <button className={styles.activePage}>1</button>
               <button>2</button>
               <button>3</button>
-              <button aria-label="Página siguiente"><FaArrowRight /></button>
+              <button aria-label="Página siguiente">
+                <LavellaArrowIcon direction="next" />
+              </button>
             </nav>
           </div>
 

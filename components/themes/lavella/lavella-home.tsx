@@ -2,9 +2,10 @@
 
 import Image from "next/image";
 import { useRef } from "react";
-import { FaArrowLeft, FaArrowRight, FaWhatsapp } from "react-icons/fa6";
+import { FaArrowRight, FaWhatsapp } from "react-icons/fa6";
 import styles from "./lavella-home.module.css";
 import { LavellaDestinationCard } from "./lavella-destination-card";
+import { LavellaArrowIcon } from "./lavella-arrow-icon";
 import { LavellaHomeHero } from "./lavella-home-hero";
 import { LavellaSearchBox } from "./lavella-search-box";
 import { lavellaRailTarget } from "./lavella-slider";
@@ -59,7 +60,7 @@ export function LavellaHome({
               aria-label="Viaje popular anterior"
               onClick={() => movePopular(-1)}
             >
-              <FaArrowLeft />
+              <LavellaArrowIcon direction="previous" />
             </button>
             <button
               className={styles.carouselArrowButton}
@@ -67,7 +68,7 @@ export function LavellaHome({
               aria-label="Siguiente viaje popular"
               onClick={() => movePopular(1)}
             >
-              <FaArrowRight />
+              <LavellaArrowIcon direction="next" />
             </button>
           </div>
         </header>
@@ -139,14 +140,14 @@ export function LavellaHome({
               aria-label="Destino anterior"
               onClick={() => moveDestinations(-1)}
             >
-              <FaArrowLeft />
+              <LavellaArrowIcon direction="previous" />
             </button>
             <button
               className={styles.carouselArrowButton}
               aria-label="Destino siguiente"
               onClick={() => moveDestinations(1)}
             >
-              <FaArrowRight />
+              <LavellaArrowIcon direction="next" />
             </button>
           </div>
         </header>

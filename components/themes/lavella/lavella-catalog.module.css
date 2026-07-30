@@ -361,6 +361,10 @@
 .pagination button {
   width: 44px;
   height: 44px;
+  display: inline-grid;
+  place-items: center;
+  padding: 0;
+  line-height: 0;
   border: 1px solid #d9d9d9;
   border-radius: 50%;
   background: #fff;

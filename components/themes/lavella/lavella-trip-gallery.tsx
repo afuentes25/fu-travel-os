@@ -2,8 +2,9 @@
 
 import Image from "next/image";
 import { useEffect, useRef, useState } from "react";
-import { FaArrowLeft, FaArrowRight, FaImages, FaXmark } from "react-icons/fa6";
+import { FaImages, FaXmark } from "react-icons/fa6";
 import type { TravelProduct } from "@/types";
+import { LavellaArrowIcon } from "./lavella-arrow-icon";
 import styles from "./lavella-detail.module.css";
 
 const tripImages = (trip: TravelProduct) => {
@@ -53,10 +54,10 @@ export function LavellaTripGallery({ trip }: { trip: TravelProduct }) {
     <>
       <div className={styles.galleryControls}>
         <button onClick={() => moveRail(-1)} aria-label="Fotografías anteriores">
-          <FaArrowLeft />
+          <LavellaArrowIcon direction="previous" />
         </button>
         <button onClick={() => moveRail(1)} aria-label="Fotografías siguientes">
-          <FaArrowRight />
+          <LavellaArrowIcon direction="next" />
         </button>
       </div>
       <div className={styles.heroGallery} ref={rail} aria-label="Galería del viaje">
@@ -96,7 +97,7 @@ export function LavellaTripGallery({ trip }: { trip: TravelProduct }) {
             <FaXmark />
           </button>
           <button className={styles.lightboxPrev} onClick={() => moveLightbox(-1)} aria-label="Fotografía anterior">
-            <FaArrowLeft />
+            <LavellaArrowIcon direction="previous" />
           </button>
           <figure>
             <Image
@@ -108,7 +109,7 @@ export function LavellaTripGallery({ trip }: { trip: TravelProduct }) {
             {images[selected].caption && <figcaption>{images[selected].caption}</figcaption>}
           </figure>
           <button className={styles.lightboxNext} onClick={() => moveLightbox(1)} aria-label="Fotografía siguiente">
-            <FaArrowRight />
+            <LavellaArrowIcon direction="next" />
           </button>
         </div>
       )}

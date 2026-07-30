@@ -21,6 +21,7 @@ import {
   updateLavellaPauseReasons,
 } from "./lavella-slider";
 import type { LavellaHomeProps } from "./lavella-types";
+import { LavellaArrowIcon } from "./lavella-arrow-icon";
 import {
   lavellaCategory,
   lavellaDate,
@@ -58,23 +59,6 @@ function startLavellaAutoplay(callback: () => void, delay: number) {
     window.clearInterval(timer);
     delete browserWindow.__fuTravelLavellaAutoplay;
   };
-}
-
-function LavellaHeroArrow({ direction }: { direction: "previous" | "next" }) {
-  return (
-    <svg
-      className={styles.heroArrowIcon}
-      viewBox="0 0 24 24"
-      aria-hidden="true"
-      focusable="false"
-    >
-      {direction === "previous" ? (
-        <path d="M13.75 5.5 7.25 12l6.5 6.5M7.5 12h9.25" />
-      ) : (
-        <path d="m10.25 5.5 6.5 6.5-6.5 6.5M16.5 12H7.25" />
-      )}
-    </svg>
-  );
 }
 
 export function LavellaHomeHero({
@@ -344,7 +328,7 @@ export function LavellaHomeHero({
           aria-label="Mostrar viaje anterior"
           disabled={controlsDisabled}
         >
-          <LavellaHeroArrow direction="previous" />
+          <LavellaArrowIcon direction="previous" />
         </button>
         <output className={styles.heroCounter} aria-live="polite">
           {String(active + 1).padStart(2, "0")} /{" "}
@@ -357,7 +341,7 @@ export function LavellaHomeHero({
           aria-label="Mostrar siguiente viaje"
           disabled={controlsDisabled}
         >
-          <LavellaHeroArrow direction="next" />
+          <LavellaArrowIcon direction="next" />
         </button>
       </div>
       <div className={styles.heroDots}>
@@ -385,7 +369,7 @@ export function LavellaHomeHero({
           );
         })}
         <button className={styles.heroCategoryMore} onClick={() => onNavigate("/viajes")}>
-          <span><LavellaHeroArrow direction="next" /></span>
+          <span><LavellaArrowIcon direction="next" /></span>
           <b>Ver más rutas</b>
         </button>
       </div>

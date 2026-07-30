@@ -1219,26 +1219,31 @@ test("reduced motion evita la animación horizontal Lavella", () => {
   );
 });
 
-test("controles Lavella tienen labels inequívocos y SVG propios", () => {
+test("controles Lavella tienen labels inequívocos y SVG compartido", () => {
   const hero = readFileSync(
     "components/themes/lavella/lavella-home-hero.tsx",
     "utf8",
   );
   assert.match(hero, /aria-label="Mostrar viaje anterior"/);
   assert.match(hero, /aria-label="Mostrar siguiente viaje"/);
-  assert.match(hero, /LavellaHeroArrow direction="previous"/);
-  assert.match(hero, /LavellaHeroArrow direction="next"/);
+  assert.match(hero, /LavellaArrowIcon direction="previous"/);
+  assert.match(hero, /LavellaArrowIcon direction="next"/);
   assert.doesNotMatch(hero, />\s*[<>]\s*</);
 });
 
 test("flechas Lavella usan una estructura de centrado estable", () => {
-  const css = readFileSync(
+  const homeCss = readFileSync(
     "components/themes/lavella/lavella-home.module.css",
     "utf8",
   );
-  assert.match(css, /\.heroArrow \{[\s\S]*display: inline-grid;[\s\S]*place-items: center;/);
-  assert.match(css, /\.heroArrowIcon \{[\s\S]*display: block;[\s\S]*width: 20px;[\s\S]*height: 20px;/);
-  assert.doesNotMatch(css, /\.heroArrowIcon[\s\S]{0,180}translate[XY]\(/);
+  const arrowCss = readFileSync(
+    "components/themes/lavella/lavella-arrow-icon.module.css",
+    "utf8",
+  );
+  assert.match(homeCss, /\.heroArrow \{[\s\S]*display: inline-grid;[\s\S]*place-items: center;/);
+  assert.match(arrowCss, /\.container \{[\s\S]*display: inline-grid;[\s\S]*place-items: center;[\s\S]*padding: 0;[\s\S]*line-height: 0;/);
+  assert.match(arrowCss, /\.container svg \{[\s\S]*display: block;[\s\S]*width: 18px;[\s\S]*height: 18px;/);
+  assert.doesNotMatch(arrowCss, /translate[XY]\(/);
 });
 
 test("autoplay Lavella usa 5000, transición 650 y reanudación 7000", () => {
@@ -1398,14 +1403,18 @@ test("flechas de carruseles y lupa conservan centrado y submit", () => {
     "components/themes/lavella/lavella-home.module.css",
     "utf8",
   );
+  const arrowCss = readFileSync(
+    "components/themes/lavella/lavella-arrow-icon.module.css",
+    "utf8",
+  );
   assert.equal((home.match(/className=\{styles\.carouselArrowButton\}/g) ?? []).length, 4);
   assert.match(
     css,
     /\.carouselArrowButton[\s\S]*display: inline-grid;[\s\S]*place-items: center;[\s\S]*padding: 0;[\s\S]*line-height: 0;/,
   );
   assert.match(
-    css,
-    /\.carouselArrowButton > svg \{[\s\S]*display: block;[\s\S]*width: 18px;[\s\S]*height: 18px;/,
+    arrowCss,
+    /\.container svg \{[\s\S]*display: block;[\s\S]*width: 18px;[\s\S]*height: 18px;/,
   );
   assert.match(search, /className=\{styles\.searchSubmit\} type="submit"/);
   assert.match(

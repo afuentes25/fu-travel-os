@@ -179,17 +179,6 @@
   backdrop-filter: blur(5px);
 }
 
-.heroArrowIcon {
-  display: block;
-  width: 20px;
-  height: 20px;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1.8;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-
 .heroCounter {
   min-width: 58px;
   color: var(--lavella-text-on-dark);
@@ -320,11 +309,6 @@
   font-size: 20px;
 }
 
-.heroCategoryMore .heroArrowIcon {
-  width: 20px;
-  height: 20px;
-}
-
 .popular {
   padding: 100px 0 80px;
   overflow: hidden;
@@ -404,12 +388,6 @@
   place-items: center;
   padding: 0;
   line-height: 0;
-}
-
-.carouselArrowButton > svg {
-  display: block;
-  width: 18px;
-  height: 18px;
 }
 
 .popularRail {
@@ -615,6 +593,8 @@
 }
 
 .tourClassicCard {
+  --lavella-text-on-dark: #fff;
+  --lavella-muted-on-dark: rgba(255, 255, 255, .76);
   min-width: 0;
   height: 338px;
   overflow: hidden;
@@ -629,7 +609,7 @@
   overflow: hidden;
   border: 0;
   background: #111;
-  color: var(--lavella-on-surface);
+  color: var(--lavella-text-on-dark);
   text-align: left;
 }
 
@@ -646,7 +626,12 @@
 .tourClassicShade {
   position: absolute;
   inset: 0;
-  background: linear-gradient(0deg, rgba(0, 0, 0, .9), rgba(0, 0, 0, .08) 72%);
+  background: linear-gradient(
+    0deg,
+    rgba(0, 0, 0, .92) 0%,
+    rgba(0, 0, 0, .55) 42%,
+    rgba(0, 0, 0, .08) 78%
+  );
 }
 
 .tourClassicCard > button > em {
@@ -678,7 +663,7 @@
 
 .tourClassicContent h3 {
   margin: 8px 0 14px;
-  color: #fff;
+  color: var(--lavella-text-on-dark);
   font-size: 23px;
   line-height: 1.08;
 }
@@ -689,7 +674,7 @@
   justify-content: space-between;
   gap: 8px 12px;
   margin: 0 0 12px;
-  color: var(--lavella-on-muted);
+  color: var(--lavella-muted-on-dark);
   font-size: 12px;
 }
 
@@ -706,7 +691,7 @@
 }
 
 .tourClassicContent > b {
-  color: #fff;
+  color: var(--lavella-text-on-dark);
   font-size: 16px;
 }
 
