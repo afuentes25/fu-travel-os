@@ -18,8 +18,6 @@ import {
 import {
   formatMoney,
   isDepartureBookable,
-  priceLinePending,
-  resolveDepositAmount,
 } from "@/lib/pricing";
 import {
   resolveRoomCapacityPolicy,
@@ -38,6 +36,10 @@ import type {
   TravelProduct,
 } from "@/types";
 import styles from "./lavella-booking.module.css";
+import {
+  createLavellaCartTransition,
+  getLavellaBookingQuote,
+} from "./lavella-booking-cart";
 import {
   lavellaDate,
   lavellaDeparture,
@@ -86,6 +88,7 @@ export function LavellaBookingPanel({
   const [paymentAllocation, setPaymentAllocation] = useState<PaymentAllocation>();
   const triggerRef = useRef<HTMLButtonElement>(null);
   const sheetRef = useRef<HTMLDivElement>(null);
+  const reservingRef = useRef(false);
   const hotel = trip.accommodationMode === "hotel_occupancy";
   const occupancy = explorerAdultRateOccupancy(trip, adults);
   const adultRate = trip.pricingOptions.find((rate) => rate.occupancy === occupancy);
@@ -130,30 +133,24 @@ export function LavellaBookingPanel({
           travelerDrafts: createTravelerDrafts(0, minors, `${trip.id}-${departure.id}`),
         }
       : undefined;
-  let adultPrice: ReturnType<typeof priceLinePending> | undefined;
-  let minorPrice: ReturnType<typeof priceLinePending> | undefined;
+  let quote: ReturnType<typeof getLavellaBookingQuote> | undefined;
   try {
-    if (adultLine) adultPrice = priceLinePending(adultLine);
-    if (minorLine) minorPrice = priceLinePending(minorLine);
+    const lines = [adultLine, minorLine].filter(Boolean) as CartLine[];
+    if (adultLine)
+      quote = getLavellaBookingQuote({
+        trip,
+        departureId: departure.id,
+        lines,
+      });
   } catch {
-    adultPrice = undefined;
-    minorPrice = undefined;
+    quote = undefined;
   }
-  const subtotal = (adultPrice?.subtotal ?? 0) + (minorPrice?.subtotal ?? 0);
-  const taxes = (adultPrice?.taxes ?? 0) + (minorPrice?.taxes ?? 0);
-  const charges =
-    (adultPrice?.extrasTotal ?? 0) + (minorPrice?.extrasTotal ?? 0);
-  const total = (adultPrice?.total ?? 0) + (minorPrice?.total ?? 0);
+  const subtotal = quote?.subtotal ?? 0;
+  const taxes = quote?.taxes ?? 0;
+  const charges = quote?.charges ?? 0;
+  const total = quote?.total ?? 0;
   const starting = lavellaStartingPrice(trip, departure);
-  const deposit = resolveDepositAmount({
-    policy:
-      departure.depositPolicy ??
-      departure.pricing?.pricingOverrides?.depositPolicy ??
-      trip.depositPolicy,
-    total,
-    fallbackPerTraveler: trip.basePrice.depositAmount ?? starting.amount,
-    travelers: adults + minors,
-  });
+  const deposit = quote?.deposit ?? 0;
   const fxPolicy = agency.settings.exchangeRatePolicy;
   const foreignPricing = trip.foreignCurrencyPricing;
   const fxEnabled = Boolean(
@@ -162,9 +159,9 @@ export function LavellaBookingPanel({
       foreignPricing.pricingCurrency !== foreignPricing.checkoutChargeCurrency,
   );
   const canReserve = Boolean(
-    adultPrice &&
+    quote &&
       (!hotel || (occupancy && adults <= 4)) &&
-      (!minors || minorPrice) &&
+      (!minors || minorLine) &&
       capacityValid &&
       isDepartureBookable(departure) &&
       (!fxEnabled || (fxSnapshot && paymentAllocation)),
@@ -260,59 +257,86 @@ export function LavellaBookingPanel({
     };
   }, [sheet]);
   const reserve = () => {
-    if (!canReserve || !adultLine) return;
-    const existing = JSON.parse(
-      localStorage.getItem("fu-travel-demo-cart") ?? "[]",
-    ) as CartLine[];
-    if (existing.length && existing[0].agencyId !== agency.id) {
-      window.alert("El carrito pertenece a otra agencia.");
-      return;
-    }
-    const previousLines = existing.filter(
-      (line) => line.travelId === trip.id && line.departureId === departure.id,
-    );
-    const reconciled = reconcileTravelerDrafts({
-      drafts: draftsFromLines(previousLines),
-      adults,
-      minors,
-      scope: `${trip.id}-${departure.id}`,
-      confirmDiscard: true,
-    });
-    const nextLines = [adultLine, minorLine]
-      .filter(Boolean)
-      .map((line) => ({
-        ...line!,
-        ...(fxSnapshot ? { fxSnapshot } : {}),
-        ...(paymentAllocation ? { paymentAllocation } : {}),
-        travelerDataStatus: previousLines[0]?.travelerDataStatus ?? "pending",
-        travelerDrafts: reconciled.drafts.filter(
-          (draft) =>
-            draft.category ===
-            (line!.id.endsWith("-menores") ? "minor" : "adult"),
-        ),
-      })) as CartLine[];
-    localStorage.setItem(
-      "fu-travel-demo-cart",
-      JSON.stringify([
-        ...existing.filter((line) => !line.id.startsWith(`line-${trip.id}-`)),
-        ...nextLines,
-      ]),
-    );
-    localStorage.setItem(
-      "fu-travel-booking-draft",
-      JSON.stringify({
-        travelId: trip.id,
+    if (!canReserve || !adultLine || reservingRef.current) return;
+    reservingRef.current = true;
+    try {
+      const existing = JSON.parse(
+        localStorage.getItem("fu-travel-demo-cart") ?? "[]",
+      ) as CartLine[];
+      const previousLines = existing.filter(
+        (line) =>
+          line.travelId === trip.id && line.departureId === departure.id,
+      );
+      const previousDrafts = draftsFromLines(previousLines);
+      let reconciled = reconcileTravelerDrafts({
+        drafts: previousDrafts,
+        adults,
+        minors,
+        scope: `${trip.id}-${departure.id}`,
+      });
+      if (
+        reconciled.requiresConfirmation &&
+        !window.confirm(
+          "Reducir viajeros descartará datos ya capturados. ¿Deseas continuar?",
+        )
+      ) {
+        reservingRef.current = false;
+        return;
+      }
+      if (reconciled.requiresConfirmation)
+        reconciled = reconcileTravelerDrafts({
+          drafts: previousDrafts,
+          adults,
+          minors,
+          scope: `${trip.id}-${departure.id}`,
+          confirmDiscard: true,
+        });
+      const nextLines = [adultLine, minorLine]
+        .filter(Boolean)
+        .map((line) => ({
+          ...line!,
+          ...(fxSnapshot ? { fxSnapshot } : {}),
+          ...(paymentAllocation ? { paymentAllocation } : {}),
+          travelerDataStatus:
+            previousLines[0]?.travelerDataStatus ?? "pending",
+          travelerDrafts: reconciled.drafts.filter(
+            (draft) =>
+              draft.category ===
+              (line!.id.endsWith("-menores") ? "minor" : "adult"),
+          ),
+        })) as CartLine[];
+      const transition = createLavellaCartTransition({
+        agency,
+        trip,
         departureId: departure.id,
         adults,
-        children: minors,
-        ...(hotel && occupancy ? { occupancy } : {}),
-        total,
-        deposit,
-        ...(fxSnapshot ? { fxSnapshot } : {}),
-        ...(paymentAllocation ? { paymentAllocation } : {}),
-      }),
-    );
-    window.location.assign(`/carrito${window.location.search}`);
+        minors,
+        occupancy,
+        incomingLines: nextLines,
+        existingCart: existing,
+        search: window.location.search,
+      });
+      localStorage.setItem(
+        "fu-travel-demo-cart",
+        JSON.stringify(transition.cart),
+      );
+      localStorage.setItem(
+        "fu-travel-booking-draft",
+        JSON.stringify({
+          ...transition.draft,
+          ...(fxSnapshot ? { fxSnapshot } : {}),
+          ...(paymentAllocation ? { paymentAllocation } : {}),
+        }),
+      );
+      window.location.assign(transition.href);
+    } catch (error) {
+      reservingRef.current = false;
+      window.alert(
+        error instanceof Error
+          ? error.message
+          : "No fue posible agregar el viaje al carrito.",
+      );
+    }
   };
   const message = [
     `Hola ${agency.name}, estoy interesado en “${trip.title}”.`,

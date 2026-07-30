@@ -44,6 +44,11 @@ import {
 } from "../lib/pricing/index";
 import { lavellaDeparture } from "../components/themes/lavella/lavella-utils";
 import {
+  createLavellaCartTransition,
+  getLavellaBookingQuote,
+  lavellaCartHref,
+} from "../components/themes/lavella/lavella-booking-cart";
+import {
   clearLavellaCatalogFilters,
   countLavellaActiveFilters,
 } from "../components/themes/lavella/lavella-catalog-filters";
@@ -1115,11 +1120,10 @@ test("reserva móvil Lavella incluye barra y bottom sheet propios", () => {
 });
 
 test("detalle Lavella conserva tenant y tema al iniciar carrito", () => {
-  const booking = readFileSync(
-    "components/themes/lavella/lavella-booking-panel.tsx",
-    "utf8",
+  assert.equal(
+    lavellaCartHref("?tenant=furiver&theme=explorer", "furiver"),
+    "/carrito?tenant=furiver&theme=lavella",
   );
-  assert.match(booking, /window\.location\.assign\(`\/carrito\$\{window\.location\.search\}`\)/);
 });
 
 test("CSS de detalle Lavella permanece aislado de home y otros temas", () => {
@@ -1685,9 +1689,9 @@ test("hero de detalle separa contenido editorial y oferta comercial", () => {
   );
   assert.match(
     css,
-    /\.tripHeroRow[\s\S]*grid-template-columns: minmax\(0, 1fr\) minmax\(250px, 340px\)/,
+    /\.tripHeroRow[\s\S]*grid-template-columns: minmax\(0, 1fr\) minmax\(300px, 370px\)/,
   );
-  assert.match(css, /\.tripHeroOffer[\s\S]*gap: 16px/);
+  assert.match(css, /\.tripHeroOffer[\s\S]*gap: 14px/);
 });
 
 test("adultos y menores comparten fila en el panel Lavella", () => {
@@ -2199,14 +2203,198 @@ test("checkout valida defensivamente snapshot y asignación", async () => {
 });
 
 test("carrito conserva theme y tenant al reservar Lavella", () => {
+  assert.equal(
+    lavellaCartHref("?tenant=furiver", "furiver"),
+    "/carrito?tenant=furiver&theme=lavella",
+  );
+});
+
+test("panel Lavella prepara una sola reserva consistente para el carrito", () => {
+  const agency = agencies.find((item) => item.slug === "furiver")!;
+  const trip = travels.find(
+    (item) =>
+      item.agencyId === agency.id &&
+      item.slug === "barrancas-del-cobre",
+  )!;
+  const departure = lavellaDeparture(trip);
+  const adultRate = trip.pricingOptions.find(
+    (item) => item.occupancy === "double",
+  )!;
+  const minorRate = trip.pricingOptions.find(
+    (item) => item.occupancy === "child",
+  )!;
+  const lines: CartLine[] = [
+    {
+      id: `line-${trip.id}-adultos`,
+      agencyId: agency.id,
+      travelId: trip.id,
+      departureId: departure.id,
+      boardingOptionId: null,
+      pricingOptionId: adultRate.id,
+      travelers: 2,
+      extraIds: [],
+    },
+    {
+      id: `line-${trip.id}-menores`,
+      agencyId: agency.id,
+      travelId: trip.id,
+      departureId: departure.id,
+      boardingOptionId: null,
+      pricingOptionId: minorRate.id,
+      travelers: 1,
+      extraIds: [],
+    },
+  ];
+  const quote = getLavellaBookingQuote({
+    trip,
+    departureId: departure.id,
+    lines,
+  });
+  const first = createLavellaCartTransition({
+    agency,
+    trip,
+    departureId: departure.id,
+    adults: 2,
+    minors: 1,
+    occupancy: "double",
+    incomingLines: lines,
+    existingCart: [],
+    search: "?tenant=furiver&theme=lavella",
+  });
+  const second = createLavellaCartTransition({
+    agency,
+    trip,
+    departureId: departure.id,
+    adults: 2,
+    minors: 1,
+    occupancy: "double",
+    incomingLines: lines,
+    existingCart: first.cart,
+    search: "?tenant=furiver&theme=lavella",
+  });
+
+  assert.equal(first.cart.length, 2);
+  assert.equal(second.cart.length, 2);
+  assert.equal(first.draft.travelId, trip.id);
+  assert.equal(first.draft.travelCode, trip.code);
+  assert.equal(first.draft.departureId, departure.id);
+  assert.equal(first.draft.adults, 2);
+  assert.equal(first.draft.children, 1);
+  assert.equal(first.draft.rooms, 1);
+  assert.equal(first.draft.occupancy, "double");
+  assert.equal(first.draft.boardingOptionId, null);
+  assert.deepEqual(first.draft.extraIds, []);
+  assert.equal(first.draft.total, quote.total);
+  assert.equal(first.draft.deposit, quote.deposit);
+  assert.equal(first.draft.currency, trip.basePrice.currency);
+  assert.equal(first.draft.tenant, agency.slug);
+  assert.equal(first.draft.theme, "lavella");
+  assert.equal(first.href, "/carrito?tenant=furiver&theme=lavella");
+});
+
+test("panel Lavella bloquea mezcla de monedas antes de escribir el carrito", () => {
+  const agency = agencies.find((item) => item.slug === "crisenix")!;
+  const trip = travels.find(
+    (item) =>
+      item.agencyId === agency.id &&
+      item.basePrice.currency === "USD" &&
+      item.departures.some((departure) =>
+        departure.boardingOptions.some(
+          (option) => !["sold_out", "disabled"].includes(option.status),
+        ),
+      ),
+  )!;
+  const departure = lavellaDeparture(trip);
+  const rate =
+    trip.pricingOptions.find((item) => item.occupancy === "double") ??
+    trip.pricingOptions[0];
+  const existingTrip = travels.find(
+    (item) =>
+      item.agencyId === agency.id &&
+      item.basePrice.currency === "MXN",
+  )!;
+  const existingDeparture = lavellaDeparture(existingTrip);
+  const existingRate = existingTrip.pricingOptions[0];
+  const incoming: CartLine = {
+    id: `line-${trip.id}-adultos`,
+    agencyId: agency.id,
+    travelId: trip.id,
+    departureId: departure.id,
+    boardingOptionId: null,
+    pricingOptionId: rate.id,
+    travelers: 2,
+    extraIds: [],
+  };
+  const existing: CartLine = {
+    id: `line-${existingTrip.id}-adultos`,
+    agencyId: agency.id,
+    travelId: existingTrip.id,
+    departureId: existingDeparture.id,
+    boardingOptionId: null,
+    pricingOptionId: existingRate.id,
+    travelers: 2,
+    extraIds: [],
+  };
+
+  assert.throws(
+    () =>
+      createLavellaCartTransition({
+        agency,
+        trip,
+        departureId: departure.id,
+        adults: 2,
+        minors: 0,
+        occupancy: rate.occupancy,
+        incomingLines: [incoming],
+        existingCart: [existing],
+        search: "?tenant=crisenix&theme=lavella",
+      }),
+    /mezclar monedas/,
+  );
+});
+
+test("panel Lavella rechaza salida sin abordaje operativo", () => {
+  const agency = agencies.find((item) => item.slug === "furiver")!;
+  const source = travels.find((item) => item.agencyId === agency.id)!;
+  const trip = structuredClone(source);
+  const departure = lavellaDeparture(trip);
+  departure.boardingOptions = [];
+  const rate = trip.pricingOptions[0];
+  const line: CartLine = {
+    id: `line-${trip.id}-adultos`,
+    agencyId: agency.id,
+    travelId: trip.id,
+    departureId: departure.id,
+    boardingOptionId: null,
+    pricingOptionId: rate.id,
+    travelers: 1,
+    extraIds: [],
+  };
+
+  assert.throws(
+    () =>
+      createLavellaCartTransition({
+        agency,
+        trip,
+        departureId: departure.id,
+        adults: 1,
+        minors: 0,
+        occupancy: rate.occupancy,
+        incomingLines: [line],
+        existingCart: [],
+        search: "?tenant=furiver&theme=lavella",
+      }),
+    /No hay puntos de abordaje/,
+  );
+});
+
+test("panel Lavella impide doble activación del agregado", () => {
   const booking = readFileSync(
     "components/themes/lavella/lavella-booking-panel.tsx",
     "utf8",
   );
-  assert.match(
-    booking,
-    /window\.location\.assign\(`\/carrito\$\{window\.location\.search\}`\)/,
-  );
+  assert.match(booking, /reservingRef\.current/);
+  assert.match(booking, /if \(!canReserve \|\| !adultLine \|\| reservingRef\.current\) return/);
 });
 
 test("proveedor determinista no se presenta como Banxico", async () => {
