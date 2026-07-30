@@ -1,6 +1,6 @@
 "use client";
 import "@/app/themes/lavella-commerce.css";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { agencies, departurePoints, destinations, travels } from "@/data/demo";
 import { filterCatalog } from "@/lib/catalog";
 import {
@@ -30,6 +30,10 @@ import {
   validateFxGroupConsistency,
   validateCartRoomCapacity,
 } from "@/lib/pricing";
+import {
+  finalizeReservation,
+  type ReservationSnapshot,
+} from "@/lib/reservations";
 import { resolveTenant, resolveTheme } from "@/lib/tenancy";
 import {
   applyTravelerDataToLines,
@@ -1432,7 +1436,11 @@ function Checkout({
     initialDepositPercent,
   );
   const [step, setStep] = useState(1);
-  const [folio, setFolio] = useState("");
+  const [reservation, setReservation] = useState<ReservationSnapshot>();
+  const finalizingRef = useRef(false);
+  const reservationSubmissionKeyRef = useRef(
+    `checkout-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+  );
   const [error, setError] = useState("");
   const [travelerStatus, setTravelerStatus] = useState<TravelerDataStatus>(
     lines[0]?.travelerDataStatus ?? "complete",
@@ -1805,11 +1813,75 @@ function Checkout({
     }
     setError("");
     if (step === 5) {
-      setFolio(
-        `FTO-${new Date().getFullYear()}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`,
-      );
-      setStep(6);
-      onDone();
+      if (finalizingRef.current) return;
+      finalizingRef.current = true;
+      try {
+        const primary = priced[0];
+        if (!primary)
+          throw new Error("No hay una reserva válida para confirmar.");
+        const depositSnapshot =
+          selectedDepositSnapshot ??
+          (() => {
+            const depositAmount =
+              paymentKind === "full" ? total : contractualDeposit;
+            return {
+              depositPercent: total
+                ? Math.round((depositAmount / total) * 10_000) / 100
+                : 100,
+              depositAmount,
+              remainingAmount:
+                Math.round((total - depositAmount) * 100) / 100,
+            };
+          })();
+        const result = finalizeReservation({
+          storage: window.localStorage,
+          input: {
+            idempotencyKey: reservationSubmissionKeyRef.current,
+            agency,
+            theme,
+            tour: {
+              id: primary.travel.id,
+              code: primary.travel.code,
+              title: primary.travel.title,
+            },
+            departure: {
+              id: primary.departure.id,
+              startDate: primary.departure.startDate,
+            },
+            boarding: primary.boarding,
+            travelers: {
+              status: travelerStatus,
+              adults: adultCount,
+              minors: minorCount,
+              drafts: travelerDrafts,
+            },
+            currency: primary.travel.basePrice.currency,
+            ...(checkoutFxSnapshot ||
+            checkoutPaymentAllocation ||
+            checkoutFxConsent
+              ? {
+                  fx: {
+                    snapshot: checkoutFxSnapshot,
+                    allocation: checkoutPaymentAllocation,
+                    consent: checkoutFxConsent,
+                  },
+                }
+              : {}),
+            total,
+            ...depositSnapshot,
+          },
+        });
+        setReservation(result.reservation);
+        setStep(6);
+        onDone();
+      } catch (reservationError) {
+        finalizingRef.current = false;
+        setError(
+          reservationError instanceof Error
+            ? reservationError.message
+            : "No fue posible crear la reservación.",
+        );
+      }
     } else setStep((value) => value + 1);
   };
   const updateTravelers = (
@@ -1820,7 +1892,19 @@ function Checkout({
     setTravelerDrafts(drafts);
     applyTravelerDataToLines(lines, status, drafts).forEach(onUpdate);
   };
-  const firstPriced = priced[0];
+  const reservationWhatsappHref = reservation
+    ? `https://wa.me/${reservation.agency.whatsapp}?text=${encodeURIComponent(
+        [
+          `Hola ${reservation.agency.name}, mi reservación es ${reservation.reservationCode}.`,
+          `Viaje: ${reservation.tour.title}.`,
+          `Salida: ${new Date(reservation.departure.startDate).toLocaleDateString("es-MX")}.`,
+          `Punto de abordaje: ${reservation.boarding.pointName}.`,
+          `Total: ${formatMoney(reservation.total, reservation.currency)}.`,
+          `Anticipo: ${formatMoney(reservation.depositAmount, reservation.currency)}.`,
+          `Saldo: ${formatMoney(reservation.remainingAmount, reservation.currency)}.`,
+        ].join("\n"),
+      )}`
+    : "#";
   return (
     <main className={`checkout ${theme === "lavella" ? "lavella-checkout" : ""}`}>
       <header>
@@ -2161,22 +2245,20 @@ function Checkout({
             </label>
           </>
         )}
-        {step === 6 && firstPriced && (
+        {step === 6 && reservation && (
           <div className="confirmation">
             <span className="success">
               <Icon name="check" />
             </span>
             <div className="eyebrow">FOLIO DEMO</div>
-            <h2>{folio}</h2>
+            <h2>{reservation.reservationCode}</h2>
             <p>Tu solicitud quedó confirmada en modo demostración.</p>
             <div>
               <span>
                 Fecha{" "}
                 <b>
                   {new Date(
-                    firstPriced.travel.departures.find(
-                      (item) => item.id === firstPriced.departureId,
-                    )!.startDate,
+                    reservation.departure.startDate,
                   ).toLocaleDateString("es-MX", {
                     day: "numeric",
                     month: "long",
@@ -2185,71 +2267,61 @@ function Checkout({
                 </b>
               </span>
               <span>
-                Punto de abordaje <b>{firstPriced.boarding.pointName}</b>
+                Punto de abordaje <b>{reservation.boarding.pointName}</b>
               </span>
-              <span>
-                Hora de reunión <b>{firstPriced.boarding.meetingTime}</b>
-              </span>
+              {reservation.boarding.meetingTime && (
+                <span>
+                  Hora de reunión <b>{reservation.boarding.meetingTime}</b>
+                </span>
+              )}
               <span>
                 Dirección o referencia{" "}
                 <b>
-                  {firstPriced.boarding.reference ??
-                    firstPriced.boarding.address}
+                  {reservation.boarding.reference ??
+                    reservation.boarding.address}
                 </b>
               </span>
-              {firstPriced.boarding.instructions && (
+              {reservation.boarding.instructions && (
                 <span>
-                  Instrucciones <b>{firstPriced.boarding.instructions}</b>
+                  Instrucciones <b>{reservation.boarding.instructions}</b>
                 </span>
               )}
               <span>
                 Total{" "}
                 <b>
-                  {formatMoney(total, firstPriced.travel.basePrice.currency)}
+                  {formatMoney(reservation.total, reservation.currency)}
                 </b>
               </span>
-              {!checkoutPaymentAllocation && (
-                <>
-                  <span>
-                    {theme === "lavella" &&
-                    selectedDepositSnapshot?.depositPercent === 100
-                      ? "Pago total"
-                      : "Anticipo"}{" "}
-                    <b>
-                      {formatMoney(
-                        theme === "lavella"
-                          ? selectedDepositSnapshot!.depositAmount
-                          : priced.reduce(
-                              (sum, item) => sum + item.deposit,
-                              0,
-                            ),
-                        firstPriced.travel.basePrice.currency,
-                      )}
-                    </b>
-                  </span>
-                  {theme === "lavella" && selectedDepositSnapshot && (
-                    <span>
-                      Saldo restante{" "}
-                      <b>
-                        {formatMoney(
-                          selectedDepositSnapshot.remainingAmount,
-                          firstPriced.travel.basePrice.currency,
-                        )}
-                      </b>
-                    </span>
+              <span>
+                {reservation.depositPercent === 100
+                  ? "Pago total"
+                  : `Anticipo (${reservation.depositPercent}%)`}{" "}
+                <b>
+                  {formatMoney(
+                    reservation.depositAmount,
+                    reservation.currency,
                   )}
-                </>
-              )}
-              {checkoutFxSnapshot && checkoutPaymentAllocation && (
+                </b>
+              </span>
+              <span>
+                Saldo restante{" "}
+                <b>
+                  {formatMoney(
+                    reservation.remainingAmount,
+                    reservation.currency,
+                  )}
+                </b>
+              </span>
+              {reservation.fx?.snapshot && reservation.fx.allocation && (
                 <>
                   <span>
                     {fxContractualPaymentLabel(
-                      checkoutPaymentAllocation.kind,
+                      reservation.fx.allocation.kind,
                     )}{" "}
                     <b>
                       {formatMinorUnits(
-                        checkoutPaymentAllocation.contractualPaymentMinor,
-                        checkoutPaymentAllocation.contractCurrency,
+                        reservation.fx.allocation.contractualPaymentMinor,
+                        reservation.fx.allocation.contractCurrency,
                       )}
                     </b>
                   </span>
@@ -2257,32 +2329,32 @@ function Checkout({
                     Cargo demo en México{" "}
                     <b>
                       {formatMinorUnits(
-                        checkoutPaymentAllocation.chargeNowMinor,
-                        checkoutPaymentAllocation.chargeCurrency,
+                        reservation.fx.allocation.chargeNowMinor,
+                        reservation.fx.allocation.chargeCurrency,
                       )}
                     </b>
                   </span>
                   <span>
                     Tasa demo aplicada{" "}
                     <b>
-                      {formatAppliedRate(checkoutFxSnapshot)} MXN/USD
+                      {formatAppliedRate(reservation.fx.snapshot)} MXN/USD
                     </b>
                   </span>
                   <span>
                     Saldo contractual{" "}
                     <b>
                       {formatMinorUnits(
-                        checkoutPaymentAllocation.remainingContractMinor,
-                        checkoutPaymentAllocation.contractCurrency,
+                        reservation.fx.allocation.remainingContractMinor,
+                        reservation.fx.allocation.contractCurrency,
                       )}
                     </b>
                   </span>
-                  {checkoutFxConsent && (
+                  {reservation.fx.consent && (
                     <span>
                       Conversión aceptada{" "}
                       <b>
                         {new Date(
-                          checkoutFxConsent.acceptedAt,
+                          reservation.fx.consent.acceptedAt,
                         ).toLocaleString("es-MX")}
                       </b>
                     </span>
@@ -2290,19 +2362,18 @@ function Checkout({
                 </>
               )}
             </div>
-            {(theme === "explorer" || theme === "lavella") &&
-              (travelerStatus === "pending" ? (
+            {reservation.travelers.status === "pending" ? (
                 <div className="confirmation-travelers is-pending">
                   <h3>Datos de viajeros pendientes de completar</h3>
                   <p>
-                    Un agente de {agency.name} podría ponerse en contacto contigo
-                    para solicitar esta información.
+                    Un agente de {reservation.agency.name} podría ponerse en
+                    contacto contigo para solicitar esta información.
                   </p>
                 </div>
               ) : (
                 <div className="confirmation-travelers">
                   <h3>Viajeros</h3>
-                  {travelerDrafts.map((draft) => (
+                  {reservation.travelers.drafts.map((draft) => (
                     <p key={draft.id}>
                       <span>
                         {draft.category === "adult" ? "Adulto" : "Menor"}{" "}
@@ -2312,30 +2383,10 @@ function Checkout({
                     </p>
                   ))}
                 </div>
-              ))}
+              )}
             <a
               className="wa"
-              href={whatsappUrl(
-                agency,
-                firstPriced,
-                folio,
-                theme === "explorer" || theme === "lavella"
-                  ? {
-                      status: travelerStatus,
-                      drafts: travelerDrafts,
-                      adults: adultCount,
-                      minors: minorCount,
-                      total,
-                      deposit:
-                        theme === "lavella"
-                          ? selectedDepositSnapshot!.depositAmount
-                          : priced.reduce(
-                              (sum, item) => sum + item.deposit,
-                              0,
-                            ),
-                    }
-                  : undefined,
-              )}
+              href={reservationWhatsappHref}
               target="_blank"
               rel="noreferrer"
             >

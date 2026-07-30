@@ -47,6 +47,11 @@ import {
   validateDemoFxOrderShape,
   validateCartRoomCapacity,
 } from "../lib/pricing/index";
+import {
+  finalizeReservation,
+  readReservations,
+  type ReservationSnapshotInput,
+} from "../lib/reservations/index";
 import { lavellaDeparture } from "../components/themes/lavella/lavella-utils";
 import {
   createLavellaCartTransition,
@@ -120,6 +125,119 @@ import type {
 } from "../types/index";
 
 const configuredTrip = () => travels.find((trip) => trip.pageConfiguration)!;
+
+const reservationStorage = () => {
+  let value: string | null = null;
+  return {
+    getItem: () => value,
+    setItem: (_key: string, next: string) => {
+      value = next;
+    },
+  };
+};
+
+const reservationInput = (
+  idempotencyKey = "checkout-reservation-test",
+): ReservationSnapshotInput => {
+  const agency = structuredClone(agencies[0]);
+  const tour = travels.find((trip) => trip.agencyId === agency.id)!;
+  const departure = tour.departures[0];
+  return {
+    idempotencyKey,
+    agency,
+    theme: "lavella",
+    tour: { id: tour.id, code: tour.code, title: tour.title },
+    departure: { id: departure.id, startDate: departure.startDate },
+    boarding: {
+      boardingOptionId: departure.boardingOptions[0].id,
+      boardingPointId:
+        departure.boardingOptions[0].agencyDeparturePointId,
+      pointName: "Punto Centro",
+      city: "Ciudad de México",
+      meetingTime: "05:20",
+      surchargeAmount: 0,
+      currency: tour.basePrice.currency,
+    },
+    travelers: {
+      status: "pending",
+      adults: 2,
+      minors: 1,
+      drafts: [],
+    },
+    currency: tour.basePrice.currency,
+    total: 29_980,
+    depositPercent: 50,
+    depositAmount: 14_990,
+    remainingAmount: 14_990,
+  };
+};
+
+test("folio de reservación incluye la clave actual del tour", () => {
+  const storage = reservationStorage();
+  const input = reservationInput();
+  const { reservation } = finalizeReservation({
+    storage,
+    input,
+    now: () => "2026-07-29T12:00:00.000Z",
+    suffix: () => "A1B2C3",
+  });
+
+  assert.equal(
+    reservation.reservationCode,
+    `${input.tour.code}-260729-A1B2C3`,
+  );
+});
+
+test("snapshot de reservación conserva anticipo y saldo", () => {
+  const storage = reservationStorage();
+  const { reservation } = finalizeReservation({
+    storage,
+    input: reservationInput(),
+    suffix: () => "D4E5F6",
+  });
+
+  assert.equal(reservation.depositPercent, 50);
+  assert.equal(reservation.depositAmount, 14_990);
+  assert.equal(reservation.remainingAmount, 14_990);
+  assert.equal(Object.isFrozen(reservation), true);
+  assert.equal(Object.isFrozen(reservation.travelers), true);
+});
+
+test("doble envío de checkout no duplica la reservación", () => {
+  const storage = reservationStorage();
+  const input = reservationInput();
+  const first = finalizeReservation({
+    storage,
+    input,
+    suffix: () => "G7H8I9",
+  });
+  const second = finalizeReservation({
+    storage,
+    input,
+    suffix: () => "J1K2L3",
+  });
+
+  assert.equal(first.created, true);
+  assert.equal(second.created, false);
+  assert.equal(second.reservation.reservationCode, first.reservation.reservationCode);
+  assert.equal(readReservations(storage).length, 1);
+});
+
+test("cambios posteriores de configuración no alteran la reservación", () => {
+  const storage = reservationStorage();
+  const input = reservationInput();
+  finalizeReservation({
+    storage,
+    input,
+    suffix: () => "M4N5P6",
+  });
+  input.agency.settings.depositOptionsPercent = [100];
+
+  const [stored] = readReservations(storage);
+  assert.equal(stored.depositPercent, 50);
+  assert.equal(stored.depositAmount, 14_990);
+  assert.equal(stored.remainingAmount, 14_990);
+});
 
 test("opciones de anticipo validan límites, enteros, orden y duplicados", () => {
   assert.equal(isValidDepositOptionsPercent([20, 50, 100]), true);
