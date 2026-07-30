@@ -417,6 +417,15 @@
   border-bottom: 0;
 }
 
+.sections > .informativeSection {
+  padding-bottom: 48px;
+  margin-bottom: 48px;
+}
+
+.informativeSection h2 {
+  margin-bottom: 20px;
+}
+
 .sections > section > small,
 .related header small {
   color: var(--lavella-orange);
@@ -453,12 +462,12 @@
 .summaryFacts {
   display: grid;
   grid-template-columns: 1fr 1.5fr 1fr;
-  margin-top: 32px;
+  margin-top: 24px;
   border-block: 1px solid var(--lavella-line);
 }
 
 .summaryFacts span {
-  padding: 20px 16px;
+  padding: 16px;
   border-right: 1px solid var(--lavella-line);
 }
 
@@ -543,7 +552,7 @@
 .itineraryTitle > div {
   display: flex;
   gap: 8px;
-  margin-bottom: 27px;
+  margin-bottom: 20px;
 }
 
 .itineraryTitle button {
@@ -562,8 +571,8 @@
 .itineraryTrigger {
   position: relative;
   width: 100%;
-  min-height: 90px;
-  padding: 0 72px 0 84px;
+  min-height: 76px;
+  padding: 0 62px 0 72px;
   display: flex;
   align-items: center;
   border: 0;
@@ -576,31 +585,23 @@
 .itineraryTrigger > b {
   position: absolute;
   left: 0;
-  width: 60px;
-  height: 60px;
+  width: 52px;
+  height: 52px;
   display: grid;
   place-items: center;
   overflow: hidden;
   border-radius: 50%;
   background: var(--lavella-navy);
   color: #fff;
-  font-size: 17px;
+  font-size: 12px;
+  text-transform: none;
 }
 
 .itineraryTrigger span {
-  display: grid;
-  grid-template-columns: 150px 1fr;
-  align-items: center;
   width: 100%;
   color: var(--lavella-ink);
-  font-size: 20px;
-  font-weight: 900;
-}
-
-.itineraryTrigger span small {
-  color: var(--lavella-ink);
   font-size: 18px;
-  letter-spacing: 0;
+  font-weight: 900;
 }
 
 .itineraryTrigger i {
@@ -623,7 +624,18 @@
 }
 
 .itineraryBody {
-  padding: 0 44px 28px 84px;
+  padding: 0 38px 20px 72px;
+}
+
+.itineraryBody p {
+  margin: 0 0 10px;
+}
+
+.itineraryContext {
+  padding-left: 12px;
+  border-left: 2px solid var(--lavella-orange);
+  color: var(--lavella-muted) !important;
+  font-size: 14px !important;
 }
 
 .itineraryImages {
@@ -687,9 +699,9 @@
 }
 
 .includes p {
-  min-height: 44px;
+  min-height: 38px;
   margin: 0;
-  padding: 10px 0;
+  padding: 7px 0;
   display: flex;
   gap: 12px;
   align-items: center;
@@ -833,7 +845,7 @@
 
 .points article,
 .information {
-  padding: 20px;
+  padding: 16px;
   border: 1px solid var(--lavella-line);
 }
 
@@ -843,7 +855,7 @@
 }
 
 .information + .information {
-  margin-top: 9px;
+  margin-top: 7px;
 }
 
 .information h3 {
@@ -859,7 +871,7 @@
 }
 
 .faq summary {
-  min-height: 66px;
+  min-height: 56px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1040,6 +1052,11 @@
     scroll-margin-top: 138px;
   }
 
+  .sections > .informativeSection {
+    padding-bottom: 40px;
+    margin-bottom: 40px;
+  }
+
   .sections h2 {
     font-size: 30px;
   }
@@ -1064,7 +1081,7 @@
   }
 
   .itineraryTrigger {
-    min-height: 84px;
+    min-height: 72px;
     padding: 0 52px 0 65px;
   }
 
@@ -1079,19 +1096,13 @@
     font-size: 16px;
   }
 
-  .itineraryTrigger span small {
-    display: block;
-    margin-bottom: 3px;
-    font-size: 11px;
-  }
-
   .itineraryTrigger i {
     width: 40px;
     height: 40px;
   }
 
   .itineraryBody {
-    padding: 0 0 25px 65px;
+    padding: 0 0 18px 65px;
   }
 
   .itineraryTitle {
@@ -1100,7 +1111,7 @@
   }
 
   .itineraryTitle > div {
-    margin: -15px 0 22px;
+    margin: -12px 0 17px;
   }
 
   .itineraryMeta {
