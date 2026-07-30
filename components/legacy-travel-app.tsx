@@ -76,6 +76,12 @@ function go(to: string) {
   window.history.pushState({}, "", to + window.location.search);
   window.dispatchEvent(new PopStateEvent("popstate"));
 }
+function createReservationSubmissionKey() {
+  const suffix =
+    globalThis.crypto?.randomUUID?.() ??
+    `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  return `checkout-${suffix}`;
+}
 function Icon({ name }: { name: string }) {
   const icons: Record<string, string> = {
     search: "⌕",
@@ -1396,6 +1402,212 @@ function TravelerStep({
   );
 }
 
+function LavellaReservationConfirmation({
+  reservation,
+  whatsappHref,
+  onContinue,
+}: {
+  reservation: ReservationSnapshot;
+  whatsappHref: string;
+  onContinue: () => void;
+}) {
+  const depositPaid = [
+    "partially_paid",
+    "confirmed",
+    "completed",
+  ].includes(reservation.status);
+  const travelerCount =
+    reservation.travelers.adults + reservation.travelers.minors;
+  return (
+    <section
+      className="confirmation lavella-confirmation"
+      aria-labelledby="lavella-confirmation-title"
+    >
+      <header className="lavella-confirmation-header">
+        <span className="success">
+          <Icon name="check" />
+        </span>
+        <div>
+          <div className="eyebrow">RESERVACIÓN CONFIRMADA</div>
+          <h2 id="lavella-confirmation-title">Reservación confirmada</h2>
+          <p>
+            Conserva tu folio para cualquier seguimiento con{" "}
+            {reservation.agency.name}.
+          </p>
+        </div>
+      </header>
+
+      <div className="lavella-confirmation-folio">
+        <small>FOLIO</small>
+        <strong>{reservation.reservationCode}</strong>
+        <span>
+          Creada el{" "}
+          {new Date(reservation.createdAt).toLocaleDateString("es-MX", {
+            day: "numeric",
+            month: "long",
+            year: "numeric",
+          })}
+        </span>
+      </div>
+
+      <div className="lavella-confirmation-grid">
+        <section>
+          <h3>Tu viaje</h3>
+          <dl>
+            <div>
+              <dt>Tour</dt>
+              <dd>{reservation.tour.title}</dd>
+            </div>
+            <div>
+              <dt>Clave</dt>
+              <dd>{reservation.tour.code}</dd>
+            </div>
+            <div>
+              <dt>Salida</dt>
+              <dd>
+                {new Date(
+                  reservation.departure.startDate,
+                ).toLocaleDateString("es-MX", {
+                  day: "numeric",
+                  month: "long",
+                  year: "numeric",
+                })}
+              </dd>
+            </div>
+          </dl>
+        </section>
+
+        <section>
+          <h3>Punto de abordaje</h3>
+          <dl>
+            <div>
+              <dt>Punto</dt>
+              <dd>{reservation.boarding.pointName}</dd>
+            </div>
+            {reservation.boarding.meetingTime && (
+              <div>
+                <dt>Reunión</dt>
+                <dd>{reservation.boarding.meetingTime}</dd>
+              </div>
+            )}
+            {(reservation.boarding.reference ||
+              reservation.boarding.address) && (
+              <div>
+                <dt>Referencia</dt>
+                <dd>
+                  {reservation.boarding.reference ??
+                    reservation.boarding.address}
+                </dd>
+              </div>
+            )}
+          </dl>
+        </section>
+
+        <section>
+          <h3>Viajeros</h3>
+          <p className="lavella-traveler-count">
+            {travelerCount} {travelerCount === 1 ? "viajero" : "viajeros"} ·{" "}
+            {reservation.travelers.adults} adultos
+            {reservation.travelers.minors
+              ? ` · ${reservation.travelers.minors} menores`
+              : ""}
+          </p>
+          {reservation.travelers.status === "pending" ? (
+            <p className="lavella-confirmation-note">
+              Datos de viajeros pendientes. La agencia podrá solicitarlos
+              posteriormente.
+            </p>
+          ) : (
+            <ul>
+              {reservation.travelers.drafts.map((draft) => (
+                <li key={draft.id}>
+                  <span>
+                    {draft.category === "adult" ? "Adulto" : "Menor"}{" "}
+                    {draft.sequence}
+                  </span>
+                  <b>{draft.fullName}</b>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+
+        <section className="lavella-confirmation-totals">
+          <h3>Resumen de pago</h3>
+          <dl>
+            <div>
+              <dt>Total</dt>
+              <dd>{formatMoney(reservation.total, reservation.currency)}</dd>
+            </div>
+            <div>
+              <dt>
+                {depositPaid ? "Anticipo pagado" : "Anticipo por pagar"}{" "}
+                {reservation.depositPercent < 100
+                  ? `(${reservation.depositPercent}%)`
+                  : ""}
+              </dt>
+              <dd>
+                {formatMoney(
+                  reservation.depositAmount,
+                  reservation.currency,
+                )}
+              </dd>
+            </div>
+            <div className="is-balance">
+              <dt>Saldo pendiente</dt>
+              <dd>
+                {formatMoney(
+                  reservation.remainingAmount,
+                  reservation.currency,
+                )}
+              </dd>
+            </div>
+            <div>
+              <dt>Moneda</dt>
+              <dd>{reservation.currency}</dd>
+            </div>
+          </dl>
+        </section>
+      </div>
+
+      <section className="lavella-confirmation-next">
+        <div className="eyebrow">PRÓXIMOS PASOS</div>
+        <h3>¿Qué sigue?</h3>
+        <ol>
+          <li>
+            {reservation.agency.name} revisará la solicitud y te compartirá
+            las instrucciones para completar el anticipo.
+          </li>
+          {reservation.travelers.status === "pending" && (
+            <li>
+              Ten disponibles los nombres de los viajeros para completar el
+              expediente.
+            </li>
+          )}
+          <li>
+            Usa el folio {reservation.reservationCode} para cualquier
+            aclaración.
+          </li>
+        </ol>
+      </section>
+
+      <div className="lavella-confirmation-actions">
+        <a
+          className="wa"
+          href={whatsappHref}
+          target="_blank"
+          rel="noreferrer"
+        >
+          Enviar folio por WhatsApp
+        </a>
+        <button type="button" onClick={onContinue}>
+          Volver a viajes
+        </button>
+      </div>
+    </section>
+  );
+}
+
 function Checkout({
   lines,
   agency,
@@ -1438,9 +1650,7 @@ function Checkout({
   const [step, setStep] = useState(1);
   const [reservation, setReservation] = useState<ReservationSnapshot>();
   const finalizingRef = useRef(false);
-  const reservationSubmissionKeyRef = useRef(
-    `checkout-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-  );
+  const reservationSubmissionKeyRef = useRef<string | null>(null);
   const [error, setError] = useState("");
   const [travelerStatus, setTravelerStatus] = useState<TravelerDataStatus>(
     lines[0]?.travelerDataStatus ?? "complete",
@@ -1814,6 +2024,10 @@ function Checkout({
     setError("");
     if (step === 5) {
       if (finalizingRef.current) return;
+      if (!reservationSubmissionKeyRef.current) {
+        reservationSubmissionKeyRef.current =
+          createReservationSubmissionKey();
+      }
       finalizingRef.current = true;
       try {
         const primary = priced[0];
@@ -2245,7 +2459,14 @@ function Checkout({
             </label>
           </>
         )}
-        {step === 6 && reservation && (
+        {step === 6 && reservation && theme === "lavella" && (
+          <LavellaReservationConfirmation
+            reservation={reservation}
+            whatsappHref={reservationWhatsappHref}
+            onContinue={() => go("/viajes")}
+          />
+        )}
+        {step === 6 && reservation && theme !== "lavella" && (
           <div className="confirmation">
             <span className="success">
               <Icon name="check" />

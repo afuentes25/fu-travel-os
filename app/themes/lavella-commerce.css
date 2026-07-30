@@ -292,6 +292,208 @@
   font-weight: 700;
 }
 
+.lavella-commerce .lavella-confirmation {
+  color: var(--lavella-ink);
+  font-family: var(--font-explorer), Arial, sans-serif;
+  text-align: left;
+}
+
+.lavella-commerce .lavella-confirmation-header {
+  display: grid;
+  grid-template-columns: 68px minmax(0, 1fr);
+  gap: 22px;
+  align-items: center;
+  margin-bottom: 28px;
+}
+
+.lavella-commerce .lavella-confirmation-header .success {
+  width: 68px;
+  height: 68px;
+  margin: 0;
+  background: #fff2e5;
+  color: var(--lavella-orange);
+}
+
+.lavella-commerce .lavella-confirmation-header h2 {
+  margin: 4px 0 7px;
+  color: #20242d;
+  font-size: clamp(34px, 5vw, 52px);
+  line-height: 1;
+  letter-spacing: -.04em;
+}
+
+.lavella-commerce .lavella-confirmation-header p {
+  margin: 0;
+  color: var(--lavella-muted);
+  font-size: 16px;
+  line-height: 1.55;
+}
+
+.lavella-commerce .lavella-confirmation > .lavella-confirmation-folio {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 18px;
+  align-items: center;
+  margin: 0 0 24px;
+  padding: 20px 22px;
+  background: #17191d;
+  color: #fff;
+}
+
+.lavella-commerce .lavella-confirmation-folio small {
+  color: #ffb36b;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .14em;
+}
+
+.lavella-commerce .lavella-confirmation-folio strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: clamp(18px, 3vw, 28px);
+  letter-spacing: .035em;
+}
+
+.lavella-commerce .lavella-confirmation-folio span {
+  color: #c5c8cf;
+  font-size: 13px;
+}
+
+.lavella-commerce .lavella-confirmation > .lavella-confirmation-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  margin: 0;
+  padding: 1px;
+  background: var(--lavella-line);
+}
+
+.lavella-commerce .lavella-confirmation-grid > section {
+  min-width: 0;
+  padding: 24px;
+  background: #fff;
+}
+
+.lavella-commerce .lavella-confirmation-grid h3,
+.lavella-commerce .lavella-confirmation-next h3 {
+  margin: 0 0 18px;
+  color: #20242d;
+  font-size: 20px;
+}
+
+.lavella-commerce .lavella-confirmation-grid dl {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+}
+
+.lavella-commerce .lavella-confirmation-grid dl div {
+  display: grid;
+  grid-template-columns: minmax(110px, .8fr) minmax(0, 1.2fr);
+  gap: 16px;
+  align-items: baseline;
+}
+
+.lavella-commerce .lavella-confirmation-grid dt {
+  color: var(--lavella-muted);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+}
+
+.lavella-commerce .lavella-confirmation-grid dd {
+  min-width: 0;
+  margin: 0;
+  color: #20242d;
+  font-size: 15px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.lavella-commerce .lavella-traveler-count {
+  margin: 0 0 12px;
+  color: #20242d;
+  font-weight: 700;
+}
+
+.lavella-commerce .lavella-confirmation-note {
+  margin: 0;
+  padding: 12px 14px;
+  border-left: 3px solid var(--lavella-orange);
+  background: #fff8f1;
+  color: #6f7480;
+  line-height: 1.55;
+}
+
+.lavella-commerce .lavella-confirmation-grid ul {
+  display: grid;
+  gap: 9px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.lavella-commerce .lavella-confirmation-grid li {
+  display: flex;
+  justify-content: space-between;
+  gap: 15px;
+  padding-bottom: 9px;
+  border-bottom: 1px solid #ececec;
+  font-size: 14px;
+}
+
+.lavella-commerce .lavella-confirmation-totals .is-balance {
+  padding-top: 12px;
+  border-top: 1px solid var(--lavella-line);
+}
+
+.lavella-commerce .lavella-confirmation-totals .is-balance dd {
+  color: var(--lavella-orange);
+  font-size: 20px;
+}
+
+.lavella-commerce .lavella-confirmation-next {
+  margin-top: 24px;
+  padding: 26px;
+  background: #f7f7f7;
+}
+
+.lavella-commerce .lavella-confirmation-next ol {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding-left: 21px;
+  color: #636977;
+  line-height: 1.55;
+}
+
+.lavella-commerce .lavella-confirmation-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  margin: 24px 0 0;
+  padding: 0;
+  background: transparent;
+}
+
+.lavella-commerce .lavella-confirmation-actions .wa {
+  min-height: 50px;
+  margin: 0;
+  align-items: center;
+  border-color: var(--lavella-orange);
+  color: #9a4c11;
+}
+
+.lavella-commerce .lavella-confirmation-actions button {
+  min-height: 50px;
+  padding: 0 22px;
+  border: 1px solid var(--lavella-line);
+  background: #fff;
+  color: var(--lavella-ink);
+  font-weight: 700;
+}
+
 @media (max-width: 760px) {
   .lavella-commerce .lavella-checkout .lavella-deposit-options {
     grid-template-columns: 1fr;
@@ -314,5 +516,50 @@
   .lavella-commerce .lavella-checkout .boarding-option {
     min-height: 88px;
     padding: 14px;
+  }
+
+  .lavella-commerce .lavella-confirmation-header {
+    grid-template-columns: 52px minmax(0, 1fr);
+    gap: 14px;
+  }
+
+  .lavella-commerce .lavella-confirmation-header .success {
+    width: 52px;
+    height: 52px;
+  }
+
+  .lavella-commerce .lavella-confirmation-header h2 {
+    font-size: 34px;
+  }
+
+  .lavella-commerce .lavella-confirmation > .lavella-confirmation-folio {
+    grid-template-columns: 1fr;
+    gap: 6px;
+    padding: 18px;
+  }
+
+  .lavella-commerce .lavella-confirmation > .lavella-confirmation-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .lavella-commerce .lavella-confirmation-grid > section {
+    padding: 20px 16px;
+  }
+
+  .lavella-commerce .lavella-confirmation-grid dl div {
+    grid-template-columns: 1fr;
+    gap: 3px;
+  }
+
+  .lavella-commerce .lavella-confirmation-next {
+    padding: 22px 18px;
+  }
+
+  .lavella-commerce .lavella-confirmation-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .lavella-commerce .lavella-confirmation-actions button {
+    width: 100%;
   }
 }
