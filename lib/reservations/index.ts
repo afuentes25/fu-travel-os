@@ -68,6 +68,30 @@ export type ReservationSnapshotInput = {
   remainingAmount: number;
 };
 
+export function formatReservationTravelerSummary(
+  travelers: Pick<
+    ReservationSnapshot["travelers"],
+    "adults" | "minors"
+  >,
+) {
+  const total = travelers.adults + travelers.minors;
+  return [
+    `${total} ${total === 1 ? "viajero" : "viajeros"}`,
+    travelers.adults
+      ? `${travelers.adults} ${
+          travelers.adults === 1 ? "adulto" : "adultos"
+        }`
+      : "",
+    travelers.minors
+      ? `${travelers.minors} ${
+          travelers.minors === 1 ? "menor" : "menores"
+        }`
+      : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
+
 type ReservationStorage = Pick<Storage, "getItem" | "setItem">;
 
 function deepFreeze<T>(value: T): T {

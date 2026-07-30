@@ -49,6 +49,7 @@ import {
 } from "../lib/pricing/index";
 import {
   finalizeReservation,
+  formatReservationTravelerSummary,
   readReservations,
   type ReservationSnapshotInput,
 } from "../lib/reservations/index";
@@ -201,6 +202,21 @@ test("snapshot de reservación conserva anticipo y saldo", () => {
   assert.equal(reservation.remainingAmount, 14_990);
   assert.equal(Object.isFrozen(reservation), true);
   assert.equal(Object.isFrozen(reservation.travelers), true);
+});
+
+test("resumen de viajeros pendientes usa la ocupación del snapshot", () => {
+  assert.equal(
+    formatReservationTravelerSummary({ adults: 2, minors: 2 }),
+    "4 viajeros · 2 adultos · 2 menores",
+  );
+  assert.equal(
+    formatReservationTravelerSummary({ adults: 1, minors: 1 }),
+    "2 viajeros · 1 adulto · 1 menor",
+  );
+  assert.equal(
+    formatReservationTravelerSummary({ adults: 1, minors: 0 }),
+    "1 viajero · 1 adulto",
+  );
 });
 
 test("doble envío de checkout no duplica la reservación", () => {

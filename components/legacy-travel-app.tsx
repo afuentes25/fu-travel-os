@@ -32,6 +32,7 @@ import {
 } from "@/lib/pricing";
 import {
   finalizeReservation,
+  formatReservationTravelerSummary,
   type ReservationSnapshot,
 } from "@/lib/reservations";
 import { resolveTenant, resolveTheme } from "@/lib/tenancy";
@@ -1416,8 +1417,6 @@ function LavellaReservationConfirmation({
     "confirmed",
     "completed",
   ].includes(reservation.status);
-  const travelerCount =
-    reservation.travelers.adults + reservation.travelers.minors;
   return (
     <section
       className="confirmation lavella-confirmation"
@@ -1506,11 +1505,7 @@ function LavellaReservationConfirmation({
         <section>
           <h3>Viajeros</h3>
           <p className="lavella-traveler-count">
-            {travelerCount} {travelerCount === 1 ? "viajero" : "viajeros"} ·{" "}
-            {reservation.travelers.adults} adultos
-            {reservation.travelers.minors
-              ? ` · ${reservation.travelers.minors} menores`
-              : ""}
+            {formatReservationTravelerSummary(reservation.travelers)}
           </p>
           {reservation.travelers.status === "pending" ? (
             <p className="lavella-confirmation-note">
@@ -2033,6 +2028,18 @@ function Checkout({
         const primary = priced[0];
         if (!primary)
           throw new Error("No hay una reserva válida para confirmar.");
+        const reservationTravelers = priced.reduce(
+          (counts, line) => {
+            const occupancy = line.travel.pricingOptions.find(
+              (option) => option.id === line.pricingOptionId,
+            )?.occupancy;
+            if (occupancy === "child" || occupancy === "infant")
+              counts.minors += line.travelers;
+            else counts.adults += line.travelers;
+            return counts;
+          },
+          { adults: 0, minors: 0 },
+        );
         const depositSnapshot =
           selectedDepositSnapshot ??
           (() => {
@@ -2065,8 +2072,8 @@ function Checkout({
             boarding: primary.boarding,
             travelers: {
               status: travelerStatus,
-              adults: adultCount,
-              minors: minorCount,
+              adults: reservationTravelers.adults,
+              minors: reservationTravelers.minors,
               drafts: travelerDrafts,
             },
             currency: primary.travel.basePrice.currency,
