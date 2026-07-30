@@ -8,6 +8,13 @@ import type { TravelProduct } from "@/types";
 import styles from "./lavella-detail.module.css";
 import { lavellaDate, lavellaStartingPrice } from "./lavella-utils";
 
+const detailProductLabel = (value: TravelProduct["productType"]) =>
+  value === "excursion"
+    ? "Tour"
+    : value === "circuit"
+      ? "Circuito"
+      : value.replaceAll("_", " ");
+
 export function LavellaTripHero({
   trip,
   departureId,
@@ -59,10 +66,13 @@ export function LavellaTripHero({
         </button>
         <div className={styles.tripHeroRow}>
           <div className={styles.tripHeroCopy}>
-            <span className={styles.heroKicker}>{trip.code} · {trip.categoryIds[0]?.replaceAll("_", " ")}</span>
+            <span className={styles.heroKicker}>
+              <b>{trip.code}</b>
+              <i>{detailProductLabel(trip.productType)}</i>
+            </span>
             <h1>{trip.title}</h1>
-            <p className={styles.heroDescription}>{trip.subtitle ?? trip.summary}</p>
             <p className={styles.heroLocation}><FaLocationDot /> {trip.cities.join(" · ")}</p>
+            <p className={styles.heroDescription}>{trip.subtitle ?? trip.summary}</p>
           </div>
           <div className={styles.tripHeroOffer}>
             <span className={styles.heroPrice}><small>DESDE</small><strong>{formatMoney(price.amount, price.currency)}</strong></span>
@@ -72,14 +82,22 @@ export function LavellaTripHero({
                 Equivalente estimado en MXN según la tasa vigente
               </span>
             )}
-            <span className={styles.heroMeta}>
-              {formatTripDuration(
-                trip.durationDays,
-                trip.durationNights,
-              )}
-            </span>
-            <span className={styles.heroMeta}>Próxima salida · {lavellaDate(departure.startDate, true)}</span>
-            <button onClick={onReserve}>Reservar ahora</button>
+            <div className={styles.heroSchedule}>
+              <span>
+                <small>DURACIÓN</small>
+                <b>
+                  {formatTripDuration(
+                    trip.durationDays,
+                    trip.durationNights,
+                  )}
+                </b>
+              </span>
+              <span>
+                <small>PRÓXIMA SALIDA</small>
+                <b>{lavellaDate(departure.startDate, true)}</b>
+              </span>
+            </div>
+            <button onClick={onReserve}>Reservar este viaje</button>
           </div>
         </div>
       </div>

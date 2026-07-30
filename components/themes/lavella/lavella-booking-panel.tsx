@@ -39,7 +39,6 @@ import type {
 } from "@/types";
 import styles from "./lavella-booking.module.css";
 import {
-  lavellaCategory,
   lavellaDate,
   lavellaDeparture,
   lavellaStartingPrice,
@@ -56,6 +55,13 @@ const occupancyLabel = (value?: string) =>
     child: "Menor",
     general: "Adulto",
   })[value ?? ""] ?? "Por confirmar";
+
+const detailProductLabel = (value: TravelProduct["productType"]) =>
+  value === "excursion"
+    ? "Tour"
+    : value === "circuit"
+      ? "Circuito"
+      : value.replaceAll("_", " ");
 
 export function LavellaBookingPanel({
   agency,
@@ -310,24 +316,24 @@ export function LavellaBookingPanel({
     .filter(Boolean)
     .join("\n");
 
-  const fields = (
-    <>
-      <div className={styles.bookingVisual}>
-        <Image src={trip.featuredImage} alt="" fill sizes="400px" />
-        <div>
-          <span>{lavellaCategory(trip).toUpperCase()}</span>
-          <h2>{trip.title}</h2>
-          <p>
-            {trip.durationDays} {trip.durationDays === 1 ? "día" : "días"}
-            {trip.durationNights > 0
-              ? ` · ${trip.durationNights} ${trip.durationNights === 1 ? "noche" : "noches"}`
-              : ""}
-          </p>
-        </div>
+  const mobileIdentity = (
+    <div className={styles.bookingVisual}>
+      <Image src={trip.featuredImage} alt="" fill sizes="400px" />
+      <div>
+        <span>{detailProductLabel(trip.productType).toUpperCase()}</span>
+        <h2>{trip.title}</h2>
+        <p>
+          {trip.durationDays} {trip.durationDays === 1 ? "día" : "días"}
+          {trip.durationNights > 0
+            ? ` · ${trip.durationNights} ${trip.durationNights === 1 ? "noche" : "noches"}`
+            : ""}
+        </p>
       </div>
+    </div>
+  );
+  const fields = (
       <div className={styles.bookingBody}>
       <header className={styles.bookingHead}>
-        <span><small>DESDE</small><strong>{formatMoney(starting.amount, starting.currency)}</strong></span>
         <span><small>ANTICIPO</small><b>{formatMoney(deposit, trip.basePrice.currency)}</b></span>
       </header>
       <label className={styles.bookingField}>
@@ -394,7 +400,6 @@ export function LavellaBookingPanel({
         )}
       </footer>
       </div>
-    </>
   );
   return (
     <>
@@ -431,7 +436,10 @@ export function LavellaBookingPanel({
             data-lavella-surface="light"
           >
             <header><b>Configura tu reserva</b><button onClick={() => setSheet(false)} aria-label="Cerrar reserva"><FaXmark /></button></header>
-            <div className={styles.bookingSheetScroll}>{fields}</div>
+            <div className={styles.bookingSheetScroll}>
+              {mobileIdentity}
+              {fields}
+            </div>
           </div>
         </div>
       )}
