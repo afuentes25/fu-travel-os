@@ -871,7 +871,9 @@ function Cart({
   const paymentAllocation = fxLine?.paymentAllocation;
   const commercialError = roomError || currencyError;
   return (
-    <main className="simple-page">
+    <main
+      className={`simple-page ${theme === "lavella" ? "lavella-cart" : ""}`}
+    >
       <header className="page-title">
         <div className="eyebrow">RESUMEN SEGURO</div>
         <h1>Tu carrito</h1>
@@ -1038,11 +1040,13 @@ function Cart({
 function BoardingStep({
   lines,
   agency,
+  theme,
   onUpdate,
   error,
 }: {
   lines: CartLine[];
   agency: Agency;
+  theme: TravelTheme;
   onUpdate: (line: CartLine) => void;
   error: string;
 }) {
@@ -1052,13 +1056,18 @@ function BoardingStep({
     ).values(),
   ];
   const [choices, setChoices] = useState<Record<string, string>>({});
+  const isLavella = theme === "lavella";
   return (
     <section
-      className={`checkout-boarding ${agency.theme === "explorer" ? "is-explorer" : ""}`}
+      className={`checkout-boarding ${theme === "explorer" ? "is-explorer" : ""} ${isLavella ? "is-lavella" : ""}`}
       aria-labelledby="boarding-title"
     >
       <h2 id="boarding-title">Elige tu punto de abordaje</h2>
-      <p>Debes seleccionar y confirmar un punto antes de continuar.</p>
+      <p>
+        {isLavella
+          ? "Selecciona un punto antes de continuar."
+          : "Debes seleccionar y confirmar un punto antes de continuar."}
+      </p>
       {groups.map((group) => {
         const trip = travels.find(
           (item) => item.id === group.travelId && item.agencyId === agency.id,
@@ -1079,7 +1088,15 @@ function BoardingStep({
           }))
           .filter((item) => item.point);
         const key = `${group.travelId}:${group.departureId}`;
-        const selected = choices[key];
+        const groupLines = lines.filter(
+          (line) =>
+            line.travelId === group.travelId &&
+            line.departureId === group.departureId,
+        );
+        const selected =
+          choices[key] ??
+          groupLines.find((line) => line.boardingOptionId)?.boardingOptionId ??
+          "";
         const confirmed = lines
           .filter(
             (line) =>
@@ -1103,7 +1120,9 @@ function BoardingStep({
             </legend>
             <p id={`${key}-help`}>
               {options.length === 1
-                ? "Esta salida tiene un punto disponible. Revísalo y confírmalo explícitamente."
+                ? isLavella
+                  ? "Esta salida tiene un punto disponible. Selecciónalo para continuar."
+                  : "Esta salida tiene un punto disponible. Revísalo y confírmalo explícitamente."
                 : "Selecciona exactamente una opción."}
             </p>
             {options.length ? (
@@ -1117,12 +1136,16 @@ function BoardingStep({
                     name={`boarding-${key}`}
                     value={option.id}
                     checked={selected === option.id}
-                    onChange={() =>
+                    onChange={() => {
                       setChoices((current) => ({
                         ...current,
                         [key]: option.id,
-                      }))
-                    }
+                      }));
+                      if (isLavella)
+                        groupLines.forEach((line) =>
+                          onUpdate(confirmBoardingPoint(line, option.id)),
+                        );
+                    }}
                   />
                   <span>
                     <b>{point!.name}</b>
@@ -1161,21 +1184,15 @@ function BoardingStep({
                 </a>
               </div>
             )}
-            {options.length > 0 && (
+            {options.length > 0 && !isLavella && (
               <button
                 type="button"
                 className="confirm-boarding"
                 disabled={!selected}
                 onClick={() => {
-                  lines
-                    .filter(
-                      (line) =>
-                        line.travelId === group.travelId &&
-                        line.departureId === group.departureId,
-                    )
-                    .forEach((line) =>
-                      onUpdate(confirmBoardingPoint(line, selected)),
-                    );
+                  groupLines.forEach((line) =>
+                    onUpdate(confirmBoardingPoint(line, selected)),
+                  );
                 }}
               >
                 Confirmar punto de abordaje
@@ -1592,7 +1609,9 @@ function Checkout({
     }
     if (step === 3 && !boardingComplete) {
       setError(
-        "Selecciona y confirma un punto de abordaje antes de continuar.",
+        theme === "lavella"
+          ? "Selecciona un punto de abordaje antes de continuar."
+          : "Selecciona y confirma un punto de abordaje antes de continuar.",
       );
       return;
     }
@@ -1731,7 +1750,7 @@ function Checkout({
   };
   const firstPriced = priced[0];
   return (
-    <main className="checkout">
+    <main className={`checkout ${theme === "lavella" ? "lavella-checkout" : ""}`}>
       <header>
         <div className="eyebrow">
           CHECKOUT DEMOSTRATIVO · NO SE REALIZARÁ NINGÚN COBRO
@@ -1821,6 +1840,7 @@ function Checkout({
         )}
         {step === 2 && (
           <FormGrid
+            useMexicoLocationSelectors={theme === "lavella"}
             fields={[
               "Nombre",
               "Apellidos",
@@ -1838,6 +1858,7 @@ function Checkout({
             <BoardingStep
               lines={lines}
               agency={agency}
+              theme={theme}
               onUpdate={onUpdate}
               error={roomError ? "" : error}
             />
@@ -2215,23 +2236,78 @@ function Checkout({
     </main>
   );
 }
-function FormGrid({ fields }: { fields: string[] }) {
+const mexicoStates = [
+  "Aguascalientes",
+  "Baja California",
+  "Baja California Sur",
+  "Campeche",
+  "Chiapas",
+  "Chihuahua",
+  "Ciudad de México",
+  "Coahuila",
+  "Colima",
+  "Durango",
+  "Estado de México",
+  "Guanajuato",
+  "Guerrero",
+  "Hidalgo",
+  "Jalisco",
+  "Michoacán",
+  "Morelos",
+  "Nayarit",
+  "Nuevo León",
+  "Oaxaca",
+  "Puebla",
+  "Querétaro",
+  "Quintana Roo",
+  "San Luis Potosí",
+  "Sinaloa",
+  "Sonora",
+  "Tabasco",
+  "Tamaulipas",
+  "Tlaxcala",
+  "Veracruz",
+  "Yucatán",
+  "Zacatecas",
+] as const;
+
+function FormGrid({
+  fields,
+  useMexicoLocationSelectors = false,
+}: {
+  fields: string[];
+  useMexicoLocationSelectors?: boolean;
+}) {
   return (
     <div className="form-grid">
       {fields.map((f, i) => (
         <label key={f}>
           {f}
-          <input
-            required={!f.includes("opcional")}
-            type={
-              f.includes("Correo")
-                ? "email"
-                : f.includes("Fecha")
-                  ? "date"
-                  : "text"
-            }
-            placeholder={i < 2 ? "Dato de demostración" : ""}
-          />
+          {useMexicoLocationSelectors && f === "País" ? (
+            <select required defaultValue="México">
+              <option value="México">México</option>
+            </select>
+          ) : useMexicoLocationSelectors && f === "Estado" ? (
+            <select required defaultValue="Ciudad de México">
+              {mexicoStates.map((state) => (
+                <option value={state} key={state}>
+                  {state}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <input
+              required={!f.includes("opcional")}
+              type={
+                f.includes("Correo")
+                  ? "email"
+                  : f.includes("Fecha")
+                    ? "date"
+                    : "text"
+              }
+              placeholder={i < 2 ? "Dato de demostración" : ""}
+            />
+          )}
         </label>
       ))}
     </div>
