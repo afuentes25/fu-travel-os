@@ -16,6 +16,10 @@ import {
   validateFxPaymentContext,
 } from "@/lib/fx";
 import {
+  createDepositSelectionSnapshot,
+  resolveDepositOptionsPercent,
+} from "@/lib/deposit-options";
+import {
   confirmBoardingPoint,
   estimateCartLines,
   formatMoney,
@@ -1401,6 +1405,32 @@ function Checkout({
   onDone: () => void;
   onUpdate: (line: CartLine) => void;
 }) {
+  const configuredDepositOptions = resolveDepositOptionsPercent(
+    agency.settings.depositOptionsPercent,
+  );
+  const [persistedDepositSnapshot] = useState(() => {
+    const line = lines.find(
+      (item) =>
+        item.depositPercent !== undefined &&
+        item.depositAmount !== undefined &&
+        item.remainingAmount !== undefined,
+    );
+    return line
+      ? {
+          depositPercent: line.depositPercent!,
+          depositAmount: line.depositAmount!,
+          remainingAmount: line.remainingAmount!,
+        }
+      : undefined;
+  });
+  const lavellaDepositOptions = persistedDepositSnapshot
+    ? [persistedDepositSnapshot.depositPercent]
+    : configuredDepositOptions;
+  const initialDepositPercent =
+    persistedDepositSnapshot?.depositPercent ?? lavellaDepositOptions[0];
+  const [selectedDepositPercent, setSelectedDepositPercent] = useState(
+    initialDepositPercent,
+  );
   const [step, setStep] = useState(1);
   const [folio, setFolio] = useState("");
   const [error, setError] = useState("");
@@ -1411,7 +1441,11 @@ function Checkout({
     draftsFromLines(lines),
   );
   const [paymentKind, setPaymentKind] = useState<"deposit" | "full">(
-    lines[0]?.paymentAllocation?.kind ?? "deposit",
+    theme === "lavella"
+      ? initialDepositPercent === 100
+        ? "full"
+        : "deposit"
+      : lines[0]?.paymentAllocation?.kind ?? "deposit",
   );
   const [checkoutFxSnapshot, setCheckoutFxSnapshot] = useState<
     FxSnapshot | undefined
@@ -1467,6 +1501,13 @@ function Checkout({
     (sum, item) => sum + item.deposit,
     0,
   );
+  const selectedDepositSnapshot =
+    theme === "lavella"
+      ? persistedDepositSnapshot &&
+        persistedDepositSnapshot.depositPercent === selectedDepositPercent
+        ? persistedDepositSnapshot
+        : createDepositSelectionSnapshot(total, selectedDepositPercent)
+      : undefined;
   const foreignTravel = estimates.find(
     (item) => item.travel.foreignCurrencyPricing?.convertDepositAtCheckout,
   )?.travel;
@@ -1479,7 +1520,11 @@ function Checkout({
         foreignPricing.checkoutChargeCurrency,
   );
   const contractualPayment =
-    paymentKind === "full" ? total : contractualDeposit;
+    theme === "lavella"
+      ? selectedDepositSnapshot!.depositAmount
+      : paymentKind === "full"
+        ? total
+        : contractualDeposit;
   const requestFxRequote = (message = "") => {
     setFxAccepted(false);
     setCheckoutFxConsent(undefined);
@@ -1488,6 +1533,24 @@ function Checkout({
     setFxQuoteError(message);
     setFxQuoteStatus("loading");
     setFxQuoteRequestNonce((current) => current + 1);
+  };
+  const selectLavellaDeposit = (depositPercent: number) => {
+    const snapshot = createDepositSelectionSnapshot(total, depositPercent);
+    setSelectedDepositPercent(depositPercent);
+    setPaymentKind(depositPercent === 100 ? "full" : "deposit");
+    setFxAccepted(false);
+    setCheckoutFxConsent(undefined);
+    setCheckoutFxSnapshot(undefined);
+    setCheckoutPaymentAllocation(undefined);
+    lines.forEach((line) =>
+      onUpdate({
+        ...line,
+        ...snapshot,
+        fxSnapshot: undefined,
+        paymentAllocation: undefined,
+        fxConsent: undefined,
+      }),
+    );
   };
   useEffect(() => {
     let cancelled = false;
@@ -1627,6 +1690,14 @@ function Checkout({
         return;
       }
     }
+    if (step === 4 && theme === "lavella" && !fxRequired) {
+      lines.forEach((line) =>
+        onUpdate({
+          ...line,
+          ...selectedDepositSnapshot!,
+        }),
+      );
+    }
     if (step === 4 && fxRequired) {
       if (
         fxQuoteStatus !== "ready" ||
@@ -1673,6 +1744,7 @@ function Checkout({
         lines.forEach((line) =>
           onUpdate({
             ...line,
+            ...(selectedDepositSnapshot ?? {}),
             fxSnapshot: checkoutFxSnapshot,
             paymentAllocation: checkoutPaymentAllocation,
             fxConsent: consent,
@@ -1895,34 +1967,77 @@ function Checkout({
         {step === 4 && boardingComplete && (
           <>
             <h2>¿Cómo deseas continuar?</h2>
-            <div className="choice-grid">
-              {([
-                { label: "Anticipo", value: "deposit" },
-                { label: "Pago total", value: "full" },
-              ] as const).map((option) => (
-                <label key={option.value}>
-                  <input
-                    type="radio"
-                    name="paymentAmount"
-                    checked={paymentKind === option.value}
-                    onChange={() => {
-                      setPaymentKind(option.value);
-                      setFxAccepted(false);
-                      setCheckoutFxConsent(undefined);
-                    }}
-                  />
-                  <b>{option.label}</b>
-                  <small>
-                    {option.value === "deposit"
-                      ? formatMoney(
-                          contractualDeposit,
+            {theme === "lavella" ? (
+              <div className="choice-grid lavella-deposit-options">
+                {lavellaDepositOptions.map((depositPercent) => {
+                  const snapshot =
+                    persistedDepositSnapshot?.depositPercent === depositPercent
+                      ? persistedDepositSnapshot
+                      : createDepositSelectionSnapshot(total, depositPercent);
+                  return (
+                    <label key={depositPercent}>
+                      <input
+                        type="radio"
+                        name="paymentAmount"
+                        checked={selectedDepositPercent === depositPercent}
+                        onChange={() => selectLavellaDeposit(depositPercent)}
+                      />
+                      <b>
+                        {depositPercent === 100
+                          ? "Pago total"
+                          : `${depositPercent}% de anticipo`}
+                      </b>
+                      <small>
+                        Pagar ahora:{" "}
+                        {formatMoney(
+                          snapshot.depositAmount,
                           priced[0].travel.basePrice.currency,
-                        )
-                      : formatMoney(total, priced[0].travel.basePrice.currency)}
-                  </small>
-                </label>
-              ))}
-            </div>
+                        )}
+                      </small>
+                      <small>
+                        Saldo restante:{" "}
+                        {formatMoney(
+                          snapshot.remainingAmount,
+                          priced[0].travel.basePrice.currency,
+                        )}
+                      </small>
+                    </label>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="choice-grid">
+                {([
+                  { label: "Anticipo", value: "deposit" },
+                  { label: "Pago total", value: "full" },
+                ] as const).map((option) => (
+                  <label key={option.value}>
+                    <input
+                      type="radio"
+                      name="paymentAmount"
+                      checked={paymentKind === option.value}
+                      onChange={() => {
+                        setPaymentKind(option.value);
+                        setFxAccepted(false);
+                        setCheckoutFxConsent(undefined);
+                      }}
+                    />
+                    <b>{option.label}</b>
+                    <small>
+                      {option.value === "deposit"
+                        ? formatMoney(
+                            contractualDeposit,
+                            priced[0].travel.basePrice.currency,
+                          )
+                        : formatMoney(
+                            total,
+                            priced[0].travel.basePrice.currency,
+                          )}
+                    </small>
+                  </label>
+                ))}
+              </div>
+            )}
             {fxRequired && (
               <div className="fx-checkout-disclosure">
                 <h3>Conversión de moneda para este pago</h3>
@@ -2094,15 +2209,36 @@ function Checkout({
                 </b>
               </span>
               {!checkoutPaymentAllocation && (
-                <span>
-                  Anticipo{" "}
-                  <b>
-                    {formatMoney(
-                      priced.reduce((sum, item) => sum + item.deposit, 0),
-                      firstPriced.travel.basePrice.currency,
-                    )}
-                  </b>
-                </span>
+                <>
+                  <span>
+                    {theme === "lavella" &&
+                    selectedDepositSnapshot?.depositPercent === 100
+                      ? "Pago total"
+                      : "Anticipo"}{" "}
+                    <b>
+                      {formatMoney(
+                        theme === "lavella"
+                          ? selectedDepositSnapshot!.depositAmount
+                          : priced.reduce(
+                              (sum, item) => sum + item.deposit,
+                              0,
+                            ),
+                        firstPriced.travel.basePrice.currency,
+                      )}
+                    </b>
+                  </span>
+                  {theme === "lavella" && selectedDepositSnapshot && (
+                    <span>
+                      Saldo restante{" "}
+                      <b>
+                        {formatMoney(
+                          selectedDepositSnapshot.remainingAmount,
+                          firstPriced.travel.basePrice.currency,
+                        )}
+                      </b>
+                    </span>
+                  )}
+                </>
               )}
               {checkoutFxSnapshot && checkoutPaymentAllocation && (
                 <>
@@ -2190,10 +2326,13 @@ function Checkout({
                       adults: adultCount,
                       minors: minorCount,
                       total,
-                      deposit: priced.reduce(
-                        (sum, item) => sum + item.deposit,
-                        0,
-                      ),
+                      deposit:
+                        theme === "lavella"
+                          ? selectedDepositSnapshot!.depositAmount
+                          : priced.reduce(
+                              (sum, item) => sum + item.deposit,
+                              0,
+                            ),
                     }
                   : undefined,
               )}
@@ -2835,7 +2974,8 @@ export function TravelApp({
         line.boardingSnapshot ||
         line.fxSnapshot ||
         line.paymentAllocation ||
-        line.fxConsent
+        line.fxConsent ||
+        line.depositPercent !== undefined
       )
         try {
           const draft = JSON.parse(
@@ -2865,12 +3005,23 @@ export function TravelApp({
                   ? { paymentAllocation: line.paymentAllocation }
                   : {}),
                 ...(line.fxConsent ? { fxConsent: line.fxConsent } : {}),
+                ...(line.depositPercent !== undefined &&
+                line.depositAmount !== undefined &&
+                line.remainingAmount !== undefined
+                  ? {
+                      depositPercent: line.depositPercent,
+                      depositAmount: line.depositAmount,
+                      remainingAmount: line.remainingAmount,
+                    }
+                  : {}),
                 total: priced.length
                   ? priced.reduce((sum, item) => sum + item.total, 0)
                   : draft.total,
-                deposit: priced.length
-                  ? priced.reduce((sum, item) => sum + item.deposit, 0)
-                  : draft.deposit,
+                deposit:
+                  line.depositAmount ??
+                  (priced.length
+                    ? priced.reduce((sum, item) => sum + item.deposit, 0)
+                    : draft.deposit),
               }),
             );
           }

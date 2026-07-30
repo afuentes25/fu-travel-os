@@ -228,6 +228,7 @@ export type AgencySettings = {
   visibleSections: string[];
   modules: string[];
   legalNotice: string;
+  depositOptionsPercent?: number[];
   whatsapp?: AgencyWhatsAppSettings;
   socialSettings?: AgencySocialSettings;
   roomCapacityPolicy?: RoomCapacityPolicy;
@@ -597,6 +598,9 @@ export type CartLine = {
   paymentAllocation?: PaymentAllocation;
   fxConsent?: FxConsent;
   fxPaymentHistory?: ForeignCurrencyPaymentAllocation[];
+  depositPercent?: number;
+  depositAmount?: number;
+  remainingAmount?: number;
 };
 export type PricedCartLine = Omit<CartLine, "boardingOptionId"> & {
   boardingOptionId: string;

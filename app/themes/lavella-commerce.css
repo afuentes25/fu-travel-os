@@ -125,6 +125,19 @@
   padding: 0 10px;
 }
 
+.lavella-commerce .lavella-checkout .lavella-deposit-options {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.lavella-commerce .lavella-checkout .lavella-deposit-options label {
+  min-width: 0;
+}
+
+.lavella-commerce .lavella-checkout .lavella-deposit-options small {
+  color: var(--lavella-muted);
+  line-height: 1.4;
+}
+
 .lavella-commerce .lavella-checkout .checkout-boarding {
   margin: 0 0 34px;
   padding: 26px;
@@ -280,6 +293,10 @@
 }
 
 @media (max-width: 760px) {
+  .lavella-commerce .lavella-checkout .lavella-deposit-options {
+    grid-template-columns: 1fr;
+  }
+
   .lavella-commerce .simple-page {
     width: calc(100% - 36px);
     padding: 110px 0 90px;

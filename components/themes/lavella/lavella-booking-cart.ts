@@ -38,6 +38,9 @@ export type LavellaBookingDraft = {
   extraIds: string[];
   total: number;
   deposit: number;
+  depositPercent?: number;
+  depositAmount?: number;
+  remainingAmount?: number;
   currency: Currency;
   tenant: string;
   theme: "lavella";

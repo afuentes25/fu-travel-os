@@ -22,6 +22,11 @@ import {
   validateFxPaymentContext,
 } from "../lib/fx/index";
 import {
+  createDepositSelectionSnapshot,
+  isValidDepositOptionsPercent,
+  resolveDepositOptionsPercent,
+} from "../lib/deposit-options/index";
+import {
   EXPLORER_BOOKING_COLORS,
   EXPLORER_SLIDER_LABELS,
   EXPLORER_STICKY_METRICS,
@@ -115,6 +120,44 @@ import type {
 } from "../types/index";
 
 const configuredTrip = () => travels.find((trip) => trip.pageConfiguration)!;
+
+test("opciones de anticipo validan límites, enteros, orden y duplicados", () => {
+  assert.equal(isValidDepositOptionsPercent([20, 50, 100]), true);
+  assert.equal(isValidDepositOptionsPercent([]), false);
+  assert.equal(isValidDepositOptionsPercent([20, 40, 60, 80]), false);
+  assert.equal(isValidDepositOptionsPercent([20.5, 100]), false);
+  assert.equal(isValidDepositOptionsPercent([0, 100]), false);
+  assert.equal(isValidDepositOptionsPercent([50, 20]), false);
+  assert.equal(isValidDepositOptionsPercent([20, 20]), false);
+  assert.deepEqual(resolveDepositOptionsPercent(undefined), [100]);
+  assert.deepEqual(resolveDepositOptionsPercent([50, 20]), [100]);
+});
+
+test("anticipo porcentual calcula pagar ahora y saldo restante", () => {
+  assert.deepEqual(createDepositSelectionSnapshot(29_980, 20), {
+    depositPercent: 20,
+    depositAmount: 5_996,
+    remainingAmount: 23_984,
+  });
+  assert.deepEqual(createDepositSelectionSnapshot(1_599, 100), {
+    depositPercent: 100,
+    depositAmount: 1_599,
+    remainingAmount: 0,
+  });
+});
+
+test("snapshot de anticipo permanece inmutable ante cambios de configuración", () => {
+  const snapshot = createDepositSelectionSnapshot(29_980, 50);
+  const laterOptions = resolveDepositOptionsPercent([20, 100]);
+
+  assert.equal(Object.isFrozen(snapshot), true);
+  assert.deepEqual(snapshot, {
+    depositPercent: 50,
+    depositAmount: 14_990,
+    remainingAmount: 14_990,
+  });
+  assert.deepEqual(laterOptions, [20, 100]);
+});
 
 test("secciones configurables se ordenan, ocultan desactivadas y omiten contenido vacío", () => {
   const trip = structuredClone(configuredTrip());
