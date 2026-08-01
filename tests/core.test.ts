@@ -52,13 +52,16 @@ import {
   finalizeReservation,
   formatReservationTravelerSummary,
   readReservations,
+  ReservationSnapshotConflictError,
   type ReservationSnapshot,
   type ReservationSnapshotInput,
 } from "../lib/reservations/index";
 import {
   createReservationServerCommand,
+  ReservationServerCommandError,
   type ReservationServerCommandInput,
 } from "../lib/reservations/server-command";
+import { createReservationPostHandler } from "../app/api/reservations/route";
 import { lavellaDeparture } from "../components/themes/lavella/lavella-utils";
 import {
   createLavellaCartTransition,
@@ -287,6 +290,132 @@ const serverReservationRequest = (
     travelers: { status: "pending", drafts: [] },
   };
 };
+
+const publicReservationBody = () => {
+  const { idempotencyKey: _idempotencyKey, ...body } = serverReservationRequest();
+  return body;
+};
+
+const reservationApiRequest = (
+  body: unknown = publicReservationBody(),
+  options?: { contentType?: string; idempotencyKey?: string; rawBody?: string },
+) =>
+  new Request("http://localhost/api/reservations", {
+    method: "POST",
+    headers: {
+      "Content-Type": options?.contentType ?? "application/json",
+      ...(options?.idempotencyKey === undefined
+        ? { "Idempotency-Key": "api-idempotency-key" }
+        : options.idempotencyKey
+          ? { "Idempotency-Key": options.idempotencyKey }
+          : {}),
+    },
+    body: options?.rawBody ?? JSON.stringify(body),
+  });
+
+const reservationApiSuccess = () => ({
+  reservation: finalizedReservationForRepository("api-idempotency-key"),
+  created: true,
+});
+
+test("POST público registra una reservación con respuesta mínima", async () => {
+  const handler = createReservationPostHandler({
+    execute: async () => reservationApiSuccess(),
+  });
+  const response = await handler(reservationApiRequest());
+  const body = (await response.json()) as Record<string, string>;
+
+  assert.equal(response.status, 201);
+  assert.equal(response.headers.get("Cache-Control"), "no-store");
+  assert.equal(body.reservationCode, "FT-001-260801-R3P0S1");
+  assert.deepEqual(Object.keys(body).sort(), [
+    "createdAt",
+    "reservationCode",
+    "reservationId",
+    "status",
+  ]);
+});
+
+test("POST público rechaza Content-Type incorrecto", async () => {
+  const handler = createReservationPostHandler({
+    execute: async () => reservationApiSuccess(),
+  });
+  const response = await handler(
+    reservationApiRequest(publicReservationBody(), { contentType: "text/plain" }),
+  );
+  assert.equal(response.status, 400);
+});
+
+test("POST público exige Idempotency-Key", async () => {
+  const handler = createReservationPostHandler({
+    execute: async () => reservationApiSuccess(),
+  });
+  const response = await handler(
+    reservationApiRequest(publicReservationBody(), { idempotencyKey: "" }),
+  );
+  assert.equal(response.status, 400);
+});
+
+test("POST público rechaza JSON inválido", async () => {
+  const handler = createReservationPostHandler({
+    execute: async () => reservationApiSuccess(),
+  });
+  const response = await handler(
+    reservationApiRequest(undefined, { rawBody: "{" }),
+  );
+  assert.equal(response.status, 400);
+});
+
+test("POST público rechaza campos manipulados antes de llamar al comando", async () => {
+  let calls = 0;
+  const handler = createReservationPostHandler({
+    execute: async () => {
+      calls += 1;
+      return reservationApiSuccess();
+    },
+  });
+  const response = await handler(
+    reservationApiRequest({ ...publicReservationBody(), total: 1 }),
+  );
+  assert.equal(response.status, 400);
+  assert.equal(calls, 0);
+});
+
+test("POST público convierte conflictos seguros en 409", async () => {
+  const handler = createReservationPostHandler({
+    execute: async () => {
+      throw new ReservationSnapshotConflictError("idempotency");
+    },
+  });
+  const response = await handler(reservationApiRequest());
+  assert.equal(response.status, 409);
+});
+
+test("POST público oculta errores internos", async () => {
+  const handler = createReservationPostHandler({
+    execute: async () => {
+      throw new Error("database password must not be returned");
+    },
+  });
+  const response = await handler(reservationApiRequest());
+  const body = (await response.json()) as { error: string };
+  assert.equal(response.status, 500);
+  assert.equal(body.error, "No fue posible registrar la reservación.");
+});
+
+test("POST público llama al comando exactamente una vez", async () => {
+  let calls = 0;
+  const handler = createReservationPostHandler({
+    execute: async (input) => {
+      calls += 1;
+      assert.equal(input.idempotencyKey, "api-idempotency-key");
+      return reservationApiSuccess();
+    },
+  });
+  const response = await handler(reservationApiRequest());
+  assert.equal(response.status, 201);
+  assert.equal(calls, 1);
+});
 
 test("comando servidor crea una reservación válida desde datos confiables", async () => {
   const result = await reservationServerCommand().execute(

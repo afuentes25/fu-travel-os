@@ -3,6 +3,7 @@ import { createDeterministicDemoPaymentQuote, toMinorUnits } from "@/lib/fx";
 import { confirmBoardingPoint, priceLine, validateCartRoomCapacity } from "@/lib/pricing";
 import {
   finalizeReservation,
+  ReservationSnapshotConflictError,
   type ReservationSnapshot,
   type ReservationSnapshotPersistenceInput,
 } from "@/lib/reservations";
@@ -50,7 +51,7 @@ export type ReservationServerCommandDependencies = Readonly<{
 export class ReservationServerCommandError extends Error {
   readonly name = "ReservationServerCommandError";
 
-  constructor() {
+  constructor(readonly kind: "invalid" | "not_found" = "invalid") {
     super("La solicitud de reservación no es válida.");
   }
 }
@@ -191,7 +192,7 @@ export function createReservationServerCommand(
         const agency = dependencies.agencies.find(
           (candidate) => candidate.slug === input.tenantSlug,
         );
-        if (!agency) throw new ReservationServerCommandError();
+        if (!agency) throw new ReservationServerCommandError("not_found");
         const trip = dependencies.travels.find(
           (candidate) =>
             candidate.agencyId === agency.id &&
@@ -199,7 +200,7 @@ export function createReservationServerCommand(
             (!input.tripCode || candidate.code === input.tripCode),
         );
         if (!trip || trip.status !== "published") {
-          throw new ReservationServerCommandError();
+          throw new ReservationServerCommandError("not_found");
         }
         if (trip.accommodationMode === "hotel_occupancy" && input.rooms !== 1) {
           throw new ReservationServerCommandError();
@@ -233,23 +234,29 @@ export function createReservationServerCommand(
             !["sold_out", "disabled"].includes(candidate.status),
         );
         if (!departure || !boardingOption) {
-          throw new ReservationServerCommandError();
+          throw new ReservationServerCommandError("not_found");
         }
         if (departure.availableSpaces < input.adults + input.minors) {
           throw new ReservationServerCommandError();
         }
 
-        const lines = makeLines({
-          agency,
-          trip,
-          departureId: departure.id,
-          adults: input.adults,
-          minors: input.minors,
-          extraIds: input.extraIds,
-          travelerData: input.travelers,
-        }).map((line) => confirmBoardingPoint(line, boardingOption.id));
-        validateCartRoomCapacity(lines);
-        const pricedLines = lines.map((line) => priceLine(line));
+        let pricedLines: ReturnType<typeof priceLine>[];
+        try {
+          const lines = makeLines({
+            agency,
+            trip,
+            departureId: departure.id,
+            adults: input.adults,
+            minors: input.minors,
+            extraIds: input.extraIds,
+            travelerData: input.travelers,
+          }).map((line) => confirmBoardingPoint(line, boardingOption.id));
+          validateCartRoomCapacity(lines);
+          pricedLines = lines.map((line) => priceLine(line));
+        } catch (error) {
+          if (error instanceof ReservationServerCommandError) throw error;
+          throw new ReservationServerCommandError();
+        }
         const totalTravelers = input.adults + input.minors;
         const surcharge =
           (boardingOption.surchargeAmount ?? 0) *
@@ -320,8 +327,13 @@ export function createReservationServerCommand(
           snapshot,
         });
       } catch (error) {
-        if (error instanceof ReservationServerCommandError) throw error;
-        throw new ReservationServerCommandError();
+        if (
+          error instanceof ReservationServerCommandError ||
+          error instanceof ReservationSnapshotConflictError
+        ) {
+          throw error;
+        }
+        throw error;
       }
     },
   };
