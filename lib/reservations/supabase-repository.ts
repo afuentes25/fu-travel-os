@@ -100,6 +100,16 @@ export function createSupabaseReservationSnapshotClient(
   };
 }
 
+export async function findReservationSnapshotByIdempotency(input: Readonly<{
+  agencyId: string;
+  idempotencyKey: string;
+}>) {
+  const persisted = await createSupabaseReservationSnapshotClient().findByIdempotency(
+    input,
+  );
+  return persisted?.snapshot ?? null;
+}
+
 export async function insertReservationSnapshot(
   input: ReservationSnapshotPersistenceInput,
 ) {

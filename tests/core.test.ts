@@ -55,6 +55,10 @@ import {
   type ReservationSnapshot,
   type ReservationSnapshotInput,
 } from "../lib/reservations/index";
+import {
+  createReservationServerCommand,
+  type ReservationServerCommandInput,
+} from "../lib/reservations/server-command";
 import { lavellaDeparture } from "../components/themes/lavella/lavella-utils";
 import {
   createLavellaCartTransition,
@@ -246,6 +250,117 @@ function finalizedReservationForRepository(idempotencyKey = "repository-key") {
     suffix: () => "R3P0S1",
   }).reservation;
 }
+
+const reservationServerCommand = () => {
+  const { client } = reservationSnapshotRepositoryClient();
+  const repository = createReservationSnapshotRepository(client);
+  return createReservationServerCommand({
+    agencies,
+    travels,
+    resolvePersistenceAgencyId: () => "00000000-0000-4000-8000-000000000001",
+    findExisting: async (input) =>
+      (await client.findByIdempotency(input))?.snapshot ?? null,
+    persist: repository.insert,
+    now: () => "2026-08-01T12:00:00.000Z",
+    suffix: () => "S3RV3R",
+  });
+};
+
+const serverReservationRequest = (
+  idempotencyKey = "server-command-key",
+): ReservationServerCommandInput => {
+  const trip = travels.find((candidate) => candidate.slug === "barrancas-del-cobre")!;
+  const departure = trip.departures.find(
+    (candidate) => candidate.boardingOptions.length > 0,
+  )!;
+  return {
+    tenantSlug: "furiver",
+    idempotencyKey,
+    tripId: trip.id,
+    departureId: departure.id,
+    adults: 2,
+    minors: 1,
+    rooms: 1,
+    extraIds: [],
+    boardingPointId: departure.boardingOptions[0].agencyDeparturePointId,
+    depositPercent: 20,
+    travelers: { status: "pending", drafts: [] },
+  };
+};
+
+test("comando servidor crea una reservación válida desde datos confiables", async () => {
+  const result = await reservationServerCommand().execute(
+    serverReservationRequest(),
+  );
+
+  assert.equal(result.created, true);
+  assert.equal(result.reservation.agency.id, "a-furiver");
+  assert.equal(result.reservation.tour.title, "Barrancas del Cobre");
+  assert.equal(result.reservation.depositPercent, 20);
+});
+
+test("comando servidor ignora importes manipulados fuera de la entrada permitida", async () => {
+  const request = {
+    ...serverReservationRequest(),
+    total: 1,
+    depositAmount: 1,
+    remainingAmount: 0,
+    currency: "USD",
+  };
+  const result = await reservationServerCommand().execute(request);
+
+  assert.notEqual(result.reservation.total, 1);
+  assert.equal(result.reservation.currency, "MXN");
+});
+
+test("comando servidor rechaza un tour de otra agencia", async () => {
+  const otherTrip = travels.find(
+    (candidate) => candidate.agencyId === "a-crisenix",
+  )!;
+  await assert.rejects(
+    reservationServerCommand().execute({
+      ...serverReservationRequest(),
+      tripId: otherTrip.id,
+    }),
+    /La solicitud de reservación no es válida/,
+  );
+});
+
+test("comando servidor rechaza salida y abordaje inválidos", async () => {
+  const command = reservationServerCommand();
+  await assert.rejects(
+    command.execute({ ...serverReservationRequest(), departureId: "missing" }),
+    /La solicitud de reservación no es válida/,
+  );
+  await assert.rejects(
+    command.execute({
+      ...serverReservationRequest("invalid-boarding"),
+      boardingPointId: "missing",
+    }),
+    /La solicitud de reservación no es válida/,
+  );
+});
+
+test("comando servidor rechaza un anticipo no configurado", async () => {
+  await assert.rejects(
+    reservationServerCommand().execute({
+      ...serverReservationRequest(),
+      depositPercent: 30,
+    }),
+    /La solicitud de reservación no es válida/,
+  );
+});
+
+test("comando servidor conserva idempotencia al reintentar", async () => {
+  const command = reservationServerCommand();
+  const request = serverReservationRequest("server-command-retry");
+  const first = await command.execute(request);
+  const retry = await command.execute(request);
+
+  assert.equal(first.created, true);
+  assert.equal(retry.created, false);
+  assert.equal(retry.reservation.reservationCode, first.reservation.reservationCode);
+});
 
 test("repositorio de snapshots inserta una reservación inmutable", async () => {
   const { client, snapshots } = reservationSnapshotRepositoryClient();
