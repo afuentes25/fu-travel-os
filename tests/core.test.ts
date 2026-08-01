@@ -48,9 +48,11 @@ import {
   validateCartRoomCapacity,
 } from "../lib/pricing/index";
 import {
+  createReservationSnapshotRepository,
   finalizeReservation,
   formatReservationTravelerSummary,
   readReservations,
+  type ReservationSnapshot,
   type ReservationSnapshotInput,
 } from "../lib/reservations/index";
 import { lavellaDeparture } from "../components/themes/lavella/lavella-utils";
@@ -172,6 +174,185 @@ const reservationInput = (
     remainingAmount: 14_990,
   };
 };
+
+const reservationSnapshotRepositoryClient = () => {
+  const snapshots: Array<{
+    agencyId: string;
+    idempotencyKey: string;
+    reservationCode: string;
+    status: ReservationSnapshot["status"];
+    currency: "MXN" | "USD";
+    snapshot: ReservationSnapshot;
+  }> = [];
+
+  return {
+    snapshots,
+    client: {
+      async findByIdempotency({
+        agencyId,
+        idempotencyKey,
+      }: {
+        agencyId: string;
+        idempotencyKey: string;
+      }) {
+        return (
+          snapshots.find(
+            (snapshot) =>
+              snapshot.agencyId === agencyId &&
+              snapshot.idempotencyKey === idempotencyKey,
+          ) ?? null
+        );
+      },
+      async findByReservationCode({
+        agencyId,
+        reservationCode,
+      }: {
+        agencyId: string;
+        reservationCode: string;
+      }) {
+        return (
+          snapshots.find(
+            (snapshot) =>
+              snapshot.agencyId === agencyId &&
+              snapshot.reservationCode === reservationCode,
+          ) ?? null
+        );
+      },
+      async insert(snapshot: (typeof snapshots)[number]) {
+        if (
+          snapshots.some(
+            (existing) =>
+              existing.agencyId === snapshot.agencyId &&
+              (existing.idempotencyKey === snapshot.idempotencyKey ||
+                existing.reservationCode === snapshot.reservationCode),
+          )
+        ) {
+          const error = new Error("duplicate") as Error & { code?: string };
+          error.code = "23505";
+          throw error;
+        }
+        snapshots.push(snapshot);
+        return snapshot;
+      },
+    },
+  };
+};
+
+function finalizedReservationForRepository(idempotencyKey = "repository-key") {
+  return finalizeReservation({
+    storage: reservationStorage(),
+    input: reservationInput(idempotencyKey),
+    now: () => "2026-08-01T12:00:00.000Z",
+    suffix: () => "R3P0S1",
+  }).reservation;
+}
+
+test("repositorio de snapshots inserta una reservación inmutable", async () => {
+  const { client, snapshots } = reservationSnapshotRepositoryClient();
+  const reservation = finalizedReservationForRepository();
+  const repository = createReservationSnapshotRepository(client);
+
+  const result = await repository.insert({
+    agencyId: "agency-uuid",
+    idempotencyKey: reservation.idempotencyKey,
+    snapshot: reservation,
+  });
+
+  assert.equal(result.created, true);
+  assert.equal(result.reservation.reservationCode, reservation.reservationCode);
+  assert.equal(snapshots.length, 1);
+});
+
+test("reintento de snapshot devuelve la reservación existente", async () => {
+  const { client, snapshots } = reservationSnapshotRepositoryClient();
+  const reservation = finalizedReservationForRepository();
+  const repository = createReservationSnapshotRepository(client);
+  const input = {
+    agencyId: "agency-uuid",
+    idempotencyKey: reservation.idempotencyKey,
+    snapshot: reservation,
+  };
+
+  await repository.insert(input);
+  const retry = await repository.insert(input);
+
+  assert.equal(retry.created, false);
+  assert.equal(retry.reservation.reservationCode, reservation.reservationCode);
+  assert.equal(snapshots.length, 1);
+});
+
+test("misma idempotencia con contenido distinto produce conflicto seguro", async () => {
+  const { client } = reservationSnapshotRepositoryClient();
+  const reservation = finalizedReservationForRepository();
+  const repository = createReservationSnapshotRepository(client);
+  await repository.insert({
+    agencyId: "agency-uuid",
+    idempotencyKey: reservation.idempotencyKey,
+    snapshot: reservation,
+  });
+
+  await assert.rejects(
+    repository.insert({
+      agencyId: "agency-uuid",
+      idempotencyKey: reservation.idempotencyKey,
+      snapshot: { ...reservation, total: reservation.total + 1 },
+    }),
+    (error: unknown) =>
+      error instanceof Error &&
+      error.name === "ReservationSnapshotConflictError" &&
+      "kind" in error &&
+      error.kind === "idempotency",
+  );
+});
+
+test("folio duplicado distinto produce conflicto seguro", async () => {
+  const { client } = reservationSnapshotRepositoryClient();
+  const first = finalizedReservationForRepository("repository-key-a");
+  const second = finalizedReservationForRepository("repository-key-b");
+  const repository = createReservationSnapshotRepository(client);
+  await repository.insert({
+    agencyId: "agency-uuid",
+    idempotencyKey: first.idempotencyKey,
+    snapshot: first,
+  });
+
+  await assert.rejects(
+    repository.insert({
+      agencyId: "agency-uuid",
+      idempotencyKey: second.idempotencyKey,
+      snapshot: second,
+    }),
+    (error: unknown) =>
+      error instanceof Error &&
+      error.name === "ReservationSnapshotConflictError" &&
+      "kind" in error &&
+      error.kind === "reservation_code",
+  );
+});
+
+test("errores internos del repositorio no exponen detalles de Supabase", async () => {
+  const reservation = finalizedReservationForRepository();
+  const repository = createReservationSnapshotRepository({
+    async findByIdempotency() {
+      throw new Error("database password should never be exposed");
+    },
+    async findByReservationCode() {
+      return null;
+    },
+    async insert() {
+      throw new Error("unreachable");
+    },
+  });
+
+  await assert.rejects(
+    repository.insert({
+      agencyId: "agency-uuid",
+      idempotencyKey: reservation.idempotencyKey,
+      snapshot: reservation,
+    }),
+    /No fue posible guardar la reservación/,
+  );
+});
 
 test("folio de reservación incluye la clave actual del tour", () => {
   const storage = reservationStorage();

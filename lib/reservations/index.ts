@@ -68,6 +68,177 @@ export type ReservationSnapshotInput = {
   remainingAmount: number;
 };
 
+export type ReservationSnapshotPersistenceInput = Readonly<{
+  agencyId: string;
+  idempotencyKey: string;
+  snapshot: ReservationSnapshot;
+}>;
+
+export type PersistedReservationSnapshot = Readonly<{
+  agencyId: string;
+  idempotencyKey: string;
+  reservationCode: string;
+  status: BookingStatus;
+  currency: Currency;
+  snapshot: ReservationSnapshot;
+}>;
+
+/** A deliberately small port so persistence can be tested without Supabase. */
+export interface ReservationSnapshotRepositoryClient {
+  findByIdempotency(input: Readonly<{
+    agencyId: string;
+    idempotencyKey: string;
+  }>): Promise<PersistedReservationSnapshot | null>;
+  findByReservationCode(input: Readonly<{
+    agencyId: string;
+    reservationCode: string;
+  }>): Promise<PersistedReservationSnapshot | null>;
+  insert(
+    snapshot: PersistedReservationSnapshot,
+  ): Promise<PersistedReservationSnapshot>;
+}
+
+export type ReservationSnapshotConflictKind =
+  | "idempotency"
+  | "reservation_code";
+
+export class ReservationSnapshotConflictError extends Error {
+  readonly name = "ReservationSnapshotConflictError";
+
+  constructor(readonly kind: ReservationSnapshotConflictKind) {
+    super(
+      kind === "idempotency"
+        ? "La solicitud de reservación no coincide con el intento anterior."
+        : "El folio de reservación ya existe.",
+    );
+  }
+}
+
+export class ReservationSnapshotRepositoryError extends Error {
+  readonly name = "ReservationSnapshotRepositoryError";
+
+  constructor() {
+    super("No fue posible guardar la reservación. Intenta nuevamente.");
+  }
+}
+
+function canonicalReservationValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalReservationValue);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .filter(([, child]) => child !== undefined)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, child]) => [key, canonicalReservationValue(child)]),
+    );
+  }
+  return value;
+}
+
+function sameReservationSnapshot(
+  left: PersistedReservationSnapshot,
+  right: PersistedReservationSnapshot,
+) {
+  return (
+    JSON.stringify(canonicalReservationValue(left)) ===
+    JSON.stringify(canonicalReservationValue(right))
+  );
+}
+
+function isUniqueViolation(error: unknown) {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: unknown }).code === "23505"
+  );
+}
+
+function asPersistedReservationSnapshot(
+  input: ReservationSnapshotPersistenceInput,
+): PersistedReservationSnapshot {
+  return {
+    agencyId: input.agencyId,
+    idempotencyKey: input.idempotencyKey,
+    reservationCode: input.snapshot.reservationCode,
+    status: input.snapshot.status,
+    currency: input.snapshot.currency,
+    snapshot: input.snapshot,
+  };
+}
+
+/**
+ * Idempotent persistence orchestration shared by the server adapter and unit
+ * tests. It neither mutates nor recalculates the immutable checkout snapshot.
+ */
+export function createReservationSnapshotRepository(
+  client: ReservationSnapshotRepositoryClient,
+) {
+  return {
+    async insert(input: ReservationSnapshotPersistenceInput): Promise<{
+      reservation: ReservationSnapshot;
+      created: boolean;
+    }> {
+      const candidate = asPersistedReservationSnapshot(input);
+
+      try {
+        const existing = await client.findByIdempotency({
+          agencyId: input.agencyId,
+          idempotencyKey: input.idempotencyKey,
+        });
+        if (existing) {
+          if (!sameReservationSnapshot(existing, candidate)) {
+            throw new ReservationSnapshotConflictError("idempotency");
+          }
+          return { reservation: existing.snapshot, created: false };
+        }
+
+        const existingCode = await client.findByReservationCode({
+          agencyId: input.agencyId,
+          reservationCode: input.snapshot.reservationCode,
+        });
+        if (existingCode) {
+          throw new ReservationSnapshotConflictError("reservation_code");
+        }
+
+        const inserted = await client.insert(candidate);
+        return { reservation: inserted.snapshot, created: true };
+      } catch (error) {
+        if (error instanceof ReservationSnapshotConflictError) throw error;
+
+        if (isUniqueViolation(error)) {
+          try {
+            const existing = await client.findByIdempotency({
+              agencyId: input.agencyId,
+              idempotencyKey: input.idempotencyKey,
+            });
+            if (existing) {
+              if (!sameReservationSnapshot(existing, candidate)) {
+                throw new ReservationSnapshotConflictError("idempotency");
+              }
+              return { reservation: existing.snapshot, created: false };
+            }
+
+            const existingCode = await client.findByReservationCode({
+              agencyId: input.agencyId,
+              reservationCode: input.snapshot.reservationCode,
+            });
+            if (existingCode) {
+              throw new ReservationSnapshotConflictError("reservation_code");
+            }
+          } catch (reconciliationError) {
+            if (reconciliationError instanceof ReservationSnapshotConflictError) {
+              throw reconciliationError;
+            }
+          }
+        }
+
+        throw new ReservationSnapshotRepositoryError();
+      }
+    },
+  };
+}
+
 export function formatReservationTravelerSummary(
   travelers: Pick<
     ReservationSnapshot["travelers"],
