@@ -1,4 +1,5 @@
 import { agencies, travels } from "@/data/demo";
+import type { PersistedAgency } from "@/lib/agencies";
 import { createDeterministicDemoPaymentQuote, toMinorUnits } from "@/lib/fx";
 import { confirmBoardingPoint, priceLine, validateCartRoomCapacity } from "@/lib/pricing";
 import {
@@ -36,7 +37,7 @@ export type ReservationServerCommandInput = Readonly<{
 export type ReservationServerCommandDependencies = Readonly<{
   agencies: readonly Agency[];
   travels: readonly TravelProduct[];
-  resolvePersistenceAgencyId: (agency: Agency) => string;
+  resolvePersistedAgency: (tenantSlug: string) => Promise<PersistedAgency | null>;
   findExisting: (input: Readonly<{
     agencyId: string;
     idempotencyKey: string;
@@ -270,8 +271,13 @@ export function createReservationServerCommand(
           Math.round(total * input.depositPercent) / 100;
         const remainingAmount = Math.round((total - depositAmount) * 100) / 100;
 
-        const persistenceAgencyId = dependencies.resolvePersistenceAgencyId(agency);
-        if (!persistenceAgencyId.trim()) throw new ReservationServerCommandError();
+        const persistedAgency = await dependencies.resolvePersistedAgency(
+          agency.slug,
+        );
+        if (!persistedAgency || persistedAgency.slug !== agency.slug) {
+          throw new ReservationServerCommandError("not_found");
+        }
+        const persistenceAgencyId = persistedAgency.id;
         const existing = await dependencies.findExisting({
           agencyId: persistenceAgencyId,
           idempotencyKey: input.idempotencyKey,
@@ -346,16 +352,16 @@ export function createReservationServerCommand(
 export async function executeReservationServerCommand(
   input: ReservationServerCommandInput,
 ) {
-  const {
-    findReservationSnapshotByIdempotency,
-    insertReservationSnapshot,
-  } = await import("@/lib/reservations/supabase-repository");
+  const [reservationRepository, agencyRepository] = await Promise.all([
+    import("@/lib/reservations/supabase-repository"),
+    import("@/lib/agencies/supabase-repository"),
+  ]);
   return createReservationServerCommand({
     agencies,
     travels,
-    resolvePersistenceAgencyId: (agency) => agency.id,
-    findExisting: findReservationSnapshotByIdempotency,
-    persist: insertReservationSnapshot,
+    resolvePersistedAgency: agencyRepository.findPersistedAgencyBySlug,
+    findExisting: reservationRepository.findReservationSnapshotByIdempotency,
+    persist: reservationRepository.insertReservationSnapshot,
     now: () => new Date().toISOString(),
     suffix: () => {
       const uuid = globalThis.crypto?.randomUUID?.();

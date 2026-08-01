@@ -61,6 +61,7 @@ import {
   ReservationServerCommandError,
   type ReservationServerCommandInput,
 } from "../lib/reservations/server-command";
+import { createPersistedAgencyResolver } from "../lib/agencies/index";
 import { createReservationPostHandler } from "../app/api/reservations/route";
 import { lavellaDeparture } from "../components/themes/lavella/lavella-utils";
 import {
@@ -254,19 +255,36 @@ function finalizedReservationForRepository(idempotencyKey = "repository-key") {
   }).reservation;
 }
 
-const reservationServerCommand = () => {
+const reservationServerCommand = (options?: {
+  resolvePersistedAgency?: (slug: string) => Promise<{
+    id: string;
+    slug: string;
+    name: string;
+  } | null>;
+}) => {
   const { client } = reservationSnapshotRepositoryClient();
   const repository = createReservationSnapshotRepository(client);
-  return createReservationServerCommand({
+  const persistedAgencyIds: string[] = [];
+  const command = createReservationServerCommand({
     agencies,
     travels,
-    resolvePersistenceAgencyId: () => "00000000-0000-4000-8000-000000000001",
+    resolvePersistedAgency:
+      options?.resolvePersistedAgency ??
+      (async () => ({
+        id: "00000000-0000-4000-8000-000000000001",
+        slug: "furiver",
+        name: "Furiver",
+      })),
     findExisting: async (input) =>
       (await client.findByIdempotency(input))?.snapshot ?? null,
-    persist: repository.insert,
+    persist: async (input) => {
+      persistedAgencyIds.push(input.agencyId);
+      return repository.insert(input);
+    },
     now: () => "2026-08-01T12:00:00.000Z",
     suffix: () => "S3RV3R",
   });
+  return Object.assign(command, { persistedAgencyIds });
 };
 
 const serverReservationRequest = (
@@ -316,6 +334,44 @@ const reservationApiRequest = (
 const reservationApiSuccess = () => ({
   reservation: finalizedReservationForRepository("api-idempotency-key"),
   created: true,
+});
+
+test("resolvedor de agencias devuelve únicamente el UUID persistido", async () => {
+  const resolver = createPersistedAgencyResolver({
+    async findBySlug(slug) {
+      return slug === "furiver"
+        ? {
+            id: "00000000-0000-4000-8000-000000000001",
+            slug: "furiver",
+            name: "Furiver",
+          }
+        : null;
+    },
+  });
+
+  assert.deepEqual(await resolver.findBySlug("furiver"), {
+    id: "00000000-0000-4000-8000-000000000001",
+    slug: "furiver",
+    name: "Furiver",
+  });
+  assert.equal(await resolver.findBySlug("missing"), null);
+});
+
+test("comando usa UUID persistido y rechaza una agencia inexistente", async () => {
+  const command = reservationServerCommand();
+  await command.execute(serverReservationRequest("persisted-agency"));
+  assert.deepEqual(command.persistedAgencyIds, [
+    "00000000-0000-4000-8000-000000000001",
+  ]);
+
+  const missing = reservationServerCommand({
+    resolvePersistedAgency: async () => null,
+  });
+  await assert.rejects(
+    missing.execute(serverReservationRequest("missing-agency")),
+    (error: unknown) =>
+      error instanceof ReservationServerCommandError && error.kind === "not_found",
+  );
 });
 
 test("POST público registra una reservación con respuesta mínima", async () => {
