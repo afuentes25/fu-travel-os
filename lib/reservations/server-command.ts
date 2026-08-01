@@ -316,6 +316,7 @@ export function createReservationServerCommand(
               minors: input.minors,
               drafts: [...input.travelers.drafts],
             },
+            rooms: input.rooms,
             currency: trip.basePrice.currency,
             ...(fx ? { fx } : {}),
             total,

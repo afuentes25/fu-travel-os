@@ -175,6 +175,7 @@ const reservationInput = (
       minors: 1,
       drafts: [],
     },
+    rooms: 0,
     currency: tour.basePrice.currency,
     total: 29_980,
     depositPercent: 50,
@@ -372,6 +373,35 @@ test("comando usa UUID persistido y rechaza una agencia inexistente", async () =
     (error: unknown) =>
       error instanceof ReservationServerCommandError && error.kind === "not_found",
   );
+});
+
+test("snapshot conserva habitaciones y ocupación server-side", () => {
+  const reservation = finalizedReservationForRepository();
+
+  assert.equal(reservation.rooms, 0);
+  assert.deepEqual(reservation.occupancy, {
+    adults: 2,
+    minors: 1,
+    totalTravelers: 3,
+  });
+});
+
+test("reintento idempotente conserva habitaciones, ocupación e importes", async () => {
+  const command = reservationServerCommand();
+  const request = serverReservationRequest("rooms-occupancy-retry");
+  const first = await command.execute(request);
+  const retry = await command.execute(request);
+
+  assert.equal(retry.created, false);
+  assert.equal(retry.reservation.rooms, 1);
+  assert.deepEqual(retry.reservation.occupancy, {
+    adults: 2,
+    minors: 1,
+    totalTravelers: 3,
+  });
+  assert.equal(retry.reservation.total, first.reservation.total);
+  assert.equal(retry.reservation.depositAmount, first.reservation.depositAmount);
+  assert.equal(retry.reservation.remainingAmount, first.reservation.remainingAmount);
 });
 
 test("POST público registra una reservación con respuesta mínima", async () => {

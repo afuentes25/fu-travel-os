@@ -29,6 +29,12 @@ export type ReservationSnapshot = Readonly<{
     minors: number;
     drafts: readonly TravelerDraft[];
   }>;
+  rooms: number;
+  occupancy: Readonly<{
+    adults: number;
+    minors: number;
+    totalTravelers: number;
+  }>;
   currency: Currency;
   fx?: Readonly<{
     snapshot?: FxSnapshot;
@@ -56,6 +62,7 @@ export type ReservationSnapshotInput = {
     minors: number;
     drafts: TravelerDraft[];
   };
+  rooms?: number;
   currency: Currency;
   fx?: {
     snapshot?: FxSnapshot;
@@ -361,6 +368,12 @@ export function finalizeReservation({
       departure: input.departure,
       boarding: input.boarding,
       travelers: input.travelers,
+      rooms: input.rooms ?? 0,
+      occupancy: {
+        adults: input.travelers.adults,
+        minors: input.travelers.minors,
+        totalTravelers: input.travelers.adults + input.travelers.minors,
+      },
       currency: input.currency,
       ...(input.fx ? { fx: input.fx } : {}),
       total: input.total,
