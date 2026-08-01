@@ -47,6 +47,11 @@ import {
   LAVELLA_CATALOG_COLUMN_OPTIONS,
   resolveLavellaCatalogColumns,
 } from "@/components/themes/lavella/lavella-catalog-config";
+import {
+  createLavellaReservationMirror,
+  createLavellaReservationRequest,
+  type LavellaReservationApiSuccess,
+} from "@/components/themes/lavella/lavella-booking-cart";
 import type {
   Agency,
   CartLine,
@@ -1412,6 +1417,7 @@ function LavellaReservationConfirmation({
   whatsappHref: string;
   onContinue: () => void;
 }) {
+  const isPending = reservation.status === "pending";
   const depositPaid = [
     "partially_paid",
     "confirmed",
@@ -1427,8 +1433,12 @@ function LavellaReservationConfirmation({
           <Icon name="check" />
         </span>
         <div>
-          <div className="eyebrow">RESERVACIÓN CONFIRMADA</div>
-          <h2 id="lavella-confirmation-title">Reservación confirmada</h2>
+          <div className="eyebrow">
+            {isPending ? "SOLICITUD RECIBIDA" : "RESERVACIÓN CONFIRMADA"}
+          </div>
+          <h2 id="lavella-confirmation-title">
+            {isPending ? "Solicitud recibida" : "Reservación confirmada"}
+          </h2>
           <p>
             Conserva tu folio para cualquier seguimiento con{" "}
             {reservation.agency.name}.
@@ -1536,7 +1546,11 @@ function LavellaReservationConfirmation({
             </div>
             <div>
               <dt>
-                {depositPaid ? "Anticipo pagado" : "Anticipo por pagar"}{" "}
+                {isPending
+                  ? "Anticipo pendiente de pago"
+                  : depositPaid
+                    ? "Anticipo pagado"
+                    : "Anticipo por pagar"}{" "}
                 {reservation.depositPercent < 100
                   ? `(${reservation.depositPercent}%)`
                   : ""}
@@ -1549,7 +1563,7 @@ function LavellaReservationConfirmation({
               </dd>
             </div>
             <div className="is-balance">
-              <dt>Saldo pendiente</dt>
+              <dt>{isPending ? "Saldo después del anticipo" : "Saldo pendiente"}</dt>
               <dd>
                 {formatMoney(
                   reservation.remainingAmount,
@@ -1646,6 +1660,7 @@ function Checkout({
   const [reservation, setReservation] = useState<ReservationSnapshot>();
   const finalizingRef = useRef(false);
   const reservationSubmissionKeyRef = useRef<string | null>(null);
+  const [isSubmittingReservation, setIsSubmittingReservation] = useState(false);
   const [error, setError] = useState("");
   const [travelerStatus, setTravelerStatus] = useState<TravelerDataStatus>(
     lines[0]?.travelerDataStatus ?? "complete",
@@ -1860,7 +1875,7 @@ function Checkout({
     "Políticas",
     "Confirmación",
   ];
-  if (!lines.length)
+  if (!lines.length && !reservation)
     return (
       <Cart
         lines={[]}
@@ -1870,7 +1885,7 @@ function Checkout({
         onCheckout={() => {}}
       />
     );
-  const next = () => {
+  const next = async () => {
     if (pricingError) {
       setError(`${pricingError} Actualiza o elimina esta reserva del carrito.`);
       return;
@@ -2024,6 +2039,7 @@ function Checkout({
           createReservationSubmissionKey();
       }
       finalizingRef.current = true;
+      setIsSubmittingReservation(true);
       try {
         const primary = priced[0];
         if (!primary)
@@ -2054,49 +2070,101 @@ function Checkout({
                 Math.round((total - depositAmount) * 100) / 100,
             };
           })();
-        const result = finalizeReservation({
-          storage: window.localStorage,
-          input: {
-            idempotencyKey: reservationSubmissionKeyRef.current,
-            agency,
-            theme,
-            tour: {
-              id: primary.travel.id,
-              code: primary.travel.code,
-              title: primary.travel.title,
+        if (theme === "lavella") {
+          const request = createLavellaReservationRequest({
+            tenantSlug: agency.slug,
+            tripId: primary.travel.id,
+            departureId: primary.departure.id,
+            adults: reservationTravelers.adults,
+            minors: reservationTravelers.minors,
+            rooms:
+              primary.travel.accommodationMode === "hotel_occupancy" ? 1 : 0,
+            extraIds: [...new Set(priced.flatMap((line) => line.extraIds))],
+            boardingPointId: primary.boarding.boardingPointId,
+            depositPercent: depositSnapshot.depositPercent,
+            travelers: { status: travelerStatus, drafts: travelerDrafts },
+          });
+          const apiResponse = await fetch("/api/reservations", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Idempotency-Key": reservationSubmissionKeyRef.current,
             },
-            departure: {
-              id: primary.departure.id,
-              startDate: primary.departure.startDate,
+            body: JSON.stringify(request),
+          });
+          const apiBody = (await apiResponse.json().catch(() => null)) as
+            | LavellaReservationApiSuccess
+            | { error?: string }
+            | null;
+          if (!apiResponse.ok || !apiBody || !("confirmation" in apiBody)) {
+            const message =
+              apiResponse.status === 400
+                ? "Revisa los datos de la reservación."
+                : apiResponse.status === 404
+                  ? "El tour, la salida o el recurso ya no están disponibles."
+                  : apiResponse.status === 409
+                    ? "Existe un conflicto con esta reservación. Intenta nuevamente sin duplicarla."
+                    : "No fue posible registrar la reservación. Revisa tu conexión e inténtalo de nuevo.";
+            throw new Error(message);
+          }
+          setReservation(
+            createLavellaReservationMirror({
+              response: apiBody,
+              agency,
+              theme,
+              idempotencyKey: reservationSubmissionKeyRef.current,
+              tripId: primary.travel.id,
+              departureId: primary.departure.id,
+              boarding: primary.boarding,
+              travelers: request.travelers,
+            }),
+          );
+        } else {
+          const result = finalizeReservation({
+            storage: window.localStorage,
+            input: {
+              idempotencyKey: reservationSubmissionKeyRef.current,
+              agency,
+              theme,
+              tour: {
+                id: primary.travel.id,
+                code: primary.travel.code,
+                title: primary.travel.title,
+              },
+              departure: {
+                id: primary.departure.id,
+                startDate: primary.departure.startDate,
+              },
+              boarding: primary.boarding,
+              travelers: {
+                status: travelerStatus,
+                adults: reservationTravelers.adults,
+                minors: reservationTravelers.minors,
+                drafts: travelerDrafts,
+              },
+              currency: primary.travel.basePrice.currency,
+              ...(checkoutFxSnapshot ||
+              checkoutPaymentAllocation ||
+              checkoutFxConsent
+                ? {
+                    fx: {
+                      snapshot: checkoutFxSnapshot,
+                      allocation: checkoutPaymentAllocation,
+                      consent: checkoutFxConsent,
+                    },
+                  }
+                : {}),
+              total,
+              ...depositSnapshot,
             },
-            boarding: primary.boarding,
-            travelers: {
-              status: travelerStatus,
-              adults: reservationTravelers.adults,
-              minors: reservationTravelers.minors,
-              drafts: travelerDrafts,
-            },
-            currency: primary.travel.basePrice.currency,
-            ...(checkoutFxSnapshot ||
-            checkoutPaymentAllocation ||
-            checkoutFxConsent
-              ? {
-                  fx: {
-                    snapshot: checkoutFxSnapshot,
-                    allocation: checkoutPaymentAllocation,
-                    consent: checkoutFxConsent,
-                  },
-                }
-              : {}),
-            total,
-            ...depositSnapshot,
-          },
-        });
-        setReservation(result.reservation);
+          });
+          setReservation(result.reservation);
+        }
         setStep(6);
         onDone();
       } catch (reservationError) {
         finalizingRef.current = false;
+        setIsSubmittingReservation(false);
         setError(
           reservationError instanceof Error
             ? reservationError.message
@@ -2132,7 +2200,13 @@ function Checkout({
         <div className="eyebrow">
           CHECKOUT DEMOSTRATIVO · NO SE REALIZARÁ NINGÚN COBRO
         </div>
-        <h1>{step === 6 ? "Reserva recibida" : steps[step - 1]}</h1>
+        <h1>
+          {step === 6
+            ? reservation?.status === "pending"
+              ? "Solicitud de reservación recibida"
+              : "Reserva recibida"
+            : steps[step - 1]}
+        </h1>
       </header>
       <ol className="stepper">
         {steps.map((label, index) => (
@@ -2636,7 +2710,9 @@ function Checkout({
             </button>
             <button
               className="primary"
-              disabled={Boolean(roomError || currencyError || pricingError)}
+              disabled={Boolean(
+                roomError || currencyError || pricingError || isSubmittingReservation,
+              )}
               onClick={next}
             >
               {roomError
@@ -2644,7 +2720,11 @@ function Checkout({
                 : currencyError || pricingError
                   ? "Revisa el carrito"
                   : step === 5
-                    ? "Confirmar reserva demo"
+                    ? isSubmittingReservation
+                      ? "Procesando reservación…"
+                      : theme === "lavella"
+                        ? "Finalizar reservación"
+                        : "Confirmar reserva demo"
                     : "Continuar"}{" "}
               <Icon name="arrow" />
             </button>
@@ -3339,7 +3419,10 @@ export function TravelApp({
         lines={cart}
         agency={agency}
         theme={theme}
-        onDone={() => {}}
+        onDone={() => {
+          setCart([]);
+          localStorage.removeItem("fu-travel-booking-draft");
+        }}
         onUpdate={updateLine}
       />
     );
