@@ -5,7 +5,10 @@ import {
   ReservationServerCommandError,
   type ReservationServerCommandInput,
 } from "@/lib/reservations/server-command";
-import { ReservationSnapshotConflictError } from "@/lib/reservations";
+import {
+  ReservationSnapshotConflictError,
+  type ReservationSnapshot,
+} from "@/lib/reservations";
 
 export const runtime = "nodejs";
 
@@ -50,12 +53,7 @@ const reservationRequestSchema = z
 type ReservationCommand = (
   input: ReservationServerCommandInput,
 ) => Promise<{
-  reservation: {
-    id: string;
-    reservationCode: string;
-    status: string;
-    createdAt: string;
-  };
+  reservation: ReservationSnapshot;
   created: boolean;
 }>;
 
@@ -65,8 +63,28 @@ type ReservationRouteDependencies = Readonly<{
 
 const noStoreHeaders = { "Cache-Control": "no-store" };
 
-function response(body: Record<string, string>, status: number) {
+function response(body: unknown, status: number) {
   return Response.json(body, { status, headers: noStoreHeaders });
+}
+
+function confirmationFromSnapshot(snapshot: ReservationSnapshot) {
+  return {
+    tripCode: snapshot.tour.code,
+    tripName: snapshot.tour.title,
+    departureDate: snapshot.departure.startDate,
+    boardingPointName: snapshot.boarding.pointName,
+    rooms: snapshot.rooms,
+    occupancy: {
+      adults: snapshot.occupancy.adults,
+      minors: snapshot.occupancy.minors,
+      totalTravelers: snapshot.occupancy.totalTravelers,
+    },
+    currency: snapshot.currency,
+    total: snapshot.total,
+    depositPercent: snapshot.depositPercent,
+    depositAmount: snapshot.depositAmount,
+    remainingAmount: snapshot.remainingAmount,
+  };
 }
 
 export function createReservationPostHandler(
@@ -109,6 +127,7 @@ export function createReservationPostHandler(
           reservationCode: result.reservation.reservationCode,
           status: result.reservation.status,
           createdAt: result.reservation.createdAt,
+          confirmation: confirmationFromSnapshot(result.reservation),
         },
         201,
       );

@@ -404,22 +404,66 @@ test("reintento idempotente conserva habitaciones, ocupación e importes", async
   assert.equal(retry.reservation.remainingAmount, first.reservation.remainingAmount);
 });
 
-test("POST público registra una reservación con respuesta mínima", async () => {
+test("POST público devuelve una confirmación segura desde el snapshot servidor", async () => {
   const handler = createReservationPostHandler({
     execute: async () => reservationApiSuccess(),
   });
   const response = await handler(reservationApiRequest());
-  const body = (await response.json()) as Record<string, string>;
+  const body = (await response.json()) as {
+    reservationCode: string;
+    confirmation: {
+      tripCode: string;
+      tripName: string;
+      departureDate: string;
+      boardingPointName: string;
+      rooms: number;
+      occupancy: { adults: number; minors: number; totalTravelers: number };
+      currency: string;
+      total: number;
+      depositPercent: number;
+      depositAmount: number;
+      remainingAmount: number;
+    };
+  };
 
   assert.equal(response.status, 201);
   assert.equal(response.headers.get("Cache-Control"), "no-store");
   assert.equal(body.reservationCode, "FT-001-260801-R3P0S1");
   assert.deepEqual(Object.keys(body).sort(), [
+    "confirmation",
     "createdAt",
     "reservationCode",
     "reservationId",
     "status",
   ]);
+  assert.deepEqual(body.confirmation, {
+    tripCode: "FT-001",
+    tripName: "Bosque de luciérnagas",
+    departureDate: travels[0].departures[0].startDate,
+    boardingPointName: "Punto Centro",
+    rooms: 0,
+    occupancy: { adults: 2, minors: 1, totalTravelers: 3 },
+    currency: "MXN",
+    total: 29_980,
+    depositPercent: 50,
+    depositAmount: 14_990,
+    remainingAmount: 14_990,
+  });
+  assert.equal("snapshot" in body, false);
+  assert.equal(JSON.stringify(body).includes("travelers"), false);
+  assert.equal(JSON.stringify(body).includes("fullName"), false);
+});
+
+test("reintento POST devuelve exactamente la misma confirmación", async () => {
+  const handler = createReservationPostHandler({
+    execute: async () => reservationApiSuccess(),
+  });
+  const first = await handler(reservationApiRequest());
+  const retry = await handler(reservationApiRequest());
+  const firstBody = (await first.json()) as { confirmation: unknown };
+  const retryBody = (await retry.json()) as { confirmation: unknown };
+
+  assert.deepEqual(retryBody.confirmation, firstBody.confirmation);
 });
 
 test("POST público rechaza Content-Type incorrecto", async () => {
