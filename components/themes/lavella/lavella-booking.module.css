@@ -147,6 +147,8 @@
 }
 
 .travelerRows button {
+  position: relative;
+  z-index: 1;
   width: 40px;
   height: 40px;
   padding: 0;
@@ -157,6 +159,7 @@
   background: #fff;
   color: #3e4559;
   line-height: 0;
+  pointer-events: auto;
 }
 
 .travelerRows button svg {

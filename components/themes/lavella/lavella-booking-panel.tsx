@@ -39,6 +39,7 @@ import styles from "./lavella-booking.module.css";
 import {
   createLavellaCartTransition,
   getLavellaBookingQuote,
+  updateLavellaTravelerCounts,
 } from "./lavella-booking-cart";
 import {
   lavellaDate,
@@ -79,8 +80,10 @@ export function LavellaBookingPanel({
   const departure =
     trip.departures.find((item) => item.id === departureId) ??
     lavellaDeparture(trip);
-  const [adults, setAdults] = useState(2);
-  const [minors, setMinors] = useState(0);
+  const [travelerCounts, setTravelerCounts] = useState({
+    adults: 2,
+    minors: 0,
+  });
   const [sheet, setSheet] = useState(false);
   const [showMobileBar, setShowMobileBar] = useState(false);
   const [mounted, setMounted] = useState(false);
@@ -90,6 +93,15 @@ export function LavellaBookingPanel({
   const sheetRef = useRef<HTMLDivElement>(null);
   const reservingRef = useRef(false);
   const hotel = trip.accommodationMode === "hotel_occupancy";
+  const { adults, minors } = travelerCounts;
+  const changeTravelerCount = (
+    category: "adults" | "minors",
+    direction: -1 | 1,
+  ) => {
+    setTravelerCounts((current) =>
+      updateLavellaTravelerCounts({ current, category, direction, hotel }),
+    );
+  };
   const occupancy = explorerAdultRateOccupancy(trip, adults);
   const adultRate = trip.pricingOptions.find((rate) => rate.occupancy === occupancy);
   const minorRate = trip.pricingOptions.find((rate) => rate.occupancy === "child");
@@ -390,15 +402,15 @@ export function LavellaBookingPanel({
       </label>
       <div className={styles.travelerRows}>
         {([
-          { label: "Adultos", value: adults, note: "12 años en adelante", minus: () => setAdults((value) => Math.max(1, value - 1)), plus: () => setAdults((value) => Math.min(hotel ? 5 : 8, value + 1)) },
-          { label: "Menores", value: minors, note: "3 a 11 años", minus: () => setMinors((value) => Math.max(0, value - 1)), plus: () => setMinors((value) => Math.min(4, value + 1)) },
-        ] as const).map(({ label, value, note, minus, plus }) => (
+          { label: "Adultos", category: "adults", value: adults, note: "12 años en adelante" },
+          { label: "Menores", category: "minors", value: minors, note: "3 a 11 años" },
+        ] as const).map(({ label, category, value, note }) => (
           <div key={label}>
             <span><b>{label}</b><small>{note}</small></span>
             <span>
-              <button onClick={minus} aria-label={`Quitar ${label.toLowerCase()}`}><FaMinus /></button>
+              <button type="button" onClick={() => changeTravelerCount(category, -1)} aria-label={`Quitar ${label.toLowerCase()}`}><FaMinus /></button>
               <b>{value}</b>
-              <button onClick={plus} aria-label={`Agregar ${label.toLowerCase()}`}><FaPlus /></button>
+              <button type="button" onClick={() => changeTravelerCount(category, 1)} aria-label={`Agregar ${label.toLowerCase()}`}><FaPlus /></button>
             </span>
           </div>
         ))}

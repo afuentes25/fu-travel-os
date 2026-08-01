@@ -66,8 +66,11 @@ import { createReservationPostHandler } from "../app/api/reservations/route";
 import { lavellaDeparture } from "../components/themes/lavella/lavella-utils";
 import {
   createLavellaCartTransition,
+  createLavellaReservationMirror,
+  createLavellaReservationRequest,
   getLavellaBookingQuote,
   lavellaCartHref,
+  updateLavellaTravelerCounts,
 } from "../components/themes/lavella/lavella-booking-cart";
 import {
   clearLavellaCatalogFilters,
@@ -3127,6 +3130,140 @@ test("panel Lavella impide doble activación del agregado", () => {
   );
   assert.match(booking, /reservingRef\.current/);
   assert.match(booking, /if \(!canReserve \|\| !adultLine \|\| reservingRef\.current\) return/);
+});
+
+test("controles Lavella actualizan adultos y menores una sola vez", () => {
+  const adults = updateLavellaTravelerCounts({
+    current: { adults: 2, minors: 0 },
+    category: "adults",
+    direction: 1,
+    hotel: true,
+  });
+  const minors = updateLavellaTravelerCounts({
+    current: adults,
+    category: "minors",
+    direction: 1,
+    hotel: true,
+  });
+
+  assert.deepEqual(adults, { adults: 3, minors: 0 });
+  assert.deepEqual(minors, { adults: 3, minors: 1 });
+});
+
+test("controles Lavella respetan mínimos y conservan ocupación para el borrador", () => {
+  const minimum = updateLavellaTravelerCounts({
+    current: { adults: 1, minors: 0 },
+    category: "adults",
+    direction: -1,
+    hotel: true,
+  });
+  const unchangedMinors = updateLavellaTravelerCounts({
+    current: minimum,
+    category: "minors",
+    direction: -1,
+    hotel: true,
+  });
+  const booking = readFileSync(
+    "components/themes/lavella/lavella-booking-panel.tsx",
+    "utf8",
+  );
+
+  assert.deepEqual(unchangedMinors, { adults: 1, minors: 0 });
+  assert.match(booking, /adults,\s*minors,\s*occupancy,/);
+  assert.match(booking, /type="button" onClick=\{\(\) => changeTravelerCount/);
+});
+
+test("checkout Lavella envía únicamente el payload permitido al endpoint", () => {
+  const payload = createLavellaReservationRequest({
+    tenantSlug: "furiver",
+    tripId: "trip-4",
+    departureId: "trip-4-dep-1",
+    adults: 2,
+    minors: 1,
+    rooms: 1,
+    extraIds: ["extra-1", "extra-1"],
+    boardingPointId: "p1",
+    depositPercent: 20,
+    travelers: { status: "pending", drafts: [] },
+  });
+
+  assert.deepEqual(Object.keys(payload).sort(), [
+    "adults",
+    "boardingPointId",
+    "departureId",
+    "depositPercent",
+    "extraIds",
+    "minors",
+    "rooms",
+    "tenantSlug",
+    "travelers",
+    "tripId",
+  ]);
+  assert.deepEqual(payload.extraIds, ["extra-1"]);
+  assert.equal("agencyId" in payload, false);
+  assert.equal("total" in payload, false);
+  assert.equal("currency" in payload, false);
+  assert.equal("snapshot" in payload, false);
+});
+
+test("checkout Lavella usa la confirmación del servidor sin recalcular importes", () => {
+  const agency = agencies.find((item) => item.slug === "furiver")!;
+  const response = {
+    reservationId: "FT-004-260801-SERVER",
+    reservationCode: "FT-004-260801-SERVER",
+    status: "pending" as const,
+    createdAt: "2026-08-01T12:00:00.000Z",
+    confirmation: {
+      tripCode: "FT-004",
+      tripName: "Barrancas del Cobre",
+      departureDate: "2026-08-12T00:00:00.000Z",
+      boardingPointName: "Metro Aragón",
+      rooms: 1,
+      occupancy: { adults: 2, minors: 1, totalTravelers: 3 },
+      currency: "MXN" as const,
+      total: 45_269,
+      depositPercent: 20,
+      depositAmount: 9_053.8,
+      remainingAmount: 36_215.2,
+    },
+  };
+  const mirror = createLavellaReservationMirror({
+    response,
+    agency,
+    theme: "lavella",
+    idempotencyKey: "checkout-same-key",
+    tripId: "trip-4",
+    departureId: "trip-4-dep-1",
+    boarding: {
+      boardingOptionId: "trip-4-dep-1-b-0",
+      boardingPointId: "p1",
+      pointName: "Valor del cliente que no debe prevalecer",
+      city: "Ciudad de México",
+      meetingTime: "05:20",
+      surchargeAmount: 0,
+      currency: "MXN",
+    },
+    travelers: { status: "pending", drafts: [] },
+  });
+
+  assert.equal(mirror.total, response.confirmation.total);
+  assert.equal(mirror.depositAmount, response.confirmation.depositAmount);
+  assert.equal(mirror.remainingAmount, response.confirmation.remainingAmount);
+  assert.equal(mirror.boarding.pointName, "Metro Aragón");
+  assert.deepEqual(mirror.occupancy, response.confirmation.occupancy);
+});
+
+test("checkout Lavella conserva la clave al reintentar y bloquea doble envío", () => {
+  const checkout = readFileSync("components/legacy-travel-app.tsx", "utf8");
+  assert.match(checkout, /"Idempotency-Key": reservationSubmissionKeyRef\.current/);
+  assert.match(checkout, /if \(finalizingRef\.current\) return/);
+  assert.match(checkout, /setIsSubmittingReservation\(true\)/);
+  assert.match(checkout, /setIsSubmittingReservation\(false\)/);
+  assert.match(checkout, /fetch\("\/api\/reservations"/);
+  assert.match(checkout, /setStep\(6\);\s+onDone\(\);/);
+  assert.match(checkout, /apiResponse\.status === 400/);
+  assert.match(checkout, /apiResponse\.status === 404/);
+  assert.match(checkout, /apiResponse\.status === 409/);
 });
 
 test("proveedor determinista no se presenta como Banxico", async () => {

@@ -7,6 +7,7 @@ import {
   validateDemoFxOrderShape,
   validateFxGroupConsistency,
 } from "@/lib/pricing";
+import type { ReservationSnapshot } from "@/lib/reservations";
 import { getTripDisplayStartingPrice } from "@/lib/trip-sections";
 import type {
   Agency,
@@ -14,7 +15,147 @@ import type {
   Currency,
   TravelProduct,
   TravelPricingOption,
+  TravelerDataStatus,
+  TravelerDraft,
+  BookingBoardingSnapshot,
+  TravelTheme,
 } from "@/types";
+
+export type LavellaReservationRequest = Readonly<{
+  tenantSlug: string;
+  tripId: string;
+  departureId: string;
+  adults: number;
+  minors: number;
+  rooms: number;
+  extraIds: string[];
+  boardingPointId: string;
+  depositPercent: number;
+  travelers: Readonly<{
+    status: TravelerDataStatus;
+    drafts: readonly TravelerDraft[];
+  }>;
+}>;
+
+export type LavellaReservationApiSuccess = Readonly<{
+  reservationId: string;
+  reservationCode: string;
+  status: ReservationSnapshot["status"];
+  createdAt: string;
+  confirmation: Readonly<{
+    tripCode: string;
+    tripName: string;
+    departureDate: string;
+    boardingPointName: string;
+    rooms: number;
+    occupancy: Readonly<{
+      adults: number;
+      minors: number;
+      totalTravelers: number;
+    }>;
+    currency: Currency;
+    total: number;
+    depositPercent: number;
+    depositAmount: number;
+    remainingAmount: number;
+  }>;
+}>;
+
+/** Builds the allowlisted API payload: money and server-owned identifiers never leave checkout. */
+export function createLavellaReservationRequest({
+  tenantSlug,
+  tripId,
+  departureId,
+  adults,
+  minors,
+  rooms,
+  extraIds,
+  boardingPointId,
+  depositPercent,
+  travelers,
+}: LavellaReservationRequest): LavellaReservationRequest {
+  return {
+    tenantSlug,
+    tripId,
+    departureId,
+    adults,
+    minors,
+    rooms,
+    extraIds: [...new Set(extraIds)],
+    boardingPointId,
+    depositPercent,
+    travelers: {
+      status: travelers.status,
+      drafts: [...travelers.drafts],
+    },
+  };
+}
+
+/**
+ * Adapts the successful server response for the existing confirmation view.
+ * Monetary and trip fields always come from the persisted snapshot projection.
+ */
+export function createLavellaReservationMirror({
+  response,
+  agency,
+  theme,
+  idempotencyKey,
+  tripId,
+  departureId,
+  boarding,
+  travelers,
+}: {
+  response: LavellaReservationApiSuccess;
+  agency: Pick<Agency, "id" | "name" | "contact" | "slug">;
+  theme: TravelTheme;
+  idempotencyKey: string;
+  tripId: string;
+  departureId: string;
+  boarding: BookingBoardingSnapshot;
+  travelers: LavellaReservationRequest["travelers"];
+}): ReservationSnapshot {
+  const { confirmation } = response;
+  return {
+    id: response.reservationId,
+    idempotencyKey,
+    reservationCode: response.reservationCode,
+    agency: {
+      id: agency.id,
+      name: agency.name,
+      whatsapp: agency.contact.whatsapp,
+    },
+    tenant: agency.slug,
+    theme,
+    tour: {
+      id: tripId,
+      code: confirmation.tripCode,
+      title: confirmation.tripName,
+    },
+    departure: {
+      id: departureId,
+      startDate: confirmation.departureDate,
+    },
+    boarding: {
+      ...boarding,
+      pointName: confirmation.boardingPointName,
+    },
+    travelers: {
+      status: travelers.status,
+      adults: confirmation.occupancy.adults,
+      minors: confirmation.occupancy.minors,
+      drafts: [...travelers.drafts],
+    },
+    rooms: confirmation.rooms,
+    occupancy: confirmation.occupancy,
+    currency: confirmation.currency,
+    total: confirmation.total,
+    depositPercent: confirmation.depositPercent,
+    depositAmount: confirmation.depositAmount,
+    remainingAmount: confirmation.remainingAmount,
+    createdAt: response.createdAt,
+    status: response.status,
+  };
+}
 
 export type LavellaBookingQuote = {
   subtotal: number;
@@ -45,6 +186,34 @@ export type LavellaBookingDraft = {
   tenant: string;
   theme: "lavella";
 };
+
+export type LavellaTravelerCounts = Readonly<{
+  adults: number;
+  minors: number;
+}>;
+
+export function updateLavellaTravelerCounts({
+  current,
+  category,
+  direction,
+  hotel,
+}: {
+  current: LavellaTravelerCounts;
+  category: "adults" | "minors";
+  direction: -1 | 1;
+  hotel: boolean;
+}): LavellaTravelerCounts {
+  if (category === "adults") {
+    return {
+      ...current,
+      adults: Math.min(hotel ? 5 : 8, Math.max(1, current.adults + direction)),
+    };
+  }
+  return {
+    ...current,
+    minors: Math.min(4, Math.max(0, current.minors + direction)),
+  };
+}
 
 export function getLavellaBookingQuote({
   trip,
