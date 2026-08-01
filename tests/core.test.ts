@@ -62,6 +62,11 @@ import {
   type ReservationServerCommandInput,
 } from "../lib/reservations/server-command";
 import { createPersistedAgencyResolver } from "../lib/agencies/index";
+import {
+  AdminReservationListError,
+  createAdminReservationListing,
+  type AdminReservationListRow,
+} from "../lib/reservations/admin-listing";
 import { createReservationPostHandler } from "../app/api/reservations/route";
 import { lavellaDeparture } from "../components/themes/lavella/lavella-utils";
 import {
@@ -259,6 +264,83 @@ function finalizedReservationForRepository(idempotencyKey = "repository-key") {
   }).reservation;
 }
 
+function adminReservationRow(input: Readonly<{
+  id: string;
+  code: string;
+  status: ReservationSnapshot["status"];
+  createdAt: string;
+}>): AdminReservationListRow {
+  const snapshot = finalizedReservationForRepository(`admin-${input.id}`);
+  return {
+    id: input.id,
+    reservation_code: input.code,
+    status: input.status,
+    currency: snapshot.currency,
+    created_at: input.createdAt,
+    snapshot: {
+      ...snapshot,
+      reservationCode: input.code,
+      status: input.status,
+      createdAt: input.createdAt,
+      travelers: {
+        ...snapshot.travelers,
+        drafts: [
+          {
+            id: "adult-1",
+            category: "adult",
+            sequence: 1,
+            fullName: "Dato privado",
+            completionStatus: "complete",
+          },
+        ],
+      },
+    },
+  };
+}
+
+function adminReservationRepositoryFixture() {
+  const requests: Array<{
+    agencyId: string;
+    status?: ReservationSnapshot["status"];
+    limit: number;
+    offset: number;
+  }> = [];
+  const rows = [
+    adminReservationRow({
+      id: "reservation-old",
+      code: "FT-001-OLD",
+      status: "pending",
+      createdAt: "2026-08-01T08:00:00.000Z",
+    }),
+    adminReservationRow({
+      id: "reservation-new",
+      code: "FT-001-NEW",
+      status: "confirmed",
+      createdAt: "2026-08-02T08:00:00.000Z",
+    }),
+  ];
+  const repository = createAdminReservationListing({
+    agencyResolver: {
+      async findBySlug(slug) {
+        return slug === "furiver"
+          ? {
+              id: "agency-furiver-persisted",
+              slug: "furiver",
+              name: "Furiver",
+            }
+          : null;
+      },
+    },
+    reservationClient: {
+      async list(input) {
+        requests.push(input);
+        return rows;
+      },
+    },
+  });
+  return { repository, requests };
+}
+
 const reservationServerCommand = (options?: {
   resolvePersistedAgency?: (slug: string) => Promise<{
     id: string;
@@ -359,6 +441,83 @@ test("resolvedor de agencias devuelve únicamente el UUID persistido", async () 
     name: "Furiver",
   });
   assert.equal(await resolver.findBySlug("missing"), null);
+});
+
+test("repositorio administrativo aísla reservaciones por UUID persistido y ordena por creación", async () => {
+  const { repository, requests } = adminReservationRepositoryFixture();
+  const reservations = await repository.list({ agencySlug: "furiver" });
+
+  assert.deepEqual(requests, [
+    {
+      agencyId: "agency-furiver-persisted",
+      limit: 25,
+      offset: 0,
+    },
+  ]);
+  assert.deepEqual(
+    reservations.map((reservation) => reservation.reservationCode),
+    ["FT-001-NEW", "FT-001-OLD"],
+  );
+});
+
+test("repositorio administrativo aplica status, paginación y límite máximo", async () => {
+  const { repository, requests } = adminReservationRepositoryFixture();
+  await repository.list({
+    agencySlug: "furiver",
+    status: "pending",
+    limit: 999,
+    offset: -4,
+  });
+
+  assert.deepEqual(requests[0], {
+    agencyId: "agency-furiver-persisted",
+    status: "pending",
+    limit: 100,
+    offset: 0,
+  });
+});
+
+test("repositorio administrativo proyecta campos seguros sin snapshot ni viajeros", async () => {
+  const { repository } = adminReservationRepositoryFixture();
+  const [reservation] = await repository.list({ agencySlug: "furiver" });
+
+  assert.equal("snapshot" in reservation, false);
+  assert.equal(JSON.stringify(reservation).includes("Dato privado"), false);
+  assert.equal(JSON.stringify(reservation).includes("travelers"), false);
+  assert.deepEqual(reservation.occupancy, {
+    adults: 2,
+    minors: 1,
+    totalTravelers: 3,
+  });
+});
+
+test("repositorio administrativo entrega not found e internal saneados", async () => {
+  const { repository } = adminReservationRepositoryFixture();
+  await assert.rejects(
+    repository.list({ agencySlug: "missing" }),
+    (error: unknown) =>
+      error instanceof AdminReservationListError && error.kind === "not_found",
+  );
+
+  const failing = createAdminReservationListing({
+    agencyResolver: {
+      async findBySlug() {
+        throw new Error("SQL details must stay private");
+      },
+    },
+    reservationClient: {
+      async list() {
+        return [];
+      },
+    },
+  });
+  await assert.rejects(
+    failing.list({ agencySlug: "furiver" }),
+    (error: unknown) =>
+      error instanceof AdminReservationListError &&
+      error.kind === "internal" &&
+      !error.message.includes("SQL"),
+  );
 });
 
 test("comando usa UUID persistido y rechaza una agencia inexistente", async () => {
