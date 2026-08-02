@@ -68,6 +68,11 @@ import {
   type AdminAgencyMembershipRecord,
 } from "../lib/agencies/admin-access-core";
 import {
+  CustomerAgencyAccessError,
+  createCustomerAgencyAccessResolver,
+  type CustomerAgencyAccountRecord,
+} from "../lib/customers/customer-access-core";
+import {
   parseAdminReservationPage,
   parseAdminReservationStatus,
   safeAdminNext,
@@ -195,6 +200,42 @@ function adminAccessFixture(input: Readonly<{
         queriedUserIds.push(userId);
         if (input.failMemberships) throw new Error("SQL details");
         return input.memberships ?? [];
+      },
+    },
+  });
+  return { resolver, queriedUserIds };
+}
+
+const customerAccount = (
+  input: Partial<CustomerAgencyAccountRecord> = {},
+): CustomerAgencyAccountRecord => ({
+  customerAccountId: "customer-furiver",
+  agencyId: "agency-furiver",
+  agencySlug: "furiver",
+  agencyName: "Furiver",
+  status: "active",
+  ...input,
+});
+
+function customerAccessFixture(input: Readonly<{
+  identity?: { userId: string; email: string | null } | null;
+  accounts?: readonly CustomerAgencyAccountRecord[];
+  failIdentity?: boolean;
+  failAccounts?: boolean;
+}> = {}) {
+  const queriedUserIds: string[] = [];
+  const resolver = createCustomerAgencyAccessResolver({
+    async getIdentity() {
+      if (input.failIdentity) throw new Error("token details");
+      return input.identity === undefined
+        ? { userId: "customer-verified", email: "cliente@furiver.test" }
+        : input.identity;
+    },
+    accountRepository: {
+      async listActiveByUserId(userId) {
+        queriedUserIds.push(userId);
+        if (input.failAccounts) throw new Error("SQL details");
+        return input.accounts ?? [];
       },
     },
   });
@@ -398,6 +439,89 @@ test("errores administrativos se sanejan y la consulta queda limitada al usuario
 
   const { resolver } = adminAccessFixture({ memberships: [adminMembership()] });
   const access = await resolver.resolve();
+  assert.equal(JSON.stringify(access).includes("token"), false);
+  assert.equal(JSON.stringify(access).includes("cookie"), false);
+  assert.equal(JSON.stringify(access).includes("serviceRole"), false);
+});
+
+test("acceso de cliente no consulta cuentas sin una sesión verificada", async () => {
+  const { resolver, queriedUserIds } = customerAccessFixture({ identity: null });
+  assert.deepEqual(await resolver.resolve(), { status: "unauthenticated" });
+  assert.deepEqual(queriedUserIds, []);
+});
+
+test("acceso de cliente rechaza cuentas inexistentes, invitadas o suspendidas", async () => {
+  for (const accounts of [
+    [],
+    [customerAccount({ status: "invited" })],
+    [customerAccount({ status: "suspended" })],
+  ]) {
+    const { resolver } = customerAccessFixture({ accounts });
+    assert.deepEqual(await resolver.resolve(), { status: "forbidden" });
+  }
+});
+
+test("una cuenta de cliente activa se selecciona automáticamente", async () => {
+  const { resolver, queriedUserIds } = customerAccessFixture({
+    accounts: [customerAccount()],
+  });
+  const access = await resolver.resolve();
+  assert.equal(access.status, "authorized");
+  if (access.status === "authorized") {
+    assert.deepEqual(access.account, {
+      customerAccountId: "customer-furiver",
+      agencyId: "agency-furiver",
+      agencySlug: "furiver",
+      agencyName: "Furiver",
+    });
+    assert.deepEqual(access.identity, {
+      userId: "customer-verified",
+      email: "cliente@furiver.test",
+    });
+  }
+  assert.deepEqual(queriedUserIds, ["customer-verified"]);
+});
+
+test("múltiples cuentas activas exigen selección y un slug ajeno permanece prohibido", async () => {
+  const { resolver } = customerAccessFixture({
+    accounts: [
+      customerAccount(),
+      customerAccount({
+        customerAccountId: "customer-crisenix",
+        agencyId: "agency-crisenix",
+        agencySlug: "crisenix",
+        agencyName: "Crisenix",
+      }),
+    ],
+  });
+  assert.equal((await resolver.resolve()).status, "selection_required");
+  const selected = await resolver.resolve({ requestedAgencySlug: "crisenix" });
+  assert.equal(selected.status, "authorized");
+  assert.deepEqual(
+    await resolver.resolve({ requestedAgencySlug: "otra-agencia" }),
+    { status: "forbidden" },
+  );
+});
+
+test("acceso de cliente permanece separado del administrativo y sanea errores", async () => {
+  const { resolver } = customerAccessFixture({ accounts: [] });
+  assert.deepEqual(await resolver.resolve(), { status: "forbidden" });
+
+  const failing = customerAccessFixture({ failAccounts: true });
+  await assert.rejects(
+    failing.resolver.resolve(),
+    (error: unknown) =>
+      error instanceof CustomerAgencyAccessError && !error.message.includes("SQL"),
+  );
+
+  const source = readFileSync("lib/customers/customer-access-repository.ts", "utf8");
+  assert.match(source, /\.eq\("user_id", userId\)/);
+  assert.match(source, /\.eq\("status", "active"\)/);
+  assert.equal(source.includes("agency_memberships"), false);
+  assert.equal(source.includes("reservation_customer_access"), false);
+  assert.equal(source.includes("SUPABASE_SERVICE_ROLE_KEY"), false);
+
+  const access = await customerAccessFixture({ accounts: [customerAccount()] }).resolver.resolve();
   assert.equal(JSON.stringify(access).includes("token"), false);
   assert.equal(JSON.stringify(access).includes("cookie"), false);
   assert.equal(JSON.stringify(access).includes("serviceRole"), false);
