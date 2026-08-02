@@ -82,6 +82,11 @@ import {
   createAdminReservationListing,
   type AdminReservationListRow,
 } from "../lib/reservations/admin-listing";
+import {
+  AdminReservationDetailError,
+  createAdminReservationDetail,
+  type AdminReservationDetailRow,
+} from "../lib/reservations/admin-detail";
 import { createReservationPostHandler } from "../app/api/reservations/route";
 import { lavellaDeparture } from "../components/themes/lavella/lavella-utils";
 import {
@@ -903,6 +908,87 @@ test("repositorio administrativo entrega not found e internal saneados", async (
       error.kind === "internal" &&
       !error.message.includes("SQL"),
   );
+});
+
+const adminDetailReservationId = "0d2b0aa2-d3b0-4cf6-9cb9-cf92641aa001";
+
+function adminReservationDetailRow(
+  snapshot: unknown = adminReservationRow({
+    id: adminDetailReservationId,
+    code: "FT-001-DETAIL",
+    status: "pending",
+    createdAt: "2026-08-03T08:00:00.000Z",
+  }).snapshot,
+): AdminReservationDetailRow {
+  return {
+    id: adminDetailReservationId,
+    reservation_code: "FT-001-DETAIL",
+    status: "pending",
+    currency: "MXN",
+    created_at: "2026-08-03T08:00:00.000Z",
+    snapshot,
+  };
+}
+
+test("detalle administrativo valida UUID antes de consultar y exige agencia autorizada", async () => {
+  let calls = 0;
+  const detail = createAdminReservationDetail({
+    reservationClient: { async find() { calls += 1; return null; } },
+  });
+  await assert.rejects(
+    detail.find({ agencyId: "agency-furiver", reservationId: "no-es-uuid" }),
+    (error: unknown) => error instanceof AdminReservationDetailError && error.kind === "invalid",
+  );
+  assert.equal(calls, 0);
+
+  const requests: Array<{ agencyId: string; reservationId: string }> = [];
+  const authorized = createAdminReservationDetail({
+    reservationClient: { async find(input) { requests.push(input); return adminReservationDetailRow(); } },
+  });
+  await authorized.find({ agencyId: "agency-furiver", reservationId: adminDetailReservationId });
+  assert.deepEqual(requests, [{ agencyId: "agency-furiver", reservationId: adminDetailReservationId }]);
+});
+
+test("detalle administrativo proyecta snapshots modernos e históricos de forma segura", async () => {
+  const modern = adminReservationDetailRow();
+  const modernSnapshot = modern.snapshot as ReservationSnapshot;
+  const detail = createAdminReservationDetail({ reservationClient: { async find() { return modern; } } });
+  const result = await detail.find({ agencyId: "agency-furiver", reservationId: adminDetailReservationId });
+  assert.deepEqual(result.occupancy, { rooms: modernSnapshot.rooms, adults: 2, minors: 1, totalTravelers: 3 });
+  assert.equal(result.primaryContact, null);
+  assert.equal(result.travelerDataStatus, "pending");
+  assert.equal("snapshot" in result, false);
+  assert.equal("idempotencyKey" in result, false);
+  assert.equal("agencyId" in result, false);
+
+  const { rooms: _rooms, occupancy: _occupancy, ...historical } = modernSnapshot;
+  const historicalDetail = createAdminReservationDetail({
+    reservationClient: { async find() { return adminReservationDetailRow(historical); } },
+  });
+  const recovered = await historicalDetail.find({ agencyId: "agency-furiver", reservationId: adminDetailReservationId });
+  assert.deepEqual(recovered.occupancy, { rooms: null, adults: 2, minors: 1, totalTravelers: 3 });
+  assert.equal(recovered.travelers.length, 1);
+});
+
+test("detalle administrativo mantiene aislamiento y sanea errores internos", async () => {
+  const isolated = createAdminReservationDetail({ reservationClient: { async find() { return null; } } });
+  await assert.rejects(
+    isolated.find({ agencyId: "agency-crisenix", reservationId: adminDetailReservationId }),
+    (error: unknown) => error instanceof AdminReservationDetailError && error.kind === "not_found",
+  );
+  const failing = createAdminReservationDetail({ reservationClient: { async find() { throw new Error("SQL secret details"); } } });
+  await assert.rejects(
+    failing.find({ agencyId: "agency-furiver", reservationId: adminDetailReservationId }),
+    (error: unknown) => error instanceof AdminReservationDetailError && error.kind === "internal" && !error.message.includes("SQL"),
+  );
+});
+
+test("página de detalle autoriza antes de consultar y repositorio filtra por agencia", () => {
+  const page = readFileSync("app/admin/[agencySlug]/reservaciones/[reservationId]/page.tsx", "utf8");
+  assert.ok(page.indexOf("resolveAdminAgencyAccess") < page.indexOf("createAdminReservationDetailRepository().find"));
+  assert.equal(page.includes("error.message"), false);
+  const repository = readFileSync("lib/reservations/admin-detail-repository.ts", "utf8");
+  assert.match(repository, /\.eq\("id", reservationId\)[\s\S]*\.eq\("agency_id", agencyId\)/);
 });
 
 test("comando usa UUID persistido y rechaza una agencia inexistente", async () => {

@@ -50,7 +50,13 @@ function date(value: string) {
       });
 }
 
-function ReservationCells({ reservation }: { reservation: AdminReservationListItem }) {
+function ReservationCells({
+  reservation,
+  agencySlug,
+}: {
+  reservation: AdminReservationListItem;
+  agencySlug: string;
+}) {
   return (
     <>
       <td><strong>{reservation.reservationCode}</strong><span className={styles.status}>{adminReservationStatusLabel(reservation.status)}</span></td>
@@ -63,11 +69,18 @@ function ReservationCells({ reservation }: { reservation: AdminReservationListIt
       <td>{valueOrUnavailable(reservation.occupancy.totalTravelers)}</td>
       <td><strong>{money(reservation.total, reservation.currency)}</strong><small>{reservation.currency}</small></td>
       <td>{money(reservation.depositAmount, reservation.currency)}<small>Saldo: {money(reservation.remainingAmount, reservation.currency)}</small></td>
+      <td><Link className={styles.filterActive} href={`/admin/${encodeURIComponent(agencySlug)}/reservaciones/${encodeURIComponent(reservation.id)}`}>Ver detalle</Link></td>
     </>
   );
 }
 
-function ReservationCard({ reservation }: { reservation: AdminReservationListItem }) {
+function ReservationCard({
+  reservation,
+  agencySlug,
+}: {
+  reservation: AdminReservationListItem;
+  agencySlug: string;
+}) {
   return (
     <article className={styles.reservationCard}>
       <div><span>Folio</span><strong>{reservation.reservationCode}</strong><em>{adminReservationStatusLabel(reservation.status)}</em></div>
@@ -76,6 +89,7 @@ function ReservationCard({ reservation }: { reservation: AdminReservationListIte
       <div><span>Abordaje</span><strong>{valueOrUnavailable(reservation.boardingPointName)}</strong></div>
       <div><span>Viajeros</span><strong>{valueOrUnavailable(reservation.occupancy.totalTravelers)}</strong><small>{travelerCount(reservation.occupancy.adults, "adultos")} · {travelerCount(reservation.occupancy.minors, "menores")} · {travelerCount(reservation.rooms, "habitaciones")}</small></div>
       <div><span>Total</span><strong>{money(reservation.total, reservation.currency)}</strong><small>Anticipo: {money(reservation.depositAmount, reservation.currency)} · Saldo: {money(reservation.remainingAmount, reservation.currency)}</small></div>
+      <Link className={styles.filterActive} href={`/admin/${encodeURIComponent(agencySlug)}/reservaciones/${encodeURIComponent(reservation.id)}`}>Ver detalle</Link>
     </article>
   );
 }
@@ -167,11 +181,11 @@ export default async function AdminReservationsPage({
             <div className={styles.tableWrap}>
               <table className={styles.reservationTable}>
                 <caption className="sr-only">Listado de reservaciones de {access.agency.agencyName}</caption>
-                <thead><tr><th>Folio y estado</th><th>Tour</th><th>Fechas</th><th>Abordaje</th><th>Hab.</th><th>Adultos</th><th>Menores</th><th>Total viajeros</th><th>Total</th><th>Anticipo y saldo</th></tr></thead>
-                <tbody>{reservations.map((reservation) => <tr key={reservation.id}><ReservationCells reservation={reservation} /></tr>)}</tbody>
+                <thead><tr><th>Folio y estado</th><th>Tour</th><th>Fechas</th><th>Abordaje</th><th>Hab.</th><th>Adultos</th><th>Menores</th><th>Total viajeros</th><th>Total</th><th>Anticipo y saldo</th><th><span className="sr-only">Acciones</span></th></tr></thead>
+                <tbody>{reservations.map((reservation) => <tr key={reservation.id}><ReservationCells reservation={reservation} agencySlug={access.agency.agencySlug} /></tr>)}</tbody>
               </table>
             </div>
-            <div className={styles.mobileCards}>{reservations.map((reservation) => <ReservationCard reservation={reservation} key={reservation.id} />)}</div>
+            <div className={styles.mobileCards}>{reservations.map((reservation) => <ReservationCard reservation={reservation} agencySlug={access.agency.agencySlug} key={reservation.id} />)}</div>
           </>
         )}
         <nav className={styles.pagination} aria-label="Paginación de reservaciones">
