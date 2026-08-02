@@ -1,5 +1,6 @@
 import type { PersistedAgency } from "@/lib/agencies";
 import type { BookingStatus, Currency } from "@/types";
+import { projectReservationSnapshotOperational } from "./snapshot-projection";
 
 const DEFAULT_LIMIT = 25;
 const MAX_LIMIT = 100;
@@ -78,58 +79,28 @@ function normalizeOffset(offset: number | undefined) {
   return Math.max(0, Math.floor(offset ?? 0));
 }
 
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
-}
-
-function optionalText(value: unknown): string | null {
-  return typeof value === "string" && value.trim() ? value : null;
-}
-
-function optionalAmount(value: unknown): number | null {
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
-}
-
-function optionalCount(value: unknown): number | null {
-  const amount = optionalAmount(value);
-  return amount !== null && Number.isInteger(amount) && amount >= 0 ? amount : null;
-}
-
 function projectReservation(row: AdminReservationListRow): AdminReservationListItem {
-  const snapshot = asRecord(row.snapshot);
-  const tour = asRecord(snapshot?.tour);
-  const departure = asRecord(snapshot?.departure);
-  const boarding = asRecord(snapshot?.boarding);
-  const occupancy = asRecord(snapshot?.occupancy);
-  const travelers = asRecord(snapshot?.travelers);
-  const adults = optionalCount(occupancy?.adults) ?? optionalCount(travelers?.adults);
-  const minors = optionalCount(occupancy?.minors) ?? optionalCount(travelers?.minors);
-  const totalTravelers =
-    optionalCount(occupancy?.totalTravelers) ??
-    (adults !== null && minors !== null ? adults + minors : null);
-
+  const projected = projectReservationSnapshotOperational(row);
   return {
-    id: row.id,
-    reservationCode: row.reservation_code,
-    status: row.status,
-    createdAt: row.created_at,
-    tripCode: optionalText(tour?.code) ?? "No disponible",
-    tripName: optionalText(tour?.title) ?? "No disponible",
-    departureDate: optionalText(departure?.startDate) ?? "No disponible",
-    boardingPointName: optionalText(boarding?.pointName),
-    rooms: optionalCount(snapshot?.rooms),
+    id: projected.id,
+    reservationCode: projected.reservationCode,
+    status: projected.status as BookingStatus,
+    createdAt: projected.createdAt,
+    tripCode: projected.trip.code ?? "No disponible",
+    tripName: projected.trip.name ?? "No disponible",
+    departureDate: projected.trip.departureDate ?? "No disponible",
+    boardingPointName: projected.trip.boardingPointName,
+    rooms: projected.occupancy.rooms,
     occupancy: {
-      adults,
-      minors,
-      totalTravelers,
+      adults: projected.occupancy.adults,
+      minors: projected.occupancy.minors,
+      totalTravelers: projected.occupancy.totalTravelers,
     },
-    currency: row.currency,
-    total: optionalAmount(snapshot?.total),
-    depositPercent: optionalAmount(snapshot?.depositPercent),
-    depositAmount: optionalAmount(snapshot?.depositAmount),
-    remainingAmount: optionalAmount(snapshot?.remainingAmount),
+    currency: projected.amounts.currency,
+    total: projected.amounts.total,
+    depositPercent: projected.amounts.depositPercent,
+    depositAmount: projected.amounts.depositAmount,
+    remainingAmount: projected.amounts.remainingAmount,
   };
 }
 

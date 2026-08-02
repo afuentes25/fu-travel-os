@@ -73,6 +73,13 @@ import {
   type CustomerAgencyAccountRecord,
 } from "../lib/customers/customer-access-core";
 import {
+  CustomerReservationListError,
+  createCustomerReservationLister,
+  normalizeCustomerReservationLimit,
+  normalizeCustomerReservationOffset,
+  normalizeCustomerReservationStatus,
+} from "../lib/customers/customer-reservations-core";
+import {
   parseAdminReservationPage,
   parseAdminReservationStatus,
   safeAdminNext,
@@ -1113,6 +1120,119 @@ test("página de detalle autoriza antes de consultar y repositorio filtra por ag
   assert.equal(page.includes("error.message"), false);
   const repository = readFileSync("lib/reservations/admin-detail-repository.ts", "utf8");
   assert.match(repository, /\.eq\("id", reservationId\)[\s\S]*\.eq\("agency_id", agencyId\)/);
+});
+
+function customerReservationListingFixture(input: Readonly<{
+  accounts?: readonly CustomerAgencyAccountRecord[];
+  rows?: readonly AdminReservationListRow[];
+  total?: number;
+  failReservations?: boolean;
+}> = {}) {
+  const requests: Array<{
+    customerAccountId: string;
+    agencyId: string;
+    status?: string;
+    limit: number;
+    offset: number;
+  }> = [];
+  const access = customerAccessFixture({ accounts: input.accounts ?? [customerAccount()] });
+  const lister = createCustomerReservationLister({
+    resolveAccess: access.resolver.resolve,
+    reservationRepository: {
+      async list(request) {
+        requests.push(request);
+        if (input.failReservations) throw new Error("snapshot SQL details");
+        return { rows: input.rows ?? [], total: input.total ?? (input.rows ?? []).length };
+      },
+    },
+  });
+  return { lister, requests };
+}
+
+test("mis reservaciones no consulta vínculos sin cuenta activa o con varias cuentas", async () => {
+  let repositoryCreated = false;
+  const unauthenticated = createCustomerReservationLister({
+    async resolveAccess() { return { status: "unauthenticated" } as const; },
+    reservationRepository: () => {
+      repositoryCreated = true;
+      return { async list() { throw new Error("No debe consultar"); } };
+    },
+  });
+  assert.deepEqual(await unauthenticated.list(), { status: "unauthenticated" });
+  assert.equal(repositoryCreated, false);
+
+  const forbidden = customerReservationListingFixture({ accounts: [] });
+  assert.deepEqual(await forbidden.lister.list(), { status: "forbidden" });
+  assert.deepEqual(forbidden.requests, []);
+
+  const multiple = customerReservationListingFixture({
+    accounts: [customerAccount(), customerAccount({ customerAccountId: "customer-crisenix", agencyId: "agency-crisenix", agencySlug: "crisenix", agencyName: "Crisenix" })],
+  });
+  const result = await multiple.lister.list();
+  assert.equal(result.status, "selection_required");
+  assert.deepEqual(multiple.requests, []);
+});
+
+test("mis reservaciones filtra por cuenta y agencia autorizadas, pagina y ordena", async () => {
+  const older = adminReservationRow({ id: "customer-old", code: "FT-CUSTOMER-OLD", status: "pending", createdAt: "2026-08-01T08:00:00.000Z" });
+  const newer = adminReservationRow({ id: "customer-new", code: "FT-CUSTOMER-NEW", status: "confirmed", createdAt: "2026-08-02T08:00:00.000Z" });
+  const { lister, requests } = customerReservationListingFixture({ rows: [older, newer], total: 2 });
+  const result = await lister.list({ requestedAgencySlug: "furiver", status: "pending", limit: 999, offset: -3 });
+
+  assert.equal(result.status, "authorized");
+  if (result.status === "authorized") {
+    assert.equal(result.total, 2);
+    assert.equal(result.limit, 50);
+    assert.equal(result.offset, 0);
+    assert.deepEqual(result.items.map((item) => item.reservationCode), ["FT-CUSTOMER-NEW", "FT-CUSTOMER-OLD"]);
+  }
+  assert.deepEqual(requests, [{ customerAccountId: "customer-furiver", agencyId: "agency-furiver", status: "pending", limit: 50, offset: 0 }]);
+});
+
+test("mis reservaciones conserva snapshots históricos y no expone PII ni datos técnicos", async () => {
+  const source = adminReservationRow({ id: "customer-historical", code: "FT-CUSTOMER-HIST", status: "pending", createdAt: "2026-08-02T08:00:00.000Z" });
+  const snapshot = source.snapshot as ReservationSnapshot;
+  const { rooms: _rooms, occupancy: _occupancy, boarding: _boarding, ...historical } = snapshot;
+  const { lister } = customerReservationListingFixture({ rows: [{ ...source, snapshot: historical }] });
+  const result = await lister.list({ requestedAgencySlug: "furiver" });
+  assert.equal(result.status, "authorized");
+  if (result.status === "authorized") {
+    const [item] = result.items;
+    assert.deepEqual(item.occupancy, { rooms: null, adults: 2, minors: 1, totalTravelers: 3 });
+    assert.equal(item.trip.boardingPointName, null);
+    const serialized = JSON.stringify(item);
+    assert.equal(serialized.includes("Dato privado"), false);
+    assert.equal(serialized.includes("snapshot"), false);
+    assert.equal(serialized.includes("agencyId"), false);
+    assert.equal(serialized.includes("customerAccountId"), false);
+    assert.equal(serialized.includes("idempotency"), false);
+  }
+});
+
+test("mis reservaciones sanea filtros, errores y mantiene la separación de clientes", async () => {
+  assert.equal(normalizeCustomerReservationStatus("pending"), "pending");
+  assert.equal(normalizeCustomerReservationStatus("deposit_pending"), undefined);
+  assert.equal(normalizeCustomerReservationLimit(undefined), 20);
+  assert.equal(normalizeCustomerReservationLimit(100), 50);
+  assert.equal(normalizeCustomerReservationOffset(-1), 0);
+
+  const otherAccount = customerReservationListingFixture({
+    accounts: [customerAccount({ customerAccountId: "another-customer" })],
+  });
+  await otherAccount.lister.list({ requestedAgencySlug: "furiver" });
+  assert.equal(otherAccount.requests[0].customerAccountId, "another-customer");
+
+  const failing = customerReservationListingFixture({ failReservations: true });
+  await assert.rejects(
+    failing.lister.list({ requestedAgencySlug: "furiver" }),
+    (error: unknown) => error instanceof CustomerReservationListError && !error.message.includes("SQL"),
+  );
+
+  const repository = readFileSync("lib/customers/customer-reservations-repository.ts", "utf8");
+  assert.match(repository, /\.eq\("customer_account_id", customerAccountId\)/);
+  assert.match(repository, /\.eq\("agency_id", agencyId\)/);
+  assert.match(repository, /reservation_snapshots\.agency_id", agencyId/);
+  assert.equal(repository.includes("agency_memberships"), false);
 });
 
 test("comando usa UUID persistido y rechaza una agencia inexistente", async () => {
