@@ -1,8 +1,6 @@
 import type { PersistedAgency } from "@/lib/agencies";
 import type { BookingStatus, Currency } from "@/types";
 
-import type { ReservationSnapshot } from "./index";
-
 const DEFAULT_LIMIT = 25;
 const MAX_LIMIT = 100;
 
@@ -21,18 +19,18 @@ export type AdminReservationListItem = Readonly<{
   tripCode: string;
   tripName: string;
   departureDate: string;
-  boardingPointName: string;
-  rooms: number;
+  boardingPointName: string | null;
+  rooms: number | null;
   occupancy: Readonly<{
-    adults: number;
-    minors: number;
-    totalTravelers: number;
+    adults: number | null;
+    minors: number | null;
+    totalTravelers: number | null;
   }>;
   currency: Currency;
-  total: number;
-  depositPercent: number;
-  depositAmount: number;
-  remainingAmount: number;
+  total: number | null;
+  depositPercent: number | null;
+  depositAmount: number | null;
+  remainingAmount: number | null;
 }>;
 
 export type AdminReservationListRow = Readonly<{
@@ -41,7 +39,8 @@ export type AdminReservationListRow = Readonly<{
   status: BookingStatus;
   currency: Currency;
   created_at: string;
-  snapshot: ReservationSnapshot;
+  /** JSONB persisted across snapshot schema versions; validate before projecting. */
+  snapshot: unknown;
 }>;
 
 export interface AdminReservationListRepositoryClient {
@@ -79,28 +78,58 @@ function normalizeOffset(offset: number | undefined) {
   return Math.max(0, Math.floor(offset ?? 0));
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function optionalText(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value : null;
+}
+
+function optionalAmount(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function optionalCount(value: unknown): number | null {
+  const amount = optionalAmount(value);
+  return amount !== null && Number.isInteger(amount) && amount >= 0 ? amount : null;
+}
+
 function projectReservation(row: AdminReservationListRow): AdminReservationListItem {
-  const { snapshot } = row;
+  const snapshot = asRecord(row.snapshot);
+  const tour = asRecord(snapshot?.tour);
+  const departure = asRecord(snapshot?.departure);
+  const boarding = asRecord(snapshot?.boarding);
+  const occupancy = asRecord(snapshot?.occupancy);
+  const travelers = asRecord(snapshot?.travelers);
+  const adults = optionalCount(occupancy?.adults) ?? optionalCount(travelers?.adults);
+  const minors = optionalCount(occupancy?.minors) ?? optionalCount(travelers?.minors);
+  const totalTravelers =
+    optionalCount(occupancy?.totalTravelers) ??
+    (adults !== null && minors !== null ? adults + minors : null);
+
   return {
     id: row.id,
     reservationCode: row.reservation_code,
     status: row.status,
     createdAt: row.created_at,
-    tripCode: snapshot.tour.code,
-    tripName: snapshot.tour.title,
-    departureDate: snapshot.departure.startDate,
-    boardingPointName: snapshot.boarding.pointName,
-    rooms: snapshot.rooms,
+    tripCode: optionalText(tour?.code) ?? "No disponible",
+    tripName: optionalText(tour?.title) ?? "No disponible",
+    departureDate: optionalText(departure?.startDate) ?? "No disponible",
+    boardingPointName: optionalText(boarding?.pointName),
+    rooms: optionalCount(snapshot?.rooms),
     occupancy: {
-      adults: snapshot.occupancy.adults,
-      minors: snapshot.occupancy.minors,
-      totalTravelers: snapshot.occupancy.totalTravelers,
+      adults,
+      minors,
+      totalTravelers,
     },
-    currency: snapshot.currency,
-    total: snapshot.total,
-    depositPercent: snapshot.depositPercent,
-    depositAmount: snapshot.depositAmount,
-    remainingAmount: snapshot.remainingAmount,
+    currency: row.currency,
+    total: optionalAmount(snapshot?.total),
+    depositPercent: optionalAmount(snapshot?.depositPercent),
+    depositAmount: optionalAmount(snapshot?.depositAmount),
+    remainingAmount: optionalAmount(snapshot?.remainingAmount),
   };
 }
 

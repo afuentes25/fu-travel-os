@@ -22,12 +22,21 @@ export const revalidate = 0;
 
 const PAGE_SIZE = 25;
 
-function money(value: number, currency: string) {
+function valueOrUnavailable(value: number | string | null) {
+  return value ?? "No disponible";
+}
+
+function money(value: number | null, currency: string) {
+  if (value === null) return "No disponible";
   return new Intl.NumberFormat("es-MX", {
     style: "currency",
     currency,
     maximumFractionDigits: 2,
   }).format(value);
+}
+
+function travelerCount(value: number | null, label: string) {
+  return value === null ? `${label}: No disponible` : `${value} ${label}`;
 }
 
 function date(value: string) {
@@ -47,11 +56,11 @@ function ReservationCells({ reservation }: { reservation: AdminReservationListIt
       <td><strong>{reservation.reservationCode}</strong><span className={styles.status}>{adminReservationStatusLabel(reservation.status)}</span></td>
       <td><strong>{reservation.tripName}</strong><small>{reservation.tripCode}</small></td>
       <td>{date(reservation.departureDate)}<small>Creada: {date(reservation.createdAt)}</small></td>
-      <td>{reservation.boardingPointName}</td>
-      <td>{reservation.rooms}</td>
-      <td>{reservation.occupancy.adults}</td>
-      <td>{reservation.occupancy.minors}</td>
-      <td>{reservation.occupancy.totalTravelers}</td>
+      <td>{valueOrUnavailable(reservation.boardingPointName)}</td>
+      <td>{valueOrUnavailable(reservation.rooms)}</td>
+      <td>{valueOrUnavailable(reservation.occupancy.adults)}</td>
+      <td>{valueOrUnavailable(reservation.occupancy.minors)}</td>
+      <td>{valueOrUnavailable(reservation.occupancy.totalTravelers)}</td>
       <td><strong>{money(reservation.total, reservation.currency)}</strong><small>{reservation.currency}</small></td>
       <td>{money(reservation.depositAmount, reservation.currency)}<small>Saldo: {money(reservation.remainingAmount, reservation.currency)}</small></td>
     </>
@@ -64,8 +73,8 @@ function ReservationCard({ reservation }: { reservation: AdminReservationListIte
       <div><span>Folio</span><strong>{reservation.reservationCode}</strong><em>{adminReservationStatusLabel(reservation.status)}</em></div>
       <div><span>Tour</span><strong>{reservation.tripName}</strong><small>{reservation.tripCode}</small></div>
       <div><span>Salida</span><strong>{date(reservation.departureDate)}</strong><small>Creada: {date(reservation.createdAt)}</small></div>
-      <div><span>Abordaje</span><strong>{reservation.boardingPointName}</strong></div>
-      <div><span>Viajeros</span><strong>{reservation.occupancy.totalTravelers}</strong><small>{reservation.occupancy.adults} adultos · {reservation.occupancy.minors} menores · {reservation.rooms} habitaciones</small></div>
+      <div><span>Abordaje</span><strong>{valueOrUnavailable(reservation.boardingPointName)}</strong></div>
+      <div><span>Viajeros</span><strong>{valueOrUnavailable(reservation.occupancy.totalTravelers)}</strong><small>{travelerCount(reservation.occupancy.adults, "adultos")} · {travelerCount(reservation.occupancy.minors, "menores")} · {travelerCount(reservation.rooms, "habitaciones")}</small></div>
       <div><span>Total</span><strong>{money(reservation.total, reservation.currency)}</strong><small>Anticipo: {money(reservation.depositAmount, reservation.currency)} · Saldo: {money(reservation.remainingAmount, reservation.currency)}</small></div>
     </article>
   );

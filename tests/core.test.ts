@@ -76,6 +76,7 @@ import {
 import { getSupabasePublicEnvironment } from "../lib/supabase/auth-env";
 import { resolveVerifiedSupabaseIdentity } from "../lib/supabase/auth-identity-core";
 import { isReservedInternalPath } from "../lib/routing/public-route-guard";
+import { getSupabaseServerEnvironment } from "../lib/supabase/env";
 import {
   AdminReservationListError,
   createAdminReservationListing,
@@ -211,6 +212,25 @@ test("configuración pública de Supabase falla de forma segura cuando faltan va
     else process.env.NEXT_PUBLIC_SUPABASE_URL = savedUrl;
     if (savedKey === undefined) delete process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
     else process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY = savedKey;
+  }
+});
+
+test("configuración de Supabase servidor falla de forma segura cuando faltan variables", () => {
+  const savedUrl = process.env.SUPABASE_URL;
+  const savedKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  delete process.env.SUPABASE_URL;
+  delete process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  try {
+    assert.throws(
+      () => getSupabaseServerEnvironment(),
+      /configuración de Supabase del servidor/i,
+    );
+  } finally {
+    if (savedUrl === undefined) delete process.env.SUPABASE_URL;
+    else process.env.SUPABASE_URL = savedUrl;
+    if (savedKey === undefined) delete process.env.SUPABASE_SERVICE_ROLE_KEY;
+    else process.env.SUPABASE_SERVICE_ROLE_KEY = savedKey;
   }
 });
 
@@ -831,6 +851,29 @@ test("listado administrativo marca campos históricos irrecuparables como no dis
   assert.equal(reservation.rooms, null);
   assert.equal(reservation.boardingPointName, null);
   assert.deepEqual(reservation.occupancy, { adults: 2, minors: 1, totalTravelers: 3 });
+
+  const page = readFileSync(
+    "app/admin/[agencySlug]/reservaciones/page.tsx",
+    "utf8",
+  );
+  assert.match(page, /value \?\? "No disponible"/);
+});
+
+test("listado administrativo conserva una página completa de cinco filas", async () => {
+  const rows = Array.from({ length: 5 }, (_, index) =>
+    adminReservationRow({
+      id: `reservation-${index}`,
+      code: `FT-001-${index}`,
+      status: "pending",
+      createdAt: `2026-08-0${index + 1}T08:00:00.000Z`,
+    }),
+  );
+  const repository = createAdminReservationListing({
+    agencyResolver: { async findBySlug() { return { id: "agency-furiver-persisted", slug: "furiver", name: "Furiver" }; } },
+    reservationClient: { async list() { return rows; } },
+  });
+
+  assert.equal((await repository.list({ agencySlug: "furiver", limit: 25 })).length, 5);
 });
 
 test("repositorio administrativo entrega not found e internal saneados", async () => {
