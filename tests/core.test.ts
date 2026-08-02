@@ -63,6 +63,13 @@ import {
 } from "../lib/reservations/server-command";
 import { createPersistedAgencyResolver } from "../lib/agencies/index";
 import {
+  AdminAgencyAccessError,
+  createAdminAgencyAccessResolver,
+  type AdminAgencyMembershipRecord,
+} from "../lib/agencies/admin-access-core";
+import { getSupabasePublicEnvironment } from "../lib/supabase/auth-env";
+import { resolveVerifiedSupabaseIdentity } from "../lib/supabase/auth-identity-core";
+import {
   AdminReservationListError,
   createAdminReservationListing,
   type AdminReservationListRow,
@@ -144,6 +151,199 @@ import type {
 } from "../types/index";
 
 const configuredTrip = () => travels.find((trip) => trip.pageConfiguration)!;
+
+const adminMembership = (
+  input: Partial<AdminAgencyMembershipRecord> = {},
+): AdminAgencyMembershipRecord => ({
+  agencyId: "agency-furiver",
+  agencySlug: "furiver",
+  agencyName: "Furiver",
+  role: "admin",
+  status: "active",
+  ...input,
+});
+
+function adminAccessFixture(input: Readonly<{
+  identity?: { userId: string; email: string | null } | null;
+  memberships?: readonly AdminAgencyMembershipRecord[];
+  failIdentity?: boolean;
+  failMemberships?: boolean;
+}> = {}) {
+  const queriedUserIds: string[] = [];
+  const resolver = createAdminAgencyAccessResolver({
+    async getIdentity() {
+      if (input.failIdentity) throw new Error("token details");
+      return input.identity === undefined
+        ? { userId: "user-verified", email: "admin@furiver.test" }
+        : input.identity;
+    },
+    membershipRepository: {
+      async listByUserId(userId) {
+        queriedUserIds.push(userId);
+        if (input.failMemberships) throw new Error("SQL details");
+        return input.memberships ?? [];
+      },
+    },
+  });
+  return { resolver, queriedUserIds };
+}
+
+test("configuración pública de Supabase falla de forma segura cuando faltan variables", () => {
+  const savedUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const savedKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
+  delete process.env.NEXT_PUBLIC_SUPABASE_URL;
+  delete process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
+
+  try {
+    assert.throws(
+      () => getSupabasePublicEnvironment(),
+      /configuración pública de autenticación/i,
+    );
+  } finally {
+    if (savedUrl === undefined) delete process.env.NEXT_PUBLIC_SUPABASE_URL;
+    else process.env.NEXT_PUBLIC_SUPABASE_URL = savedUrl;
+    if (savedKey === undefined) delete process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
+    else process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY = savedKey;
+  }
+});
+
+test("identidad Supabase devuelve null sin sesión y proyecta solo claims verificados", async () => {
+  const withoutSession = await resolveVerifiedSupabaseIdentity({
+    auth: {
+      async getClaims() {
+        return { data: { claims: null }, error: null };
+      },
+    },
+  } as never);
+  assert.equal(withoutSession, null);
+
+  const identity = await resolveVerifiedSupabaseIdentity({
+    auth: {
+      async getClaims() {
+        return {
+          data: {
+            claims: {
+              sub: "a6318a7e-ff74-4c16-b83e-bd219f7dd480",
+              email: "admin@furiver.test",
+              user_metadata: { role: "owner", agencyId: "forged" },
+            },
+          },
+          error: null,
+        };
+      },
+    },
+  } as never);
+  assert.deepEqual(identity, {
+    userId: "a6318a7e-ff74-4c16-b83e-bd219f7dd480",
+    email: "admin@furiver.test",
+  });
+});
+
+test("clientes Auth no exponen service role y el proxy usa claims verificados", () => {
+  const browserClient = readFileSync(
+    "lib/supabase/browser-client.ts",
+    "utf8",
+  );
+  const authServer = readFileSync(
+    "lib/supabase/auth-server.ts",
+    "utf8",
+  );
+  const proxy = readFileSync("proxy.ts", "utf8");
+
+  assert.equal(browserClient.includes("SUPABASE_SERVICE_ROLE_KEY"), false);
+  assert.equal(authServer.includes("SUPABASE_SERVICE_ROLE_KEY"), false);
+  assert.match(browserClient, /createBrowserClient/);
+  assert.match(authServer, /createServerClient/);
+  assert.match(proxy, /updateSupabaseAuthSession/);
+  assert.equal(proxy.includes("getSession"), false);
+});
+
+test("acceso administrativo no consulta membresías sin una sesión verificada", async () => {
+  const { resolver, queriedUserIds } = adminAccessFixture({ identity: null });
+  assert.deepEqual(await resolver.resolve(), { status: "unauthenticated" });
+  assert.deepEqual(queriedUserIds, []);
+});
+
+test("acceso administrativo rechaza usuarios sin membresías activas", async () => {
+  const { resolver } = adminAccessFixture({
+    memberships: [
+      adminMembership({ status: "invited" }),
+      adminMembership({ agencyId: "agency-crisenix", status: "suspended" }),
+    ],
+  });
+  assert.deepEqual(await resolver.resolve(), { status: "forbidden" });
+});
+
+test("una membresía activa se selecciona automáticamente", async () => {
+  const { resolver, queriedUserIds } = adminAccessFixture({
+    memberships: [adminMembership({ role: "owner" })],
+  });
+  const access = await resolver.resolve();
+
+  assert.equal(access.status, "authorized");
+  if (access.status === "authorized") {
+    assert.equal(access.agency.agencySlug, "furiver");
+    assert.equal(access.agency.role, "owner");
+    assert.deepEqual(access.identity, {
+      userId: "user-verified",
+      email: "admin@furiver.test",
+    });
+  }
+  assert.deepEqual(queriedUserIds, ["user-verified"]);
+});
+
+test("múltiples membresías exigen selección y el slug autorizado se resuelve", async () => {
+  const { resolver } = adminAccessFixture({
+    memberships: [
+      adminMembership(),
+      adminMembership({
+        agencyId: "agency-crisenix",
+        agencySlug: "crisenix",
+        agencyName: "Crisenix",
+        role: "staff",
+      }),
+    ],
+  });
+  const selection = await resolver.resolve();
+  assert.equal(selection.status, "selection_required");
+
+  const selected = await resolver.resolve({ requestedAgencySlug: "crisenix" });
+  assert.equal(selected.status, "authorized");
+  if (selected.status === "authorized") {
+    assert.equal(selected.agency.agencyId, "agency-crisenix");
+  }
+});
+
+test("un slug ajeno no revela agencias y devuelve forbidden", async () => {
+  const { resolver } = adminAccessFixture({ memberships: [adminMembership()] });
+  assert.deepEqual(await resolver.resolve({ requestedAgencySlug: "crisenix" }), {
+    status: "forbidden",
+  });
+});
+
+test("errores administrativos se sanejan y la consulta queda limitada al usuario", async () => {
+  const failing = adminAccessFixture({ failMemberships: true });
+  await assert.rejects(
+    failing.resolver.resolve(),
+    (error: unknown) =>
+      error instanceof AdminAgencyAccessError &&
+      !error.message.includes("SQL"),
+  );
+
+  const source = readFileSync(
+    "lib/agencies/admin-access-repository.ts",
+    "utf8",
+  );
+  assert.match(source, /\.eq\("user_id", userId\)/);
+  assert.match(source, /\.eq\("status", "active"\)/);
+  assert.equal(source.includes("reservation_snapshots"), false);
+
+  const { resolver } = adminAccessFixture({ memberships: [adminMembership()] });
+  const access = await resolver.resolve();
+  assert.equal(JSON.stringify(access).includes("token"), false);
+  assert.equal(JSON.stringify(access).includes("cookie"), false);
+  assert.equal(JSON.stringify(access).includes("serviceRole"), false);
+});
 
 const reservationStorage = () => {
   let value: string | null = null;
