@@ -75,6 +75,7 @@ import {
 } from "../app/admin/admin-utils";
 import { getSupabasePublicEnvironment } from "../lib/supabase/auth-env";
 import { resolveVerifiedSupabaseIdentity } from "../lib/supabase/auth-identity-core";
+import { isReservedInternalPath } from "../lib/routing/public-route-guard";
 import {
   AdminReservationListError,
   createAdminReservationListing,
@@ -262,6 +263,32 @@ test("clientes Auth no exponen service role y el proxy usa claims verificados", 
   assert.match(authServer, /createServerClient/);
   assert.match(proxy, /updateSupabaseAuthSession/);
   assert.equal(proxy.includes("getSession"), false);
+});
+
+test("rutas administrativas e internas no caen en el renderer público ni el demo heredado", () => {
+  assert.equal(isReservedInternalPath("/admin/login"), true);
+  assert.equal(isReservedInternalPath("/admin/furiver/reservaciones"), true);
+  assert.equal(isReservedInternalPath("/api/reservations"), true);
+  assert.equal(isReservedInternalPath("/_next/static/chunk.js"), true);
+  assert.equal(isReservedInternalPath("/favicon.ico"), true);
+  assert.equal(isReservedInternalPath("/viajes/barrancas-del-cobre"), false);
+
+  const catchAll = readFileSync("app/[...route]/page.tsx", "utf8");
+  const publicRenderer = readFileSync("components/travel-app.tsx", "utf8");
+  const legacyRenderer = readFileSync("components/legacy-travel-app.tsx", "utf8");
+  const proxy = readFileSync("lib/supabase/auth-proxy.ts", "utf8");
+  assert.match(catchAll, /isReservedInternalPath\(pathname\)\)notFound\(\)/);
+  assert.equal(
+    publicRenderer.includes(
+      'route.startsWith("/admin") ||\n    route.startsWith("/superadmin")',
+    ),
+    false,
+  );
+  assert.match(publicRenderer, /route\.startsWith\("\/demo\/admin"\)\s*\|\|/);
+  assert.match(publicRenderer, /window\.location\.href = `\/demo\/admin\?\$\{next\}`/);
+  assert.match(legacyRenderer, /route\.startsWith\("\/demo\/admin"\)/);
+  assert.equal(proxy.includes("NextResponse.rewrite"), false);
+  assert.match(proxy, /NextResponse\.next\(\{ request \}\)/);
 });
 
 test("acceso administrativo no consulta membresías sin una sesión verificada", async () => {
@@ -738,6 +765,72 @@ test("repositorio administrativo proyecta campos seguros sin snapshot ni viajero
     minors: 1,
     totalTravelers: 3,
   });
+});
+
+test("listado administrativo conserva snapshots históricos sin habitaciones", async () => {
+  const modern = adminReservationRow({
+    id: "reservation-modern",
+    code: "FT-001-MODERN",
+    status: "pending",
+    createdAt: "2026-08-03T08:00:00.000Z",
+  });
+  const historicalSource = adminReservationRow({
+    id: "reservation-historical-rooms",
+    code: "FT-001-HISTORICAL-ROOMS",
+    status: "pending",
+    createdAt: "2026-08-02T08:00:00.000Z",
+  });
+  const historicalSnapshot = historicalSource.snapshot as ReservationSnapshot;
+  const { rooms: _rooms, ...snapshotWithoutRooms } = historicalSnapshot;
+  const historical = { ...historicalSource, snapshot: snapshotWithoutRooms };
+  const repository = createAdminReservationListing({
+    agencyResolver: { async findBySlug() { return { id: "agency-furiver-persisted", slug: "furiver", name: "Furiver" }; } },
+    reservationClient: { async list() { return [historical, modern]; } },
+  });
+
+  const reservations = await repository.list({ agencySlug: "furiver" });
+  assert.equal(reservations.length, 2);
+  assert.equal(reservations[0].rooms, modern.snapshot && (modern.snapshot as ReservationSnapshot).rooms);
+  assert.equal(reservations[1].rooms, null);
+  assert.deepEqual(reservations[1].occupancy, { adults: 2, minors: 1, totalTravelers: 3 });
+});
+
+test("listado administrativo recupera ocupación histórica desde viajeros sin inventar datos", async () => {
+  const source = adminReservationRow({
+    id: "reservation-historical-occupancy",
+    code: "FT-001-HISTORICAL-OCCUPANCY",
+    status: "pending",
+    createdAt: "2026-08-02T08:00:00.000Z",
+  });
+  const snapshot = source.snapshot as ReservationSnapshot;
+  const { occupancy: _occupancy, ...snapshotWithoutOccupancy } = snapshot;
+  const repository = createAdminReservationListing({
+    agencyResolver: { async findBySlug() { return { id: "agency-furiver-persisted", slug: "furiver", name: "Furiver" }; } },
+    reservationClient: { async list() { return [{ ...source, snapshot: snapshotWithoutOccupancy }]; } },
+  });
+
+  const [reservation] = await repository.list({ agencySlug: "furiver" });
+  assert.deepEqual(reservation.occupancy, { adults: 2, minors: 1, totalTravelers: 3 });
+});
+
+test("listado administrativo marca campos históricos irrecuparables como no disponibles", async () => {
+  const source = adminReservationRow({
+    id: "reservation-historical-incomplete",
+    code: "FT-001-HISTORICAL-INCOMPLETE",
+    status: "pending",
+    createdAt: "2026-08-02T08:00:00.000Z",
+  });
+  const snapshot = source.snapshot as ReservationSnapshot;
+  const { rooms: _rooms, occupancy: _occupancy, boarding: _boarding, ...partialSnapshot } = snapshot;
+  const repository = createAdminReservationListing({
+    agencyResolver: { async findBySlug() { return { id: "agency-furiver-persisted", slug: "furiver", name: "Furiver" }; } },
+    reservationClient: { async list() { return [{ ...source, snapshot: partialSnapshot }]; } },
+  });
+
+  const [reservation] = await repository.list({ agencySlug: "furiver" });
+  assert.equal(reservation.rooms, null);
+  assert.equal(reservation.boardingPointName, null);
+  assert.deepEqual(reservation.occupancy, { adults: 2, minors: 1, totalTravelers: 3 });
 });
 
 test("repositorio administrativo entrega not found e internal saneados", async () => {

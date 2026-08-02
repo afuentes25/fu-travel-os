@@ -3285,7 +3285,7 @@ export function TravelApp({
   const theme = resolveTheme(agency, params.get("theme") ?? initialTheme);
   const admin =
     params.get("view") === "admin" ||
-    route.startsWith("/admin") ||
+    route.startsWith("/demo/admin") ||
     route.startsWith("/superadmin");
   const [role, setRole] = useState("agency_admin");
   const [cart, setCart] = useState<CartLine[]>([]);

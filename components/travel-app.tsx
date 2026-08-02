@@ -2363,14 +2363,14 @@ export function TravelApp({
     next.set(key, value);
     localStorage.setItem(`fu-travel-demo-${key}`, value);
     if (key === "view" && value === "admin")
-      window.location.href = `/admin?${next}`;
+      window.location.href = `/demo/admin?${next}`;
     else {
       window.history.replaceState({}, "", `${route}?${next}`);
       setVersion((item) => item + 1);
     }
   };
   if (
-    route.startsWith("/admin") ||
+    route.startsWith("/demo/admin") ||
     route.startsWith("/superadmin") ||
     ["/carrito", "/checkout", "/confirmacion"].includes(route)
   )
