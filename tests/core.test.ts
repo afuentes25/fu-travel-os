@@ -85,6 +85,10 @@ import {
   safeAdminNext,
   validateAdminLoginCredentials,
 } from "../app/admin/admin-utils";
+import {
+  safeCustomerNext,
+  validateCustomerLoginCredentials,
+} from "../app/cuenta/customer-utils";
 import { getSupabasePublicEnvironment } from "../lib/supabase/auth-env";
 import { resolveVerifiedSupabaseIdentity } from "../lib/supabase/auth-identity-core";
 import { isReservedInternalPath } from "../lib/routing/public-route-guard";
@@ -341,6 +345,8 @@ test("clientes Auth no exponen service role y el proxy usa claims verificados", 
 test("rutas administrativas e internas no caen en el renderer público ni el demo heredado", () => {
   assert.equal(isReservedInternalPath("/admin/login"), true);
   assert.equal(isReservedInternalPath("/admin/furiver/reservaciones"), true);
+  assert.equal(isReservedInternalPath("/cuenta/login"), true);
+  assert.equal(isReservedInternalPath("/cuenta/furiver/reservaciones"), true);
   assert.equal(isReservedInternalPath("/api/reservations"), true);
   assert.equal(isReservedInternalPath("/_next/static/chunk.js"), true);
   assert.equal(isReservedInternalPath("/favicon.ico"), true);
@@ -548,6 +554,54 @@ test("login administrativo valida credenciales en servidor y limita next a rutas
   assert.equal(safeAdminNext("https://malicioso.example/admin"), null);
   assert.equal(safeAdminNext("//malicioso.example/admin"), null);
   assert.equal(safeAdminNext("/admin\\malicioso"), null);
+});
+
+test("login de cliente valida credenciales y limita next exclusivamente a cuenta", () => {
+  assert.deepEqual(
+    validateCustomerLoginCredentials({
+      email: " Cliente@Furiver.test ",
+      password: "password-seguro",
+    }),
+    { email: "cliente@furiver.test", password: "password-seguro" },
+  );
+  assert.equal(
+    validateCustomerLoginCredentials({ email: "no-es-correo", password: "password-seguro" }),
+    null,
+  );
+  assert.equal(
+    validateCustomerLoginCredentials({ email: "cliente@furiver.test", password: "corta" }),
+    null,
+  );
+  assert.equal(
+    safeCustomerNext("/cuenta/furiver/reservaciones?page=2"),
+    "/cuenta/furiver/reservaciones?page=2",
+  );
+  assert.equal(safeCustomerNext("https://malicioso.example/cuenta"), null);
+  assert.equal(safeCustomerNext("//malicioso.example/cuenta"), null);
+  assert.equal(safeCustomerNext("/cuenta//malicioso"), null);
+  assert.equal(safeCustomerNext("/admin/furiver/reservaciones"), null);
+  assert.equal(safeCustomerNext("/cuenta%2fmalicioso"), null);
+});
+
+test("rutas de cuenta usan autorización de cliente y no consultan reservaciones en el shell", () => {
+  const actions = readFileSync("app/cuenta/actions.ts", "utf8");
+  const accountPage = readFileSync("app/cuenta/page.tsx", "utf8");
+  const reservationsPage = readFileSync(
+    "app/cuenta/[agencySlug]/reservaciones/page.tsx",
+    "utf8",
+  );
+  const shell = readFileSync("app/cuenta/customer-shell.tsx", "utf8");
+
+  assert.match(actions, /signInWithPassword/);
+  assert.match(actions, /auth\.signOut/);
+  assert.equal(actions.includes("getSupabaseServerClient"), false);
+  assert.equal(actions.includes("SUPABASE_SERVICE_ROLE_KEY"), false);
+  assert.match(accountPage, /resolveCustomerAgencyAccess/);
+  assert.match(reservationsPage, /resolveCustomerAgencyAccess\(\{ requestedAgencySlug: agencySlug \}\)/);
+  assert.equal(reservationsPage.includes("listCustomerReservations"), false);
+  assert.match(reservationsPage, /Tus reservaciones vinculadas aparecerán aquí/);
+  assert.equal(shell.includes("customerAccountId"), false);
+  assert.equal(shell.includes("agencyId"), false);
 });
 
 test("listado administrativo sanea filtros y mantiene paginación fija sin exponer datos privados", () => {

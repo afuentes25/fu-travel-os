@@ -1,4 +1,4 @@
-const INTERNAL_PREFIXES = ["/admin", "/api", "/_next"] as const;
+const INTERNAL_PREFIXES = ["/admin", "/cuenta", "/api", "/_next"] as const;
 const STATIC_ASSET_PATTERN =
   /^\/(?:favicon\.ico|icon\.png|apple-icon\.png|robots\.txt|sitemap\.xml|.*\.(?:svg|png|jpg|jpeg|gif|webp|avif|ico))$/i;
 
