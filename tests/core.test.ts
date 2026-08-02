@@ -67,6 +67,12 @@ import {
   createAdminAgencyAccessResolver,
   type AdminAgencyMembershipRecord,
 } from "../lib/agencies/admin-access-core";
+import {
+  parseAdminReservationPage,
+  parseAdminReservationStatus,
+  safeAdminNext,
+  validateAdminLoginCredentials,
+} from "../app/admin/admin-utils";
 import { getSupabasePublicEnvironment } from "../lib/supabase/auth-env";
 import { resolveVerifiedSupabaseIdentity } from "../lib/supabase/auth-identity-core";
 import {
@@ -343,6 +349,49 @@ test("errores administrativos se sanejan y la consulta queda limitada al usuario
   assert.equal(JSON.stringify(access).includes("token"), false);
   assert.equal(JSON.stringify(access).includes("cookie"), false);
   assert.equal(JSON.stringify(access).includes("serviceRole"), false);
+});
+
+test("login administrativo valida credenciales en servidor y limita next a rutas internas", () => {
+  assert.deepEqual(
+    validateAdminLoginCredentials({
+      email: " Admin@Furiver.test ",
+      password: "password-seguro",
+    }),
+    { email: "admin@furiver.test", password: "password-seguro" },
+  );
+  assert.equal(validateAdminLoginCredentials({ email: "no-es-correo", password: "password-seguro" }), null);
+  assert.equal(validateAdminLoginCredentials({ email: "admin@furiver.test", password: "corta" }), null);
+  assert.equal(safeAdminNext("/admin/furiver/reservaciones?page=2"), "/admin/furiver/reservaciones?page=2");
+  assert.equal(safeAdminNext("https://malicioso.example/admin"), null);
+  assert.equal(safeAdminNext("//malicioso.example/admin"), null);
+  assert.equal(safeAdminNext("/admin\\malicioso"), null);
+});
+
+test("listado administrativo sanea filtros y mantiene paginación fija sin exponer datos privados", () => {
+  assert.equal(parseAdminReservationStatus("pending"), "pending");
+  assert.equal(parseAdminReservationStatus("DROP TABLE"), undefined);
+  assert.equal(parseAdminReservationPage("3"), 3);
+  assert.equal(parseAdminReservationPage("0"), 1);
+  assert.equal(parseAdminReservationPage("-3"), 1);
+
+  const pageSource = readFileSync(
+    "app/admin/[agencySlug]/reservaciones/page.tsx",
+    "utf8",
+  );
+  const authorizationIndex = pageSource.indexOf("resolveAdminAgencyAccess({ requestedAgencySlug: agencySlug })");
+  const listingIndex = pageSource.indexOf("createAdminReservationRepository().list");
+  assert.ok(authorizationIndex >= 0 && listingIndex > authorizationIndex);
+  assert.match(pageSource, /const PAGE_SIZE = 25/);
+  assert.match(pageSource, /limit: PAGE_SIZE/);
+  assert.equal(pageSource.includes("snapshot"), false);
+  assert.equal(pageSource.includes("fullName"), false);
+  assert.equal(pageSource.includes("email"), false);
+
+  const actionsSource = readFileSync("app/admin/actions.ts", "utf8");
+  assert.match(actionsSource, /signInWithPassword/);
+  assert.match(actionsSource, /auth\.signOut/);
+  assert.equal(actionsSource.includes("getSupabaseServerClient"), false);
+  assert.equal(actionsSource.includes("SUPABASE_SERVICE_ROLE_KEY"), false);
 });
 
 const reservationStorage = () => {
