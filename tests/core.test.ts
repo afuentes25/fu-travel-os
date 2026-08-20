@@ -80,6 +80,11 @@ import {
   normalizeCustomerReservationStatus,
 } from "../lib/customers/customer-reservations-core";
 import {
+  CustomerReservationDetailError,
+  createCustomerReservationDetail,
+  isCustomerReservationUuid,
+} from "../lib/customers/customer-reservation-detail-core";
+import {
   parseAdminReservationPage,
   parseAdminReservationStatus,
   safeAdminNext,
@@ -92,6 +97,7 @@ import {
 import { runCustomerLoginFlow } from "../app/cuenta/customer-login-core";
 import {
   customerReservationHref,
+  customerReservationDetailNextStep,
   customerReservationNextStep,
   customerReservationStatusLabel,
   parseCustomerReservationPage,
@@ -1397,6 +1403,183 @@ test("mis reservaciones sanea filtros, errores y mantiene la separación de clie
   assert.match(repository, /\.eq\("agency_id", agencyId\)/);
   assert.match(repository, /reservation_snapshots\.agency_id", agencyId/);
   assert.equal(repository.includes("agency_memberships"), false);
+});
+
+const customerDetailReservationId = "46a10852-8620-4a59-9187-a21b07ce3f05";
+
+function customerReservationDetailRow(snapshot: unknown = adminReservationRow({
+  id: customerDetailReservationId,
+  code: "FT-004-260801-D01B4E",
+  status: "pending",
+  createdAt: "2026-08-01T08:00:00.000Z",
+}).snapshot) {
+  return {
+    id: customerDetailReservationId,
+    reservation_code: "FT-004-260801-D01B4E",
+    status: "pending",
+    currency: "MXN" as const,
+    created_at: "2026-08-01T08:00:00.000Z",
+    snapshot,
+  };
+}
+
+function customerReservationDetailFixture(input: Readonly<{
+  accounts?: readonly CustomerAgencyAccountRecord[];
+  row?: ReturnType<typeof customerReservationDetailRow> | null;
+  failRepository?: boolean;
+}> = {}) {
+  const requests: Array<{ customerAccountId: string; agencyId: string; reservationId: string }> = [];
+  const access = customerAccessFixture({ accounts: input.accounts ?? [customerAccount()] });
+  const detail = createCustomerReservationDetail({
+    resolveAccess: access.resolver.resolve,
+    repository: {
+      async find(request) {
+        requests.push(request);
+        if (input.failRepository) throw new Error("SQL detail");
+        return input.row === undefined ? customerReservationDetailRow() : input.row;
+      },
+    },
+  });
+  return { detail, requests };
+}
+
+test("detalle de cliente valida UUID antes de consultar y exige una cuenta activa", async () => {
+  let repositoryCalls = 0;
+  const invalid = createCustomerReservationDetail({
+    async resolveAccess() { return { status: "unauthenticated" } as const; },
+    repository: { async find() { repositoryCalls += 1; return null; } },
+  });
+  assert.deepEqual(
+    await invalid.get({ requestedAgencySlug: "furiver", reservationId: "no-es-uuid" }),
+    { status: "not_found" },
+  );
+  assert.equal(repositoryCalls, 0);
+  assert.equal(isCustomerReservationUuid(customerDetailReservationId), true);
+
+  const unauthenticated = createCustomerReservationDetail({
+    async resolveAccess() { return { status: "unauthenticated" } as const; },
+    repository: { async find() { throw new Error("No debe consultar"); } },
+  });
+  assert.deepEqual(
+    await unauthenticated.get({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId }),
+    { status: "unauthenticated" },
+  );
+});
+
+test("detalle de cliente requiere vínculo por cuenta, agencia y reservación", async () => {
+  const { detail, requests } = customerReservationDetailFixture();
+  const result = await detail.get({
+    requestedAgencySlug: "furiver",
+    reservationId: customerDetailReservationId,
+  });
+  assert.equal(result.status, "authorized");
+  if (result.status === "authorized") {
+    assert.equal(result.reservation.reservationCode, "FT-004-260801-D01B4E");
+  }
+  assert.deepEqual(requests, [{
+    customerAccountId: "customer-furiver",
+    agencyId: "agency-furiver",
+    reservationId: customerDetailReservationId,
+  }]);
+
+  const absent = customerReservationDetailFixture({ row: null });
+  assert.deepEqual(
+    await absent.detail.get({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId }),
+    { status: "not_found" },
+  );
+
+  const otherAccount = customerReservationDetailFixture({
+    accounts: [customerAccount({ customerAccountId: "another-customer" })],
+  });
+  await otherAccount.detail.get({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId });
+  assert.equal(otherAccount.requests[0].customerAccountId, "another-customer");
+});
+
+test("detalle de cliente mantiene aislamiento frente a otras agencias y cuentas inactivas", async () => {
+  const otherTenant = customerReservationDetailFixture();
+  assert.deepEqual(
+    await otherTenant.detail.get({ requestedAgencySlug: "crisenix", reservationId: customerDetailReservationId }),
+    { status: "forbidden" },
+  );
+  assert.deepEqual(otherTenant.requests, []);
+
+  for (const status of ["invited", "suspended"] as const) {
+    const inactive = customerReservationDetailFixture({ accounts: [customerAccount({ status })] });
+    assert.deepEqual(
+      await inactive.detail.get({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId }),
+      { status: "forbidden" },
+    );
+  }
+
+  const administratorOnly = customerReservationDetailFixture({ accounts: [] });
+  assert.deepEqual(
+    await administratorOnly.detail.get({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId }),
+    { status: "forbidden" },
+  );
+});
+
+test("detalle de cliente proyecta datos modernos, pendientes e históricos sin exponer el snapshot", async () => {
+  const modern = customerReservationDetailRow({
+    ...customerReservationDetailRow().snapshot as ReservationSnapshot,
+    primaryContact: { fullName: "Contacto propio", email: "cliente@example.test", phone: "5555555555" },
+  });
+  const complete = customerReservationDetailFixture({ row: modern });
+  const result = await complete.detail.get({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId });
+  assert.equal(result.status, "authorized");
+  if (result.status === "authorized") {
+    assert.deepEqual(result.reservation.occupancy, { rooms: 0, adults: 2, minors: 1, totalTravelers: 3 });
+    assert.equal(result.reservation.primaryContact?.fullName, "Contacto propio");
+    assert.equal(result.reservation.travelers.length, 1);
+    assert.equal(result.reservation.travelerDataStatus, "pending");
+    assert.equal("snapshot" in result.reservation, false);
+    assert.equal("agencyId" in result.reservation, false);
+    assert.equal("customerAccountId" in result.reservation, false);
+    assert.equal("idempotencyKey" in result.reservation, false);
+  }
+
+  const source = customerReservationDetailRow().snapshot as ReservationSnapshot;
+  const { rooms: _rooms, occupancy: _occupancy, boarding: _boarding, travelers: _travelers, ...historical } = source;
+  const historicalResult = await customerReservationDetailFixture({
+    row: customerReservationDetailRow(historical),
+  }).detail.get({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId });
+  assert.equal(historicalResult.status, "authorized");
+  if (historicalResult.status === "authorized") {
+    assert.deepEqual(historicalResult.reservation.occupancy, {
+      rooms: null,
+      adults: null,
+      minors: null,
+      totalTravelers: null,
+    });
+    assert.equal(historicalResult.reservation.trip.boardingPointName, null);
+    assert.equal(historicalResult.reservation.travelers.length, 0);
+    assert.equal(historicalResult.reservation.primaryContact, null);
+  }
+});
+
+test("detalle de cliente sanea errores internos y la UI mantiene navegación protegida", async () => {
+  const failing = customerReservationDetailFixture({ failRepository: true });
+  await assert.rejects(
+    failing.detail.get({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId }),
+    (error: unknown) => error instanceof CustomerReservationDetailError && !error.message.includes("SQL"),
+  );
+
+  assert.equal(
+    customerReservationDetailNextStep("pending"),
+    "Tu reservación está recibida. Sigue las instrucciones de la agencia para completar tu anticipo.",
+  );
+  const listPage = readFileSync("app/cuenta/[agencySlug]/reservaciones/page.tsx", "utf8");
+  const detailPage = readFileSync(
+    "app/cuenta/[agencySlug]/reservaciones/[reservationId]/page.tsx",
+    "utf8",
+  );
+  const repository = readFileSync("lib/customers/customer-reservation-detail-repository.ts", "utf8");
+  assert.match(listPage, /Ver reservación/);
+  assert.match(detailPage, /Volver a Mis reservaciones/);
+  assert.equal(detailPage.includes("resolveCustomerAgencyAccess"), false);
+  assert.match(repository, /\.eq\("customer_account_id", customerAccountId\)/);
+  assert.match(repository, /\.eq\("agency_id", agencyId\)/);
+  assert.match(repository, /\.eq\("reservation_id", reservationId\)/);
+  assert.match(repository, /reservation_snapshots\.agency_id", agencyId/);
 });
 
 test("vista de mis reservaciones usa el repositorio seguro, pagina y no filtra por datos privados", () => {

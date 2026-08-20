@@ -39,3 +39,14 @@ export function customerReservationNextStep(status: string) {
   };
   return messages[status] ?? "Contacta a la agencia para conocer los próximos pasos.";
 }
+
+export function customerReservationDetailNextStep(status: string) {
+  const messages: Record<string, string> = {
+    pending: "Tu reservación está recibida. Sigue las instrucciones de la agencia para completar tu anticipo.",
+    partially_paid: "Tu anticipo está registrado. Revisa tu saldo pendiente.",
+    confirmed: "Tu reservación está confirmada. Verifica que los datos de tus viajeros estén completos.",
+    paid: "Tu reservación está pagada. Revisa tus próximos documentos de viaje.",
+    cancelled: "Esta reservación aparece cancelada. Contacta a la agencia para cualquier aclaración.",
+  };
+  return messages[status] ?? "Contacta a la agencia para conocer los próximos pasos.";
+}

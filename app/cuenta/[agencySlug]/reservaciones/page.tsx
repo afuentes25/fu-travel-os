@@ -48,7 +48,10 @@ function date(value: string | null) {
       });
 }
 
-function ReservationCard({ reservation }: Readonly<{ reservation: CustomerReservationSummary }>) {
+function ReservationCard({
+  reservation,
+  agencySlug,
+}: Readonly<{ reservation: CustomerReservationSummary; agencySlug: string }>) {
   const pendingTravelerData = reservation.travelerDataStatus === "pending";
   return (
     <article className={styles.reservationCard}>
@@ -81,6 +84,12 @@ function ReservationCard({ reservation }: Readonly<{ reservation: CustomerReserv
         <strong>Próximo paso</strong>
         <p>{customerReservationNextStep(reservation.status)}</p>
       </aside>
+      <Link
+        className={styles.reservationLink}
+        href={`/cuenta/${encodeURIComponent(agencySlug)}/reservaciones/${encodeURIComponent(reservation.id)}`}
+      >
+        Ver reservación
+      </Link>
     </article>
   );
 }
@@ -175,7 +184,11 @@ export default async function CustomerReservationsPage({
         ) : (
           <div className={styles.reservationGrid}>
             {reservations.items.map((reservation) => (
-              <ReservationCard key={reservation.id} reservation={reservation} />
+              <ReservationCard
+                agencySlug={reservations.account.agencySlug}
+                key={reservation.id}
+                reservation={reservation}
+              />
             ))}
           </div>
         )}
