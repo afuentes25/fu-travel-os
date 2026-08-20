@@ -2184,6 +2184,33 @@ test("repositorio financiero limita pagos por vínculo, agencia y reservación s
   assert.equal(repository.includes("reference"), false);
 });
 
+test("detalle de cliente presenta el resumen financiero servidor sin tratar el anticipo contractual como pago", () => {
+  const page = readFileSync("app/cuenta/[agencySlug]/reservaciones/[reservationId]/page.tsx", "utf8");
+  const authorizationIndex = page.indexOf("getCustomerReservationDetail({");
+  const financialIndex = page.indexOf("getReservationFinancialSummary({");
+  assert.ok(authorizationIndex >= 0);
+  assert.ok(financialIndex > authorizationIndex);
+
+  assert.match(page, /Total del Tour/);
+  assert.match(page, /Anticipo requerido/);
+  assert.match(page, /Pagos confirmados/);
+  assert.match(page, /financialSummary\.payments\.pendingTotal > 0/);
+  assert.match(page, /Pagos en validación/);
+  assert.match(page, /Saldo pendiente/);
+  assert.match(page, /financialSummary\.balance\.fullyPaid/);
+  assert.match(page, /financialSummary\.balance\.depositCovered === true/);
+  assert.match(page, /financialSummary\.balance\.depositCovered === false/);
+  assert.match(page, /No fue posible calcular el estado financiero de esta reservación/);
+  assert.match(page, /financialRemaining/);
+
+  assert.equal(page.includes("reservation.amounts.remainingAmount"), false);
+  assert.equal(page.includes("reservation_payments"), false);
+  assert.equal(page.includes("cancelledTotal"), false);
+  assert.equal(page.includes("Anticipo pagado"), false);
+  assert.equal(page.includes("paymentId"), false);
+  assert.equal(page.includes("reference"), false);
+});
+
 test("vista de mis reservaciones usa el repositorio seguro, pagina y no filtra por datos privados", () => {
   assert.equal(parseCustomerReservationPage("3"), 3);
   assert.equal(parseCustomerReservationPage("0"), 1);

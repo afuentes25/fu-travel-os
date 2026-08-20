@@ -8,6 +8,7 @@ import {
 } from "@/lib/customers/customer-reservation-detail";
 import { ensureReservationTravelerSlots } from "@/lib/travelers/traveler-slots";
 import { getReservationTravelerData } from "@/lib/travelers/traveler-data";
+import { getReservationFinancialSummary } from "@/lib/payments/reservation-financial";
 
 import { CustomerShell } from "../../../customer-shell";
 import { TravelerDataForm } from "./traveler-data-form";
@@ -31,6 +32,10 @@ function money(value: number | null, currency: string) {
     currency,
     maximumFractionDigits: 2,
   }).format(value);
+}
+
+function financialMoney(value: number | null, currency: string) {
+  return value === null ? "No disponible" : `${money(value, currency)} ${currency}`;
 }
 
 function date(value: string | null) {
@@ -84,6 +89,30 @@ export default async function CustomerReservationDetailPage({
     );
   }
 
+  let financial: Awaited<ReturnType<typeof getReservationFinancialSummary>>;
+  try {
+    financial = await getReservationFinancialSummary({
+      requestedAgencySlug: agencySlug,
+      reservationId,
+    });
+  } catch {
+    financial = { status: "invalid_structure" };
+  }
+  if (financial.status === "unauthenticated") {
+    redirect(`/cuenta/login?next=${encodeURIComponent(`/cuenta/${agencySlug}/reservaciones/${reservationId}`)}`);
+  }
+  if (financial.status === "selection_required") redirect("/cuenta");
+  if (financial.status === "forbidden" || financial.status === "not_found") {
+    return (
+      <CustomerShell>
+        <section className={styles.stateCard}>
+          <h1>Reservación no disponible</h1>
+          <p>No encontramos una reservación disponible para tu cuenta.</p>
+        </section>
+      </CustomerShell>
+    );
+  }
+
   let travelerSlots: Awaited<ReturnType<typeof ensureReservationTravelerSlots>>;
   try {
     travelerSlots = await ensureReservationTravelerSlots({
@@ -111,6 +140,7 @@ export default async function CustomerReservationDetailPage({
   }
 
   const { reservation } = detail;
+  const financialSummary = financial.status === "authorized" ? financial.summary : null;
   const slots = travelerSlots.status === "ready" ? travelerSlots.slots : [];
   let travelerData: Awaited<ReturnType<typeof getReservationTravelerData>> | null = null;
   if (travelerSlots.status === "ready") {
@@ -164,7 +194,7 @@ export default async function CustomerReservationDetailPage({
         <div className={styles.detailGrid}>
           <section className={styles.detailCard} aria-labelledby="customer-trip-title"><h2 id="customer-trip-title">Resumen del viaje</h2><dl><div><dt>Tour</dt><dd>{valueOrUnavailable(reservation.trip.name)}</dd></div><div><dt>Clave</dt><dd>{valueOrUnavailable(reservation.trip.code)}</dd></div><div><dt>Fecha de salida</dt><dd>{date(reservation.trip.departureDate)}</dd></div><div><dt>Punto de abordaje</dt><dd>{valueOrUnavailable(reservation.trip.boardingPointName)}</dd></div></dl></section>
           <section className={styles.detailCard} aria-labelledby="customer-occupancy-title"><h2 id="customer-occupancy-title">Ocupación</h2><dl><div><dt>Habitaciones</dt><dd>{valueOrUnavailable(reservation.occupancy.rooms)}</dd></div><div><dt>Adultos</dt><dd>{valueOrUnavailable(reservation.occupancy.adults)}</dd></div><div><dt>Menores</dt><dd>{valueOrUnavailable(reservation.occupancy.minors)}</dd></div><div><dt>Total viajeros</dt><dd>{valueOrUnavailable(reservation.occupancy.totalTravelers)}</dd></div></dl></section>
-          <section className={styles.detailCard} aria-labelledby="customer-finance-title"><h2 id="customer-finance-title">Estado financiero</h2><dl><div><dt>Moneda</dt><dd>{reservation.amounts.currency}</dd></div><div><dt>Total</dt><dd>{money(reservation.amounts.total, reservation.amounts.currency)}</dd></div><div><dt>Anticipo {reservation.amounts.depositPercent === null ? "" : `(${reservation.amounts.depositPercent}%)`}</dt><dd>{money(reservation.amounts.depositAmount, reservation.amounts.currency)}</dd></div><div><dt>Saldo restante</dt><dd>{money(reservation.amounts.remainingAmount, reservation.amounts.currency)}</dd></div></dl></section>
+          <section className={styles.detailCard} aria-labelledby="customer-finance-title"><h2 id="customer-finance-title">Estado financiero</h2>{financialSummary ? <><dl><div><dt>Total del Tour</dt><dd>{financialMoney(financialSummary.contract.total, financialSummary.currency)}</dd></div><div><dt>Anticipo requerido</dt><dd>{financialMoney(financialSummary.contract.depositRequired, financialSummary.currency)}{financialSummary.contract.depositPercent === null ? "" : ` · ${financialSummary.contract.depositPercent}%`}</dd></div><div><dt>Pagos confirmados</dt><dd>{financialMoney(financialSummary.payments.confirmedTotal, financialSummary.currency)}</dd></div>{financialSummary.payments.pendingTotal > 0 && <div><dt>Pagos en validación</dt><dd>{financialMoney(financialSummary.payments.pendingTotal, financialSummary.currency)}</dd></div>}<div><dt>Saldo pendiente</dt><dd className={styles.financialRemaining}>{financialMoney(financialSummary.balance.remaining, financialSummary.currency)}</dd></div></dl><p className={styles.financialMessage} role="status">{financialSummary.balance.fullyPaid ? "Tu reservación está pagada." : financialSummary.balance.depositCovered === true ? `Tu anticipo está cubierto. Saldo pendiente: ${financialMoney(financialSummary.balance.remaining, financialSummary.currency)}.` : financialSummary.balance.depositCovered === false ? `Tu anticipo requerido es de ${financialMoney(financialSummary.contract.depositRequired, financialSummary.currency)}.` : "Consulta con la agencia las condiciones de pago de tu reservación."}</p></> : <p className={styles.travelerNotice} role="alert">No fue posible calcular el estado financiero de esta reservación. Contacta a la agencia para recibir asistencia.</p>}</section>
           <section className={styles.detailCard} aria-labelledby="customer-contact-title"><h2 id="customer-contact-title">Contacto principal</h2>{reservation.primaryContact ? <dl><div><dt>Nombre</dt><dd>{valueOrUnavailable(reservation.primaryContact.fullName)}</dd></div><div><dt>Correo</dt><dd>{valueOrUnavailable(reservation.primaryContact.email)}</dd></div><div><dt>Teléfono</dt><dd>{valueOrUnavailable(reservation.primaryContact.phone)}</dd></div></dl> : <p className={styles.unavailable}>No disponible</p>}</section>
         </div>
 
