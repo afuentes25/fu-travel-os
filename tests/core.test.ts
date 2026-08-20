@@ -98,6 +98,12 @@ import {
   type ReservationTravelerDataRow,
 } from "../lib/travelers/traveler-data-core";
 import {
+  calculateReservationFinancialSummary,
+  createReservationFinancialSummaryService,
+  ReservationFinancialError,
+  type ReservationPaymentFinancialRow,
+} from "../lib/payments/reservation-financial-core";
+import {
   parseAdminReservationPage,
   parseAdminReservationStatus,
   safeAdminNext,
@@ -1990,6 +1996,192 @@ test("repositorio de datos de viajeros conserva el alcance y sanea errores", asy
   assert.match(repository, /\.eq\("position", input\.position\)/);
   assert.match(repository, /\.update\(\{[\s\S]*first_name:[\s\S]*last_name:[\s\S]*birth_date:[\s\S]*status: "complete"/);
   assert.equal(repository.includes("traveler_type:"), false);
+});
+
+function financialReservationRow(input: Readonly<{
+  total?: number;
+  depositPercent?: number | null;
+  depositRequired?: number | null;
+  currency?: "MXN" | "USD";
+  snapshot?: unknown;
+}> = {}) {
+  const source = customerReservationDetailRow();
+  const snapshot = source.snapshot as ReservationSnapshot;
+  return {
+    ...source,
+    currency: input.currency ?? "MXN",
+    snapshot: input.snapshot ?? {
+      ...snapshot,
+      total: input.total ?? 47817,
+      depositPercent: input.depositPercent === undefined ? 20 : input.depositPercent,
+      depositAmount: input.depositRequired === undefined ? 9563.4 : input.depositRequired,
+    },
+  };
+}
+
+function financialSummaryFixture(input: Readonly<{
+  accounts?: readonly CustomerAgencyAccountRecord[];
+  linked?: boolean;
+  row?: ReturnType<typeof financialReservationRow>;
+  payments?: readonly ReservationPaymentFinancialRow[];
+  failRepository?: boolean;
+}> = {}) {
+  const requests: Array<{ customerAccountId: string; agencyId: string; reservationId: string }> = [];
+  const access = customerAccessFixture({ accounts: input.accounts ?? [customerAccount()] });
+  const service = createReservationFinancialSummaryService({
+    resolveAccess: access.resolver.resolve,
+    repository: {
+      async findAuthorized(request) {
+        requests.push(request);
+        if (input.failRepository) throw new Error("SQL payment references");
+        return input.linked === false
+          ? null
+          : { snapshot: input.row ?? financialReservationRow(), payments: input.payments ?? [] };
+      },
+    },
+  });
+  return { service, requests };
+}
+
+test("resumen financiero calcula el contrato en centavos y solo pagos confirmados reducen saldo", () => {
+  const base = financialReservationRow();
+  const noPayments = calculateReservationFinancialSummary({ snapshot: base, payments: [] });
+  assert.deepEqual(noPayments, {
+    currency: "MXN",
+    contract: { total: 47817, depositPercent: 20, depositRequired: 9563.4 },
+    payments: { confirmedTotal: 0, pendingTotal: 0, cancelledTotal: 0, confirmedCount: 0 },
+    balance: { remaining: 47817, paidPercent: 0, depositCovered: false, fullyPaid: false },
+  });
+
+  const deposit = calculateReservationFinancialSummary({
+    snapshot: base,
+    payments: [{ amount: 9563.4, currency: "MXN", status: "confirmed" }],
+  });
+  assert.equal(deposit?.payments.confirmedTotal, 9563.4);
+  assert.equal(deposit?.balance.remaining, 38253.6);
+  assert.equal(deposit?.balance.depositCovered, true);
+
+  const partial = calculateReservationFinancialSummary({
+    snapshot: base,
+    payments: [{ amount: 5000, currency: "MXN", status: "confirmed" }],
+  });
+  assert.deepEqual(partial?.balance, { remaining: 42817, paidPercent: 10.46, depositCovered: false, fullyPaid: false });
+
+  const mixedStatuses = calculateReservationFinancialSummary({
+    snapshot: base,
+    payments: [
+      { amount: 5000, currency: "MXN", status: "confirmed" },
+      { amount: 10000, currency: "MXN", status: "confirmed" },
+      { amount: 3000, currency: "MXN", status: "pending" },
+      { amount: 2000, currency: "MXN", status: "cancelled" },
+    ],
+  });
+  assert.deepEqual(mixedStatuses?.payments, { confirmedTotal: 15000, pendingTotal: 3000, cancelledTotal: 2000, confirmedCount: 2 });
+  assert.equal(mixedStatuses?.balance.remaining, 32817);
+
+  const total = calculateReservationFinancialSummary({
+    snapshot: base,
+    payments: [{ amount: 47817, currency: "MXN", status: "confirmed" }],
+  });
+  assert.deepEqual(total?.balance, { remaining: 0, paidPercent: 100, depositCovered: true, fullyPaid: true });
+
+  const overpaid = calculateReservationFinancialSummary({
+    snapshot: base,
+    payments: [{ amount: 50000, currency: "MXN", status: "confirmed" }],
+  });
+  assert.equal(overpaid?.balance.remaining, 0);
+  assert.equal(overpaid?.balance.fullyPaid, true);
+  assert.equal(overpaid?.balance.paidPercent, 104.57);
+});
+
+test("resumen financiero conserva históricos y rechaza moneda o contrato incompatibles", () => {
+  const base = financialReservationRow();
+  const historicalSnapshot = base.snapshot as ReservationSnapshot;
+  const { depositPercent: _depositPercent, depositAmount: _depositAmount, ...withoutDeposit } = historicalSnapshot;
+  const historical = calculateReservationFinancialSummary({
+    snapshot: financialReservationRow({ snapshot: withoutDeposit }),
+    payments: [],
+  });
+  assert.deepEqual(historical?.contract, { total: 47817, depositPercent: null, depositRequired: null });
+  assert.equal(historical?.balance.depositCovered, null);
+
+  assert.equal(calculateReservationFinancialSummary({
+    snapshot: base,
+    payments: [{ amount: 10, currency: "USD", status: "confirmed" }],
+  }), null);
+  assert.equal(calculateReservationFinancialSummary({
+    snapshot: financialReservationRow({ total: 0 }),
+    payments: [],
+  }), null);
+  const immutable = JSON.stringify(base.snapshot);
+  calculateReservationFinancialSummary({ snapshot: base, payments: [] });
+  assert.equal(JSON.stringify(base.snapshot), immutable);
+});
+
+test("resumen financiero autoriza antes de consultar pagos y mantiene aislamiento de cliente", async () => {
+  let repositoryCreated = false;
+  const unauthenticated = createReservationFinancialSummaryService({
+    async resolveAccess() { return { status: "unauthenticated" } as const; },
+    repository: () => {
+      repositoryCreated = true;
+      return { async findAuthorized() { throw new Error("No debe consultar pagos"); } };
+    },
+  });
+  assert.deepEqual(
+    await unauthenticated.get({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId }),
+    { status: "unauthenticated" },
+  );
+  assert.equal(repositoryCreated, false);
+
+  const invalid = financialSummaryFixture();
+  assert.deepEqual(
+    await invalid.service.get({ requestedAgencySlug: "furiver", reservationId: "no-es-uuid" }),
+    { status: "not_found" },
+  );
+  assert.deepEqual(invalid.requests, []);
+
+  const linked = financialSummaryFixture();
+  const result = await linked.service.get({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId });
+  assert.equal(result.status, "authorized");
+  if (result.status === "authorized") {
+    const serialized = JSON.stringify(result.summary);
+    assert.equal(serialized.includes("agencyId"), false);
+    assert.equal(serialized.includes("customerAccountId"), false);
+    assert.equal(serialized.includes("snapshot"), false);
+    assert.equal(serialized.includes("reference"), false);
+  }
+  assert.deepEqual(linked.requests, [{ customerAccountId: "customer-furiver", agencyId: "agency-furiver", reservationId: customerDetailReservationId }]);
+
+  const unlinked = financialSummaryFixture({ linked: false });
+  assert.deepEqual(
+    await unlinked.service.get({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId }),
+    { status: "not_found" },
+  );
+  const crisenix = financialSummaryFixture();
+  assert.deepEqual(
+    await crisenix.service.get({ requestedAgencySlug: "crisenix", reservationId: customerDetailReservationId }),
+    { status: "forbidden" },
+  );
+  assert.deepEqual(crisenix.requests, []);
+  const suspended = financialSummaryFixture({ accounts: [customerAccount({ status: "suspended" })] });
+  assert.deepEqual(
+    await suspended.service.get({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId }),
+    { status: "forbidden" },
+  );
+});
+
+test("repositorio financiero limita pagos por vínculo, agencia y reservación sin exponer referencias", async () => {
+  const failing = financialSummaryFixture({ failRepository: true });
+  await assert.rejects(
+    failing.service.get({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId }),
+    (error: unknown) => error instanceof ReservationFinancialError && !error.message.includes("SQL"),
+  );
+  const repository = readFileSync("lib/payments/reservation-financial-repository.ts", "utf8");
+  assert.match(repository, /\.eq\("customer_account_id", customerAccountId\)/);
+  assert.match(repository, /\.eq\("agency_id", agencyId\)/);
+  assert.match(repository, /\.eq\("reservation_id", reservationId\)/);
+  assert.match(repository, /\.from\("reservation_payments"\)[\s\S]*\.eq\("reservation_id", reservationId\)[\s\S]*\.eq\("agency_id", agencyId\)/);
+  assert.equal(repository.includes("reference"), false);
 });
 
 test("vista de mis reservaciones usa el repositorio seguro, pagina y no filtra por datos privados", () => {
