@@ -104,6 +104,12 @@ import {
   type ReservationPaymentFinancialRow,
 } from "../lib/payments/reservation-financial-core";
 import {
+  createManualReservationPaymentService,
+  ManualPaymentError,
+  type ManualPaymentInsert,
+  type ManualPaymentStoredRow,
+} from "../lib/payments/manual-payment-core";
+import {
   parseAdminReservationPage,
   parseAdminReservationStatus,
   safeAdminNext,
@@ -2209,6 +2215,222 @@ test("detalle de cliente presenta el resumen financiero servidor sin tratar el a
   assert.equal(page.includes("Anticipo pagado"), false);
   assert.equal(page.includes("paymentId"), false);
   assert.equal(page.includes("reference"), false);
+});
+
+function manualPaymentStored(payment: ManualPaymentInsert): ManualPaymentStoredRow {
+  return {
+    reservationId: payment.reservationId,
+    agencyId: payment.agencyId,
+    amount: payment.amount,
+    currency: payment.currency,
+    status: payment.status,
+    method: payment.method,
+    source: payment.source,
+    reference: payment.reference,
+    paidAt: payment.paidAt,
+    createdAt: "2026-07-26T12:00:01.000Z",
+  };
+}
+
+function manualPaymentFixture(input: Readonly<{
+  identity?: { userId: string; email: string | null } | null;
+  memberships?: readonly AdminAgencyMembershipRecord[];
+  reservation?: ReturnType<typeof customerReservationDetailRow> | null;
+  failRepository?: boolean;
+}> = {}) {
+  const rows: ManualPaymentStoredRow[] = [];
+  const byIdempotency = new Map<string, ManualPaymentStoredRow>();
+  const writes: ManualPaymentInsert[] = [];
+  const reservationRequests: Array<{ agencyId: string; reservationId: string }> = [];
+  const access = adminAccessFixture({
+    identity: input.identity,
+    memberships: input.memberships ?? [adminMembership()],
+  });
+  const service = createManualReservationPaymentService({
+    resolveAccess: access.resolver.resolve,
+    now: () => new Date(TEST_NOW),
+    repository: {
+      async findReservation(request) {
+        reservationRequests.push(request);
+        if (input.failRepository) throw new Error("SQL snapshot details");
+        return input.reservation === undefined ? customerReservationDetailRow() : input.reservation;
+      },
+      async findByIdempotencyKey({ agencyId, idempotencyKey }) {
+        const row = byIdempotency.get(`${agencyId}:${idempotencyKey}`);
+        return row ?? null;
+      },
+      async insert(payment) {
+        const key = `${payment.agencyId}:${payment.idempotencyKey}`;
+        if (byIdempotency.has(key)) {
+          throw Object.assign(new Error("duplicate key"), { code: "23505" });
+        }
+        const row = manualPaymentStored(payment);
+        writes.push(payment);
+        rows.push(row);
+        byIdempotency.set(key, row);
+        return row;
+      },
+    },
+  });
+  return { service, rows, writes, reservationRequests };
+}
+
+function manualPaymentInput(input: Partial<Record<string, unknown>> = {}) {
+  return {
+    requestedAgencySlug: "furiver",
+    reservationId: customerDetailReservationId,
+    amount: "9563.40",
+    method: "transfer",
+    initialStatus: "confirmed",
+    reference: "  QA-TRANSFER-01  ",
+    paidAt: "2026-07-26T12:00:00.000Z",
+    idempotencyKey: "58d8cc3a-a91b-491d-b209-02df25bb4f6a",
+    ...input,
+  };
+}
+
+test("pago manual autoriza a administradores antes de consultar o escribir", async () => {
+  let queried = false;
+  const unauthenticated = createManualReservationPaymentService({
+    async resolveAccess() { return { status: "unauthenticated" } as const; },
+    repository: {
+      async findReservation() { queried = true; return null; },
+      async findByIdempotencyKey() { queried = true; return null; },
+      async insert() { queried = true; throw new Error("No debe escribir"); },
+    },
+  });
+  assert.deepEqual(await unauthenticated.create(manualPaymentInput()), { status: "unauthenticated" });
+  assert.equal(queried, false);
+
+  const customerOnly = manualPaymentFixture({ memberships: [] });
+  assert.deepEqual(await customerOnly.service.create(manualPaymentInput()), { status: "forbidden" });
+  assert.deepEqual(customerOnly.reservationRequests, []);
+  assert.equal(customerOnly.writes.length, 0);
+
+  const invalidUuid = manualPaymentFixture();
+  const result = await invalidUuid.service.create(manualPaymentInput({ reservationId: "not-a-uuid" }));
+  assert.equal(result.status, "invalid_input");
+  assert.deepEqual(invalidUuid.reservationRequests, []);
+
+  const crossTenant = manualPaymentFixture();
+  assert.deepEqual(
+    await crossTenant.service.create(manualPaymentInput({ requestedAgencySlug: "crisenix" })),
+    { status: "forbidden" },
+  );
+  assert.deepEqual(crossTenant.reservationRequests, []);
+
+  const crisenixAdmin = manualPaymentFixture({
+    memberships: [adminMembership({ agencyId: "agency-crisenix", agencySlug: "crisenix" })],
+  });
+  assert.deepEqual(await crisenixAdmin.service.create(manualPaymentInput()), { status: "forbidden" });
+  assert.deepEqual(crisenixAdmin.reservationRequests, []);
+});
+
+test("pago manual valida importe, método, estado, fecha, referencia e idempotencia", async () => {
+  for (const [field, value] of [
+    ["amount", "0"],
+    ["amount", "-1"],
+    ["amount", "10.001"],
+    ["method", "wire"],
+    ["initialStatus", "cancelled"],
+    ["paidAt", "fecha-inválida"],
+    ["paidAt", "2026-07-27T12:00:00.000Z"],
+    ["idempotencyKey", "not-a-uuid"],
+  ] as const) {
+    const fixture = manualPaymentFixture();
+    const result = await fixture.service.create(manualPaymentInput({ [field]: value }));
+    assert.equal(result.status, "invalid_input");
+    if (result.status === "invalid_input") assert.ok(result.fieldErrors[field]);
+    assert.equal(fixture.writes.length, 0);
+  }
+
+  const trimmed = manualPaymentFixture();
+  const created = await trimmed.service.create(manualPaymentInput());
+  assert.equal(created.status, "created");
+  if (created.status === "created") assert.equal(created.payment.reference, "QA-TRANSFER-01");
+  assert.equal(trimmed.writes[0].reference, "QA-TRANSFER-01");
+
+  const emptyReference = manualPaymentFixture();
+  const empty = await emptyReference.service.create(manualPaymentInput({ reference: "   " }));
+  assert.equal(empty.status, "created");
+  if (empty.status === "created") assert.equal(empty.payment.reference, null);
+  assert.equal(emptyReference.writes[0].reference, null);
+});
+
+test("pago manual deriva contrato, actor y receipt seguro sin tocar el snapshot", async () => {
+  const base = customerReservationDetailRow();
+  const contractRow = {
+    ...base,
+    snapshot: {
+      ...(base.snapshot as ReservationSnapshot),
+      total: 47817,
+      depositAmount: 9563.4,
+      depositPercent: 20,
+    },
+  };
+  const fixture = manualPaymentFixture({ reservation: contractRow });
+  const before = JSON.stringify(contractRow.snapshot);
+  const created = await fixture.service.create(manualPaymentInput({ initialStatus: "pending" }));
+  assert.equal(created.status, "created");
+  assert.deepEqual(fixture.reservationRequests, [{ agencyId: "agency-furiver", reservationId: customerDetailReservationId }]);
+  assert.equal(fixture.writes[0].currency, "MXN");
+  assert.equal(fixture.writes[0].createdByUserId, "user-verified");
+  assert.equal(fixture.writes[0].source, "manual");
+  assert.equal(fixture.writes[0].status, "pending");
+  assert.equal(JSON.stringify(contractRow.snapshot), before);
+  if (created.status === "created") {
+    const receipt = JSON.stringify(created.payment);
+    assert.equal(receipt.includes("agencyId"), false);
+    assert.equal(receipt.includes("createdByUserId"), false);
+    assert.equal(receipt.includes("idempotency"), false);
+    assert.equal(receipt.includes("reservationId"), false);
+  }
+
+  const pendingSummary = calculateReservationFinancialSummary({
+    snapshot: contractRow,
+    payments: fixture.rows.map(({ amount, currency, status }) => ({ amount, currency, status })),
+  });
+  assert.equal(pendingSummary?.balance.remaining, 47817);
+
+  const confirmed = manualPaymentFixture({ reservation: contractRow });
+  await confirmed.service.create(manualPaymentInput());
+  const confirmedSummary = calculateReservationFinancialSummary({
+    snapshot: contractRow,
+    payments: confirmed.rows.map(({ amount, currency, status }) => ({ amount, currency, status })),
+  });
+  assert.equal(confirmedSummary?.balance.remaining, 38253.6);
+});
+
+test("pago manual es idempotente ante reintentos, conflicto y concurrencia", async () => {
+  const fixture = manualPaymentFixture();
+  const input = manualPaymentInput();
+  const [first, second] = await Promise.all([
+    fixture.service.create(input),
+    fixture.service.create(input),
+  ]);
+  assert.deepEqual([first.status, second.status].sort(), ["already_exists", "created"]);
+  assert.equal(fixture.rows.length, 1);
+  assert.equal(fixture.writes.length, 1);
+
+  const changed = await fixture.service.create(manualPaymentInput({ amount: "9000.00" }));
+  assert.deepEqual(changed, { status: "idempotency_conflict" });
+  assert.equal(fixture.rows.length, 1);
+
+  const missing = manualPaymentFixture({ reservation: null });
+  assert.deepEqual(await missing.service.create(manualPaymentInput()), { status: "not_found" });
+  assert.equal(missing.writes.length, 0);
+
+  const failing = manualPaymentFixture({ failRepository: true });
+  await assert.rejects(
+    failing.service.create(manualPaymentInput()),
+    (error: unknown) => error instanceof ManualPaymentError && !error.message.includes("SQL"),
+  );
+
+  const repository = readFileSync("lib/payments/manual-payment-repository.ts", "utf8");
+  assert.match(repository, /\.eq\("id", reservationId\)[\s\S]*\.eq\("agency_id", agencyId\)/);
+  assert.match(repository, /\.eq\("agency_id", agencyId\)[\s\S]*\.eq\("idempotency_key", idempotencyKey\)/);
+  assert.match(repository, /created_by_user_id: payment\.createdByUserId/);
+  assert.match(repository, /source: payment\.source/);
 });
 
 test("vista de mis reservaciones usa el repositorio seguro, pagina y no filtra por datos privados", () => {
