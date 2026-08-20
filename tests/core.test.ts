@@ -92,6 +92,12 @@ import {
   type ReservationTravelerSlotRow,
 } from "../lib/travelers/traveler-slots-core";
 import {
+  createReservationTravelerDataService,
+  TravelerDataError,
+  validateReservationTravelerData,
+  type ReservationTravelerDataRow,
+} from "../lib/travelers/traveler-data-core";
+import {
   parseAdminReservationPage,
   parseAdminReservationStatus,
   safeAdminNext,
@@ -1778,7 +1784,7 @@ test("slots operativos rechazan estructuras ambiguas o incompatibles sin escribi
   assert.equal(repository.includes("first_name"), false);
 });
 
-test("detalle de cliente muestra únicamente slots operativos autorizados, sin PII", () => {
+test("detalle de cliente autoriza slots antes de delegar la captura de PII al formulario", () => {
   const page = readFileSync(
     "app/cuenta/[agencySlug]/reservaciones/[reservationId]/page.tsx",
     "utf8",
@@ -1794,16 +1800,196 @@ test("detalle de cliente muestra únicamente slots operativos autorizados, sin P
   assert.match(page, /No fue posible preparar los datos de viajeros de esta reservación/);
   assert.equal(page.includes("reservation.travelers"), false);
   assert.equal(page.includes("traveler.fullName"), false);
-  assert.equal(page.includes("traveler.birthDate"), false);
   assert.equal(page.includes("slot.firstName"), false);
   assert.equal(page.includes("slot.lastName"), false);
   assert.equal(page.includes("slot.birthDate"), false);
-  assert.equal(page.includes("<input"), false);
-  assert.equal(page.includes("Guardar"), false);
+  assert.match(page, /getReservationTravelerData/);
+  assert.match(page, /<TravelerDataForm/);
 
   const styles = readFileSync("app/cuenta/cuenta.module.css", "utf8");
   assert.match(styles, /\.travelerSlotGrid\{display:grid;grid-template-columns:repeat\(3,minmax\(0,1fr\)\)/);
   assert.match(styles, /@media\(max-width:760px\)\{\.travelerSlotGrid\{grid-template-columns:1fr\}\}/);
+});
+
+function travelerDataFixture(input: Readonly<{
+  accounts?: readonly CustomerAgencyAccountRecord[];
+  linked?: boolean;
+  rows?: readonly ReservationTravelerDataRow[];
+  failRepository?: boolean;
+}> = {}) {
+  const rows = [...(input.rows ?? [
+    { position: 1, traveler_type: "adult", status: "pending", first_name: null, last_name: null, birth_date: null },
+    { position: 2, traveler_type: "adult", status: "complete", first_name: "Ana", last_name: "Pérez", birth_date: "1990-02-03" },
+    { position: 3, traveler_type: "minor", status: "pending", first_name: null, last_name: null, birth_date: null },
+  ])];
+  const requests: Array<Record<string, unknown>> = [];
+  const access = customerAccessFixture({ accounts: input.accounts ?? [customerAccount()] });
+  const service = createReservationTravelerDataService({
+    resolveAccess: access.resolver.resolve,
+    repository: {
+      async listAuthorized(request) {
+        requests.push({ kind: "list", ...request });
+        if (input.failRepository) throw new Error("SQL traveler PII");
+        return input.linked === false ? null : rows;
+      },
+      async updateAuthorized(request) {
+        requests.push({ kind: "update", ...request });
+        if (input.failRepository) throw new Error("SQL traveler PII");
+        if (input.linked === false) return null;
+        const index = rows.findIndex((row) => row.position === request.position);
+        if (index < 0) return null;
+        const existing = rows[index];
+        const updated: ReservationTravelerDataRow = {
+          ...existing,
+          first_name: request.firstName,
+          last_name: request.lastName,
+          birth_date: request.birthDate,
+          status: "complete",
+        };
+        rows[index] = updated;
+        return updated;
+      },
+    },
+  });
+  return { service, rows, requests };
+}
+
+test("datos operativos de viajeros se leen solo después de autorización y sin IDs internos", async () => {
+  let repositoryCreated = false;
+  const unauthenticated = createReservationTravelerDataService({
+    async resolveAccess() { return { status: "unauthenticated" } as const; },
+    repository: () => {
+      repositoryCreated = true;
+      return { async listAuthorized() { throw new Error("No debe leer PII"); }, async updateAuthorized() { throw new Error("No debe escribir PII"); } };
+    },
+  });
+  assert.deepEqual(
+    await unauthenticated.get({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId }),
+    { status: "unauthenticated" },
+  );
+  assert.equal(repositoryCreated, false);
+
+  const invalid = travelerDataFixture();
+  assert.deepEqual(
+    await invalid.service.get({ requestedAgencySlug: "furiver", reservationId: "no-es-uuid" }),
+    { status: "not_found" },
+  );
+  assert.deepEqual(invalid.requests, []);
+
+  const fixture = travelerDataFixture();
+  const result = await fixture.service.get({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId });
+  assert.equal(result.status, "authorized");
+  if (result.status === "authorized") {
+    assert.deepEqual(result.travelers.map((traveler) => [traveler.position, traveler.travelerType]), [
+      [1, "adult"], [2, "adult"], [3, "minor"],
+    ]);
+    const serialized = JSON.stringify(result);
+    assert.equal(serialized.includes("agencyId"), false);
+    assert.equal(serialized.includes("customerAccountId"), false);
+    assert.equal(serialized.includes("snapshot"), false);
+    assert.equal(serialized.includes("idempotency"), false);
+  }
+  assert.deepEqual(fixture.requests[0], {
+    kind: "list",
+    customerAccountId: "customer-furiver",
+    agencyId: "agency-furiver",
+    reservationId: customerDetailReservationId,
+  });
+});
+
+test("datos operativos aíslan reservaciones, cuentas y agencias ajenas", async () => {
+  const unlinked = travelerDataFixture({ linked: false });
+  assert.deepEqual(
+    await unlinked.service.get({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId }),
+    { status: "not_found" },
+  );
+
+  const otherAgency = travelerDataFixture();
+  assert.deepEqual(
+    await otherAgency.service.get({ requestedAgencySlug: "crisenix", reservationId: customerDetailReservationId }),
+    { status: "forbidden" },
+  );
+  assert.deepEqual(otherAgency.requests, []);
+
+  const otherCustomer = travelerDataFixture({
+    accounts: [customerAccount({ customerAccountId: "another-customer" })],
+  });
+  await otherCustomer.service.get({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId });
+  assert.equal(otherCustomer.requests[0].customerAccountId, "another-customer");
+
+  const suspended = travelerDataFixture({ accounts: [customerAccount({ status: "suspended" })] });
+  assert.deepEqual(
+    await suspended.service.get({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId }),
+    { status: "forbidden" },
+  );
+  assert.deepEqual(suspended.requests, []);
+});
+
+test("datos de viajeros validan, normalizan y actualizan solo las columnas permitidas", async () => {
+  assert.ok("errors" in validateReservationTravelerData({ position: 1, firstName: "", lastName: "Pérez", birthDate: "1990-01-01" }));
+  assert.ok("errors" in validateReservationTravelerData({ position: 1, firstName: "Ana", lastName: "", birthDate: "1990-01-01" }));
+  assert.ok("errors" in validateReservationTravelerData({ position: 1, firstName: "Ana", lastName: "Pérez", birthDate: "fecha" }));
+  assert.ok("errors" in validateReservationTravelerData({ position: 1, firstName: "Ana", lastName: "Pérez", birthDate: "2999-01-01" }));
+  assert.deepEqual(
+    validateReservationTravelerData({ position: 1, firstName: "  Ana  ", lastName: "  Pérez  ", birthDate: "1990-01-01" }),
+    { value: { position: 1, firstName: "Ana", lastName: "Pérez", birthDate: "1990-01-01" } },
+  );
+
+  const fixture = travelerDataFixture();
+  const originalType = fixture.rows[0].traveler_type;
+  const saved = await fixture.service.save({
+    requestedAgencySlug: "furiver",
+    reservationId: customerDetailReservationId,
+    position: 1,
+    firstName: "  Sofía ",
+    lastName: "  Rivera ",
+    birthDate: "1991-04-05",
+  });
+  assert.equal(saved.status, "saved");
+  if (saved.status === "saved") {
+    assert.deepEqual(saved.traveler, {
+      position: 1,
+      travelerType: "adult",
+      status: "complete",
+      firstName: "Sofía",
+      lastName: "Rivera",
+      birthDate: "1991-04-05",
+    });
+  }
+  assert.equal(fixture.rows[0].traveler_type, originalType);
+  assert.equal(fixture.rows[0].position, 1);
+  assert.equal(fixture.requests[0].kind, "update");
+  assert.equal("agencyId" in fixture.rows[0], false);
+  const reloaded = await fixture.service.get({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId });
+  assert.equal(reloaded.status, "authorized");
+  if (reloaded.status === "authorized") {
+    assert.equal(reloaded.travelers[0].firstName, "Sofía");
+    assert.equal(reloaded.travelers[0].status, "complete");
+    assert.equal(reloaded.travelers.some((traveler) => traveler.status === "pending"), true);
+  }
+});
+
+test("repositorio de datos de viajeros conserva el alcance y sanea errores", async () => {
+  const missingSlot = travelerDataFixture({ rows: [] });
+  assert.deepEqual(
+    await missingSlot.service.save({
+      requestedAgencySlug: "furiver", reservationId: customerDetailReservationId, position: 1,
+      firstName: "Ana", lastName: "Pérez", birthDate: "1990-01-01",
+    }),
+    { status: "not_found" },
+  );
+  const failing = travelerDataFixture({ failRepository: true });
+  await assert.rejects(
+    failing.service.get({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId }),
+    (error: unknown) => error instanceof TravelerDataError && !error.message.includes("SQL"),
+  );
+  const repository = readFileSync("lib/travelers/traveler-data-repository.ts", "utf8");
+  assert.match(repository, /\.eq\("customer_account_id", input\.customerAccountId\)/);
+  assert.match(repository, /\.eq\("agency_id", input\.agencyId\)/);
+  assert.match(repository, /\.eq\("reservation_id", input\.reservationId\)/);
+  assert.match(repository, /\.eq\("position", input\.position\)/);
+  assert.match(repository, /\.update\(\{[\s\S]*first_name:[\s\S]*last_name:[\s\S]*birth_date:[\s\S]*status: "complete"/);
+  assert.equal(repository.includes("traveler_type:"), false);
 });
 
 test("vista de mis reservaciones usa el repositorio seguro, pagina y no filtra por datos privados", () => {
