@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { resolveCustomerAgencyAccess } from "@/lib/customers/customer-access";
 import { createSupabaseAuthServerClient } from "@/lib/supabase/auth-server";
 
+import { runCustomerLoginFlow } from "./customer-login-core";
 import { safeCustomerNext, validateCustomerLoginCredentials } from "./customer-utils";
 import type { CustomerLoginState } from "./login/login-state";
 
@@ -23,21 +24,25 @@ export async function loginCustomerAction(
   const next = safeCustomerNext(formData.get("next"));
   if (!credentials) return loginError();
 
-  let access: Awaited<ReturnType<typeof resolveCustomerAgencyAccess>>;
+  let result: Awaited<ReturnType<typeof runCustomerLoginFlow>>;
   try {
     const auth = await createSupabaseAuthServerClient();
-    const { error } = await auth.auth.signInWithPassword(credentials);
-    if (error) return loginError();
-    access = await resolveCustomerAgencyAccess();
+    result = await runCustomerLoginFlow({
+      signInWithPassword: (input) => auth.auth.signInWithPassword(input),
+      // Reuse the client that has just written the response cookies; a second
+      // SSR client could otherwise observe the pre-login request cookies.
+      resolveAccess: () => resolveCustomerAgencyAccess({}, auth),
+    }, credentials);
   } catch {
     return loginError();
   }
 
-  if (access.status === "authorized") {
-    const agencyPath = `/cuenta/${encodeURIComponent(access.account.agencySlug)}/reservaciones`;
+  if (result.status === "authorized") {
+    const agencyPath = `/cuenta/${encodeURIComponent(result.access.account.agencySlug)}/reservaciones`;
     redirect(next?.startsWith(`${agencyPath}/`) || next === agencyPath ? next : agencyPath);
   }
-  if (access.status === "selection_required") redirect("/cuenta");
+  if (result.status === "selection_required") redirect("/cuenta");
+  if (result.status === "auth_failed" || result.status === "unexpected_error") return loginError();
   return { error: "No tienes acceso activo como cliente." };
 }
 

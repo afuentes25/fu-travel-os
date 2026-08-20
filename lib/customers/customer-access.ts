@@ -1,6 +1,8 @@
 import "server-only";
 
-import { getVerifiedSupabaseIdentity } from "@/lib/supabase/auth-identity";
+import type { SupabaseClient } from "@supabase/supabase-js";
+
+import { resolveVerifiedSupabaseIdentity } from "@/lib/supabase/auth-identity-core";
 import { createSupabaseAuthServerClient } from "@/lib/supabase/auth-server";
 
 import {
@@ -18,10 +20,11 @@ export {
 /** Resolves customer access only from the verified session and RLS-scoped accounts. */
 export async function resolveCustomerAgencyAccess(
   input: Readonly<{ requestedAgencySlug?: string }> = {},
+  authenticatedClient?: SupabaseClient,
 ): Promise<CustomerAgencyAccess> {
-  const client = await createSupabaseAuthServerClient();
+  const client = authenticatedClient ?? await createSupabaseAuthServerClient();
   return createCustomerAgencyAccessResolver({
-    getIdentity: getVerifiedSupabaseIdentity,
+    getIdentity: () => resolveVerifiedSupabaseIdentity(client),
     accountRepository: createSupabaseCustomerAgencyAccountRepository(client),
   }).resolve(input);
 }

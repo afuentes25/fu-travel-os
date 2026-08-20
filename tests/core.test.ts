@@ -89,6 +89,13 @@ import {
   safeCustomerNext,
   validateCustomerLoginCredentials,
 } from "../app/cuenta/customer-utils";
+import { runCustomerLoginFlow } from "../app/cuenta/customer-login-core";
+import {
+  customerReservationHref,
+  customerReservationNextStep,
+  customerReservationStatusLabel,
+  parseCustomerReservationPage,
+} from "../app/cuenta/customer-reservation-utils";
 import { getSupabasePublicEnvironment } from "../lib/supabase/auth-env";
 import { resolveVerifiedSupabaseIdentity } from "../lib/supabase/auth-identity-core";
 import { isReservedInternalPath } from "../lib/routing/public-route-guard";
@@ -178,6 +185,22 @@ import type {
   TravelerDraft,
   TravelProduct,
 } from "../types/index";
+
+// Demo departures are intentionally dated around August 2026. Freeze the
+// test clock before invoking any pricing/reservation helper so the suite does
+// not expire when the real calendar advances.
+const REAL_DATE = Date;
+const TEST_NOW = "2026-07-26T12:00:00.000Z";
+globalThis.Date = class extends REAL_DATE {
+  constructor(value?: string | number | Date) {
+    if (arguments.length === 0) super(TEST_NOW);
+    else super(value as never);
+  }
+
+  static now() {
+    return REAL_DATE.parse(TEST_NOW);
+  }
+} as DateConstructor;
 
 const configuredTrip = () => travels.find((trip) => trip.pageConfiguration)!;
 
@@ -583,7 +606,68 @@ test("login de cliente valida credenciales y limita next exclusivamente a cuenta
   assert.equal(safeCustomerNext("/cuenta%2fmalicioso"), null);
 });
 
-test("rutas de cuenta usan autorización de cliente y no consultan reservaciones en el shell", () => {
+test("login de cliente distingue Auth de acceso activo y no atrapa redirects", async () => {
+  const credentials = { email: "cliente@furiver.test", password: "password-seguro" };
+  const authorized = await runCustomerLoginFlow({
+    async signInWithPassword() {
+      return { error: null };
+    },
+    async resolveAccess() {
+      return {
+        status: "authorized",
+        identity: { userId: "verified-customer", email: "cliente@furiver.test" },
+        account: {
+          customerAccountId: "customer-furiver",
+          agencyId: "agency-furiver",
+          agencySlug: "furiver",
+          agencyName: "Furiver",
+        },
+        accounts: [],
+      };
+    },
+  }, credentials);
+  assert.equal(authorized.status, "authorized");
+  if (authorized.status === "authorized") {
+    assert.equal(authorized.access.account.agencySlug, "furiver");
+  }
+
+  const authFailed = await runCustomerLoginFlow({
+    async signInWithPassword() {
+      return { error: { code: "invalid_credentials" } };
+    },
+    async resolveAccess() {
+      throw new Error("must not resolve access after failed auth");
+    },
+  }, credentials);
+  assert.deepEqual(authFailed, { status: "auth_failed" });
+
+  const noAccount = await runCustomerLoginFlow({
+    async signInWithPassword() {
+      return { error: null };
+    },
+    async resolveAccess() {
+      return { status: "forbidden" };
+    },
+  }, credentials);
+  assert.deepEqual(noAccount, { status: "forbidden" });
+
+  const actionsSource = readFileSync("app/cuenta/actions.ts", "utf8");
+  assert.match(actionsSource, /resolveCustomerAgencyAccess\(\{\}, auth\)/);
+  assert.ok(actionsSource.indexOf("redirect(") > actionsSource.lastIndexOf("catch"));
+});
+
+test("RLS permite resolver agencias solo para cuentas de cliente activas", () => {
+  const migration = readFileSync(
+    "supabase/migrations/20260801040000_customer_agency_read_policy.sql",
+    "utf8",
+  );
+  assert.match(migration, /grant select on table public\.agencies to authenticated/i);
+  assert.match(migration, /agencies_select_active_customer_account/);
+  assert.match(migration, /public\.has_customer_agency_access\(id\)/);
+  assert.equal(migration.includes("service_role"), false);
+});
+
+test("rutas de cuenta usan autorización de cliente y el listado seguro de reservaciones", () => {
   const actions = readFileSync("app/cuenta/actions.ts", "utf8");
   const accountPage = readFileSync("app/cuenta/page.tsx", "utf8");
   const reservationsPage = readFileSync(
@@ -597,9 +681,9 @@ test("rutas de cuenta usan autorización de cliente y no consultan reservaciones
   assert.equal(actions.includes("getSupabaseServerClient"), false);
   assert.equal(actions.includes("SUPABASE_SERVICE_ROLE_KEY"), false);
   assert.match(accountPage, /resolveCustomerAgencyAccess/);
-  assert.match(reservationsPage, /resolveCustomerAgencyAccess\(\{ requestedAgencySlug: agencySlug \}\)/);
-  assert.equal(reservationsPage.includes("listCustomerReservations"), false);
-  assert.match(reservationsPage, /Tus reservaciones vinculadas aparecerán aquí/);
+  assert.match(reservationsPage, /listCustomerReservations/);
+  assert.equal(reservationsPage.includes("resolveCustomerAgencyAccess"), false);
+  assert.equal(reservationsPage.includes("reservation_customer_access"), false);
   assert.equal(shell.includes("customerAccountId"), false);
   assert.equal(shell.includes("agencyId"), false);
 });
@@ -1243,6 +1327,32 @@ test("mis reservaciones filtra por cuenta y agencia autorizadas, pagina y ordena
   assert.deepEqual(requests, [{ customerAccountId: "customer-furiver", agencyId: "agency-furiver", status: "pending", limit: 50, offset: 0 }]);
 });
 
+test("cliente autorizado proyecta exclusivamente su reservación vinculada", async () => {
+  const linkedReservation = adminReservationRow({
+    id: "customer-linked-reservation",
+    code: "FT-004-260801-D01B4E",
+    status: "pending",
+    createdAt: "2026-08-01T08:00:00.000Z",
+  });
+  const { lister, requests } = customerReservationListingFixture({
+    rows: [linkedReservation],
+    total: 1,
+  });
+  const result = await lister.list({ requestedAgencySlug: "furiver", limit: 20, offset: 0 });
+
+  assert.equal(result.status, "authorized");
+  if (result.status === "authorized") {
+    assert.equal(result.total, 1);
+    assert.deepEqual(result.items.map((item) => item.reservationCode), ["FT-004-260801-D01B4E"]);
+  }
+  assert.deepEqual(requests, [{
+    customerAccountId: "customer-furiver",
+    agencyId: "agency-furiver",
+    limit: 20,
+    offset: 0,
+  }]);
+});
+
 test("mis reservaciones conserva snapshots históricos y no expone PII ni datos técnicos", async () => {
   const source = adminReservationRow({ id: "customer-historical", code: "FT-CUSTOMER-HIST", status: "pending", createdAt: "2026-08-02T08:00:00.000Z" });
   const snapshot = source.snapshot as ReservationSnapshot;
@@ -1287,6 +1397,45 @@ test("mis reservaciones sanea filtros, errores y mantiene la separación de clie
   assert.match(repository, /\.eq\("agency_id", agencyId\)/);
   assert.match(repository, /reservation_snapshots\.agency_id", agencyId/);
   assert.equal(repository.includes("agency_memberships"), false);
+});
+
+test("vista de mis reservaciones usa el repositorio seguro, pagina y no filtra por datos privados", () => {
+  assert.equal(parseCustomerReservationPage("3"), 3);
+  assert.equal(parseCustomerReservationPage("0"), 1);
+  assert.equal(parseCustomerReservationPage("-1"), 1);
+  assert.equal(parseCustomerReservationPage("texto"), 1);
+  assert.equal(
+    customerReservationHref("furiver", "pending", 2),
+    "/cuenta/furiver/reservaciones?status=pending&page=2",
+  );
+
+  const page = readFileSync("app/cuenta/[agencySlug]/reservaciones/page.tsx", "utf8");
+  const queryIndex = page.indexOf("listCustomerReservations({");
+  assert.ok(queryIndex >= 0);
+  assert.match(page, /limit: PAGE_SIZE/);
+  assert.match(page, /offset: \(page - 1\) \* PAGE_SIZE/);
+  assert.match(page, /Aún no tienes reservaciones vinculadas\./);
+  assert.equal(page.includes("resolveCustomerAgencyAccess"), false);
+  assert.equal(page.includes("reservation_customer_access"), false);
+  assert.equal(page.includes("customerAccountId"), false);
+  assert.equal(page.includes("agencyId"), false);
+  assert.equal(page.includes("fullName"), false);
+  assert.equal(page.includes("email"), false);
+  assert.equal(page.includes("phone"), false);
+  assert.equal(page.includes("snapshot"), false);
+});
+
+test("vista de cliente traduce estados y próximos pasos sin cambiar la reservación", () => {
+  assert.equal(customerReservationStatusLabel("pending"), "Pendiente");
+  assert.equal(customerReservationStatusLabel("paid"), "Pagada");
+  assert.equal(
+    customerReservationNextStep("pending"),
+    "Espera las instrucciones de la agencia para completar tu anticipo.",
+  );
+  assert.equal(
+    customerReservationNextStep("paid"),
+    "Tu reservación está pagada. Consulta próximamente tus documentos de viaje.",
+  );
 });
 
 test("comando usa UUID persistido y rechaza una agencia inexistente", async () => {
