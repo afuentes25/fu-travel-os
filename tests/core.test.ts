@@ -85,6 +85,13 @@ import {
   isCustomerReservationUuid,
 } from "../lib/customers/customer-reservation-detail-core";
 import {
+  buildTravelerSlotStructure,
+  createReservationTravelerSlotEnsurer,
+  deriveTravelerSlotStructure,
+  TravelerSlotsError,
+  type ReservationTravelerSlotRow,
+} from "../lib/travelers/traveler-slots-core";
+import {
   parseAdminReservationPage,
   parseAdminReservationStatus,
   safeAdminNext,
@@ -1580,6 +1587,195 @@ test("detalle de cliente sanea errores internos y la UI mantiene navegación pro
   assert.match(repository, /\.eq\("agency_id", agencyId\)/);
   assert.match(repository, /\.eq\("reservation_id", reservationId\)/);
   assert.match(repository, /reservation_snapshots\.agency_id", agencyId/);
+});
+
+function travelerSlotFixture(input: Readonly<{
+  accounts?: readonly CustomerAgencyAccountRecord[];
+  row?: ReturnType<typeof customerReservationDetailRow> | null;
+  slots?: readonly ReservationTravelerSlotRow[];
+  failRepository?: boolean;
+}> = {}) {
+  const reads: Array<{ customerAccountId: string; agencyId: string; reservationId: string }> = [];
+  const inserts: Array<readonly { position: number; travelerType: "adult" | "minor" }[]> = [];
+  const slotRows = [...(input.slots ?? [])];
+  const access = customerAccessFixture({ accounts: input.accounts ?? [customerAccount()] });
+  const ensurer = createReservationTravelerSlotEnsurer({
+    resolveAccess: access.resolver.resolve,
+    repository: {
+      async findAuthorizedReservation(request) {
+        reads.push(request);
+        if (input.failRepository) throw new Error("SQL traveler details");
+        const row = input.row === undefined ? customerReservationDetailRow() : input.row;
+        return row ? { snapshot: row, slots: slotRows } : null;
+      },
+      async insertMissing(request) {
+        inserts.push(request.slots);
+        for (const slot of request.slots) {
+          if (!slotRows.some((existing) => existing.position === slot.position)) {
+            slotRows.push({
+              id: `slot-${slot.position}`,
+              position: slot.position,
+              traveler_type: slot.travelerType,
+              status: "pending",
+            });
+          }
+        }
+      },
+    },
+  });
+  return { ensurer, reads, inserts, slotRows };
+}
+
+test("slots operativos validan UUID y autorización antes de cualquier lectura o escritura", async () => {
+  let repositoryCreated = false;
+  const invalid = createReservationTravelerSlotEnsurer({
+    async resolveAccess() { return { status: "unauthenticated" } as const; },
+    repository: () => {
+      repositoryCreated = true;
+      return { async findAuthorizedReservation() { throw new Error("No debe consultar"); }, async insertMissing() {} };
+    },
+  });
+  assert.deepEqual(
+    await invalid.ensure({ requestedAgencySlug: "furiver", reservationId: "no-es-uuid" }),
+    { status: "not_found" },
+  );
+  assert.equal(repositoryCreated, false);
+
+  const unauthenticated = createReservationTravelerSlotEnsurer({
+    async resolveAccess() { return { status: "unauthenticated" } as const; },
+    repository: { async findAuthorizedReservation() { throw new Error("No debe consultar"); }, async insertMissing() {} },
+  });
+  assert.deepEqual(
+    await unauthenticated.ensure({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId }),
+    { status: "unauthenticated" },
+  );
+
+  const forbidden = travelerSlotFixture();
+  assert.deepEqual(
+    await forbidden.ensurer.ensure({ requestedAgencySlug: "crisenix", reservationId: customerDetailReservationId }),
+    { status: "forbidden" },
+  );
+  assert.deepEqual(forbidden.reads, []);
+
+  const notLinked = travelerSlotFixture({ row: null });
+  assert.deepEqual(
+    await notLinked.ensurer.ensure({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId }),
+    { status: "not_found" },
+  );
+
+  const otherCustomer = travelerSlotFixture({
+    accounts: [customerAccount({ customerAccountId: "another-customer" })],
+  });
+  await otherCustomer.ensurer.ensure({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId });
+  assert.equal(otherCustomer.reads[0].customerAccountId, "another-customer");
+
+  const suspended = travelerSlotFixture({ accounts: [customerAccount({ status: "suspended" })] });
+  assert.deepEqual(
+    await suspended.ensurer.ensure({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId }),
+    { status: "forbidden" },
+  );
+  assert.deepEqual(suspended.reads, []);
+});
+
+test("slots operativos derivan adultos y menores del snapshot, de forma determinista e idempotente", async () => {
+  assert.deepEqual(buildTravelerSlotStructure({ adults: 2, minors: 1 }), [
+    { position: 1, travelerType: "adult" },
+    { position: 2, travelerType: "adult" },
+    { position: 3, travelerType: "minor" },
+  ]);
+  assert.deepEqual(buildTravelerSlotStructure({ adults: 1, minors: 2 }), [
+    { position: 1, travelerType: "adult" },
+    { position: 2, travelerType: "minor" },
+    { position: 3, travelerType: "minor" },
+  ]);
+
+  const fixture = travelerSlotFixture();
+  const first = await fixture.ensurer.ensure({
+    requestedAgencySlug: "furiver",
+    reservationId: customerDetailReservationId,
+  });
+  assert.equal(first.status, "ready");
+  if (first.status === "ready") {
+    assert.deepEqual(first.slots.map(({ position, travelerType, status }) => ({ position, travelerType, status })), [
+      { position: 1, travelerType: "adult", status: "pending" },
+      { position: 2, travelerType: "adult", status: "pending" },
+      { position: 3, travelerType: "minor", status: "pending" },
+    ]);
+    assert.equal(JSON.stringify(first).includes("agencyId"), false);
+    assert.equal(JSON.stringify(first).includes("customerAccountId"), false);
+    assert.equal(JSON.stringify(first).includes("snapshot"), false);
+  }
+  assert.equal(fixture.inserts.length, 1);
+  const second = await fixture.ensurer.ensure({
+    requestedAgencySlug: "furiver",
+    reservationId: customerDetailReservationId,
+  });
+  assert.deepEqual(second, first);
+  assert.equal(fixture.inserts.length, 1);
+  assert.deepEqual(fixture.reads[0], {
+    customerAccountId: "customer-furiver",
+    agencyId: "agency-furiver",
+    reservationId: customerDetailReservationId,
+  });
+});
+
+test("slots operativos completan solo posiciones faltantes y nunca sobrescriben slots existentes", async () => {
+  const fixture = travelerSlotFixture({
+    slots: [{ id: "existing-adult", position: 1, traveler_type: "adult", status: "complete" }],
+  });
+  const result = await fixture.ensurer.ensure({
+    requestedAgencySlug: "furiver",
+    reservationId: customerDetailReservationId,
+  });
+  assert.equal(result.status, "ready");
+  if (result.status === "ready") {
+    assert.equal(result.slots[0].id, "existing-adult");
+    assert.equal(result.slots[0].status, "complete");
+  }
+  assert.deepEqual(fixture.inserts, [[
+    { position: 2, travelerType: "adult" },
+    { position: 3, travelerType: "minor" },
+  ]]);
+});
+
+test("slots operativos rechazan estructuras ambiguas o incompatibles sin escribir", async () => {
+  const source = customerReservationDetailRow().snapshot as ReservationSnapshot;
+  const frozenSource = JSON.stringify(source);
+  const { occupancy: _occupancy, travelers: _travelers, ...ambiguousSnapshot } = source;
+  const ambiguous = travelerSlotFixture({ row: customerReservationDetailRow(ambiguousSnapshot) });
+  assert.deepEqual(
+    await ambiguous.ensurer.ensure({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId }),
+    { status: "invalid_structure" },
+  );
+  assert.deepEqual(ambiguous.inserts, []);
+
+  const incompatible = travelerSlotFixture({
+    slots: [{ id: "wrong-type", position: 1, traveler_type: "minor", status: "pending" }],
+  });
+  assert.deepEqual(
+    await incompatible.ensurer.ensure({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId }),
+    { status: "invalid_structure" },
+  );
+  assert.deepEqual(incompatible.inserts, []);
+
+  const recoverable = { ...source, occupancy: undefined };
+  assert.deepEqual(
+    deriveTravelerSlotStructure(customerReservationDetailRow(recoverable)),
+    buildTravelerSlotStructure({ adults: 2, minors: 1 }),
+  );
+  assert.equal(JSON.stringify(source), frozenSource);
+
+  const failing = travelerSlotFixture({ failRepository: true });
+  await assert.rejects(
+    failing.ensurer.ensure({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId }),
+    (error: unknown) => error instanceof TravelerSlotsError && !error.message.includes("SQL"),
+  );
+  const repository = readFileSync("lib/travelers/traveler-slots-repository.ts", "utf8");
+  assert.match(repository, /\.eq\("customer_account_id", customerAccountId\)/);
+  assert.match(repository, /\.eq\("agency_id", agencyId\)/);
+  assert.match(repository, /\.eq\("reservation_id", reservationId\)/);
+  assert.match(repository, /onConflict: "reservation_id,position", ignoreDuplicates: true/);
+  assert.equal(repository.includes("first_name"), false);
 });
 
 test("vista de mis reservaciones usa el repositorio seguro, pagina y no filtra por datos privados", () => {
