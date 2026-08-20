@@ -6,6 +6,7 @@ import {
   CustomerReservationDetailError,
   getCustomerReservationDetail,
 } from "@/lib/customers/customer-reservation-detail";
+import { ensureReservationTravelerSlots } from "@/lib/travelers/traveler-slots";
 
 import { CustomerShell } from "../../../customer-shell";
 import {
@@ -81,8 +82,35 @@ export default async function CustomerReservationDetailPage({
     );
   }
 
+  let travelerSlots: Awaited<ReturnType<typeof ensureReservationTravelerSlots>>;
+  try {
+    travelerSlots = await ensureReservationTravelerSlots({
+      requestedAgencySlug: agencySlug,
+      reservationId,
+    });
+  } catch {
+    travelerSlots = { status: "invalid_structure" };
+  }
+
+  if (travelerSlots.status === "unauthenticated") {
+    redirect(`/cuenta/login?next=${encodeURIComponent(`/cuenta/${agencySlug}/reservaciones/${reservationId}`)}`);
+  }
+  if (travelerSlots.status === "selection_required") redirect("/cuenta");
+  if (travelerSlots.status === "forbidden" || travelerSlots.status === "not_found") {
+    return (
+      <CustomerShell>
+        <section className={styles.stateCard}>
+          <h1>Reservación no disponible</h1>
+          <p>No encontramos una reservación disponible para tu cuenta.</p>
+          <Link className={styles.reservationLink} href={`/cuenta/${encodeURIComponent(agencySlug)}/reservaciones`}>Volver a Mis reservaciones</Link>
+        </section>
+      </CustomerShell>
+    );
+  }
+
   const { reservation } = detail;
-  const pendingTravelerData = reservation.travelerDataStatus === "pending";
+  const slots = travelerSlots.status === "ready" ? travelerSlots.slots : [];
+  const travelerDataComplete = slots.length > 0 && slots.every((slot) => slot.status === "complete");
   return (
     <CustomerShell account={detail.account}>
       <section className={styles.content} aria-labelledby="customer-reservation-title">
@@ -109,8 +137,9 @@ export default async function CustomerReservationDetailPage({
         </div>
 
         <section className={styles.detailCard} aria-labelledby="customer-travelers-title">
-          <div className={styles.detailCardHeader}><h2 id="customer-travelers-title">Viajeros</h2>{pendingTravelerData && <p role="status">Datos de viajeros pendientes de completar</p>}</div>
-          {reservation.travelers.length ? <div className={styles.travelersTableWrap}><table className={styles.travelersTable}><thead><tr><th>Categoría</th><th>Nombre</th><th>Edad</th><th>Estado</th></tr></thead><tbody>{reservation.travelers.map((traveler, index) => <tr key={`${traveler.category ?? "viajero"}-${index}`}><td>{valueOrUnavailable(traveler.category)}</td><td>{valueOrUnavailable(traveler.fullName)}</td><td>{valueOrUnavailable(traveler.age)}</td><td>{valueOrUnavailable(traveler.status)}</td></tr>)}</tbody></table></div> : <p className={styles.unavailable}>Aún no se han registrado los datos de los viajeros.</p>}
+          <div className={styles.detailCardHeader}><h2 id="customer-travelers-title">Viajeros</h2>{travelerSlots.status === "ready" && <p role="status">{travelerDataComplete ? "Datos de viajeros completos" : "Datos de viajeros pendientes de completar"}</p>}</div>
+          <p className={styles.travelerIntro}>Completa los datos de las personas que viajarán en esta reservación.</p>
+          {travelerSlots.status === "invalid_structure" ? <p className={styles.travelerNotice} role="alert">No fue posible preparar los datos de viajeros de esta reservación. Contacta a la agencia para recibir asistencia.</p> : <div className={styles.travelerSlotGrid}>{slots.map((slot) => <article className={styles.travelerSlot} key={slot.id}><div><strong>Viajero {slot.position}</strong><span className={styles.travelerType}>{slot.travelerType === "adult" ? "Adulto" : "Menor"}</span></div><span className={slot.status === "complete" ? styles.travelerComplete : styles.travelerPending}>{slot.status === "complete" ? "Datos completos" : "Datos pendientes"}</span></article>)}</div>}
         </section>
       </section>
     </CustomerShell>

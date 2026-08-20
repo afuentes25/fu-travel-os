@@ -1778,6 +1778,34 @@ test("slots operativos rechazan estructuras ambiguas o incompatibles sin escribi
   assert.equal(repository.includes("first_name"), false);
 });
 
+test("detalle de cliente muestra únicamente slots operativos autorizados, sin PII", () => {
+  const page = readFileSync(
+    "app/cuenta/[agencySlug]/reservaciones/[reservationId]/page.tsx",
+    "utf8",
+  );
+  const detailIndex = page.indexOf("getCustomerReservationDetail({");
+  const slotsIndex = page.indexOf("ensureReservationTravelerSlots({");
+  assert.ok(detailIndex >= 0 && slotsIndex > detailIndex);
+  assert.match(page, /Viajero \{slot\.position\}/);
+  assert.match(page, /slot\.travelerType === "adult" \? "Adulto" : "Menor"/);
+  assert.match(page, /slot\.status === "complete" \? "Datos completos" : "Datos pendientes"/);
+  assert.match(page, /Datos de viajeros pendientes de completar/);
+  assert.match(page, /Datos de viajeros completos/);
+  assert.match(page, /No fue posible preparar los datos de viajeros de esta reservación/);
+  assert.equal(page.includes("reservation.travelers"), false);
+  assert.equal(page.includes("traveler.fullName"), false);
+  assert.equal(page.includes("traveler.birthDate"), false);
+  assert.equal(page.includes("slot.firstName"), false);
+  assert.equal(page.includes("slot.lastName"), false);
+  assert.equal(page.includes("slot.birthDate"), false);
+  assert.equal(page.includes("<input"), false);
+  assert.equal(page.includes("Guardar"), false);
+
+  const styles = readFileSync("app/cuenta/cuenta.module.css", "utf8");
+  assert.match(styles, /\.travelerSlotGrid\{display:grid;grid-template-columns:repeat\(3,minmax\(0,1fr\)\)/);
+  assert.match(styles, /@media\(max-width:760px\)\{\.travelerSlotGrid\{grid-template-columns:1fr\}\}/);
+});
+
 test("vista de mis reservaciones usa el repositorio seguro, pagina y no filtra por datos privados", () => {
   assert.equal(parseCustomerReservationPage("3"), 3);
   assert.equal(parseCustomerReservationPage("0"), 1);
