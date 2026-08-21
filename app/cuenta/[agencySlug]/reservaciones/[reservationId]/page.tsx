@@ -9,6 +9,7 @@ import {
 import { ensureReservationTravelerSlots } from "@/lib/travelers/traveler-slots";
 import { getReservationTravelerData } from "@/lib/travelers/traveler-data";
 import { getReservationFinancialSummary } from "@/lib/payments/reservation-financial";
+import { listCustomerReservationPayments } from "@/lib/payments/customer-payment-list";
 
 import { CustomerShell } from "../../../customer-shell";
 import { TravelerDataForm } from "./traveler-data-form";
@@ -49,6 +50,26 @@ function date(value: string | null) {
         year: "numeric",
       });
 }
+
+const customerPaymentMethodLabels = {
+  transfer: "Transferencia",
+  cash: "Efectivo",
+  card: "Tarjeta",
+  payment_link: "Enlace de pago",
+  other: "Otro",
+} as const;
+
+const customerPaymentStatusLabels = {
+  confirmed: "Confirmado",
+  pending: "En validación",
+  cancelled: "Cancelado",
+} as const;
+
+const customerPaymentMessages = {
+  confirmed: "Este pago ya se refleja en tu saldo.",
+  pending: "Este pago está en validación y todavía no reduce tu saldo.",
+  cancelled: "Este movimiento fue cancelado y no se contabiliza en tu saldo.",
+} as const;
 
 export default async function CustomerReservationDetailPage({
   params,
@@ -113,6 +134,30 @@ export default async function CustomerReservationDetailPage({
     );
   }
 
+  let paymentHistory: Awaited<ReturnType<typeof listCustomerReservationPayments>>;
+  try {
+    paymentHistory = await listCustomerReservationPayments({
+      requestedAgencySlug: agencySlug,
+      reservationId,
+    });
+  } catch {
+    paymentHistory = { status: "not_found" };
+  }
+  if (paymentHistory.status === "unauthenticated") {
+    redirect(`/cuenta/login?next=${encodeURIComponent(`/cuenta/${agencySlug}/reservaciones/${reservationId}`)}`);
+  }
+  if (paymentHistory.status === "selection_required") redirect("/cuenta");
+  if (paymentHistory.status === "forbidden" || paymentHistory.status === "not_found") {
+    return (
+      <CustomerShell>
+        <section className={styles.stateCard}>
+          <h1>Reservación no disponible</h1>
+          <p>No encontramos una reservación disponible para tu cuenta.</p>
+        </section>
+      </CustomerShell>
+    );
+  }
+
   let travelerSlots: Awaited<ReturnType<typeof ensureReservationTravelerSlots>>;
   try {
     travelerSlots = await ensureReservationTravelerSlots({
@@ -141,6 +186,7 @@ export default async function CustomerReservationDetailPage({
 
   const { reservation } = detail;
   const financialSummary = financial.status === "authorized" ? financial.summary : null;
+  const payments = paymentHistory.payments;
   const slots = travelerSlots.status === "ready" ? travelerSlots.slots : [];
   let travelerData: Awaited<ReturnType<typeof getReservationTravelerData>> | null = null;
   if (travelerSlots.status === "ready") {
@@ -197,6 +243,15 @@ export default async function CustomerReservationDetailPage({
           <section className={styles.detailCard} aria-labelledby="customer-finance-title"><h2 id="customer-finance-title">Estado financiero</h2>{financialSummary ? <><dl><div><dt>Total del Tour</dt><dd>{financialMoney(financialSummary.contract.total, financialSummary.currency)}</dd></div><div><dt>Anticipo requerido</dt><dd>{financialMoney(financialSummary.contract.depositRequired, financialSummary.currency)}{financialSummary.contract.depositPercent === null ? "" : ` · ${financialSummary.contract.depositPercent}%`}</dd></div><div><dt>Pagos confirmados</dt><dd>{financialMoney(financialSummary.payments.confirmedTotal, financialSummary.currency)}</dd></div>{financialSummary.payments.pendingTotal > 0 && <div><dt>Pagos en validación</dt><dd>{financialMoney(financialSummary.payments.pendingTotal, financialSummary.currency)}</dd></div>}<div><dt>Saldo pendiente</dt><dd className={styles.financialRemaining}>{financialMoney(financialSummary.balance.remaining, financialSummary.currency)}</dd></div></dl><p className={styles.financialMessage} role="status">{financialSummary.balance.fullyPaid ? "Tu reservación está pagada." : financialSummary.balance.depositCovered === true ? `Tu anticipo está cubierto. Saldo pendiente: ${financialMoney(financialSummary.balance.remaining, financialSummary.currency)}.` : financialSummary.balance.depositCovered === false ? `Tu anticipo requerido es de ${financialMoney(financialSummary.contract.depositRequired, financialSummary.currency)}.` : "Consulta con la agencia las condiciones de pago de tu reservación."}</p></> : <p className={styles.travelerNotice} role="alert">No fue posible calcular el estado financiero de esta reservación. Contacta a la agencia para recibir asistencia.</p>}</section>
           <section className={styles.detailCard} aria-labelledby="customer-contact-title"><h2 id="customer-contact-title">Contacto principal</h2>{reservation.primaryContact ? <dl><div><dt>Nombre</dt><dd>{valueOrUnavailable(reservation.primaryContact.fullName)}</dd></div><div><dt>Correo</dt><dd>{valueOrUnavailable(reservation.primaryContact.email)}</dd></div><div><dt>Teléfono</dt><dd>{valueOrUnavailable(reservation.primaryContact.phone)}</dd></div></dl> : <p className={styles.unavailable}>No disponible</p>}</section>
         </div>
+
+        <section className={styles.detailCard} aria-labelledby="customer-payments-title">
+          <h2 id="customer-payments-title">Pagos</h2>
+          {payments.length === 0 ? <div className={styles.paymentEmpty}><p>No hay pagos registrados todavía.</p><span>Cuando la agencia confirme un pago, aparecerá aquí.</span></div> : <div className={styles.customerPaymentList}>{payments.map((payment, index) => <article className={`${styles.customerPaymentItem} ${payment.status === "cancelled" ? styles.customerPaymentCancelled : ""}`} key={`${payment.createdAt}-${index}`}>
+            <div className={styles.customerPaymentHeading}><strong>{financialMoney(payment.amount, payment.currency)}</strong><span className={styles.customerPaymentMethod}>{customerPaymentMethodLabels[payment.method]}</span><span className={`${styles.customerPaymentStatus} ${styles[`customerPayment${payment.status}`]}`}>{customerPaymentStatusLabels[payment.status]}</span></div>
+            <p className={styles.customerPaymentDate}>{date(payment.paidAt ?? payment.createdAt)}</p>
+            <p className={styles.customerPaymentMessage}>{customerPaymentMessages[payment.status]}</p>
+          </article>)}</div>}
+        </section>
 
         <section className={styles.detailCard} aria-labelledby="customer-travelers-title">
           <div className={styles.detailCardHeader}><h2 id="customer-travelers-title">Viajeros</h2>{travelerSlots.status === "ready" && <p role="status">{travelerDataComplete ? "Datos de viajeros completos" : "Datos de viajeros pendientes de completar"}</p>}</div>
