@@ -110,6 +110,17 @@ import {
   type ManualPaymentStoredRow,
 } from "../lib/payments/manual-payment-core";
 import {
+  AdminPaymentHistoryError,
+  createAdminPaymentHistoryService,
+  type AdminPaymentHistoryRow,
+} from "../lib/payments/admin-payment-list-core";
+import {
+  AdminPaymentStatusError,
+  canTransitionManualPaymentStatus,
+  createAdminPaymentStatusService,
+  type ManualPaymentStatus,
+} from "../lib/payments/admin-payment-status-core";
+import {
   createManualPaymentIdempotencyKey,
   localDateTimeToIso,
   localDateTimeValue,
@@ -2483,6 +2494,194 @@ test("acción y diálogo de pago administrativo delegan al comando y mantienen i
   assert.equal(form.includes("currency"), true); // Informational display only; the action does not receive it.
   assert.match(page, /<ManualPaymentForm/);
   assert.match(clientPortal, /getReservationFinancialSummary/);
+});
+
+const adminPaymentId = "3e38c1e6-62b5-4e76-8e12-a9272e3fd710";
+const secondAdminPaymentId = "3e38c1e6-62b5-4e76-8e12-a9272e3fd711";
+
+function adminPaymentRow(input: Partial<AdminPaymentHistoryRow> = {}): AdminPaymentHistoryRow {
+  return {
+    id: input.id ?? adminPaymentId,
+    amount: input.amount ?? 9563.4,
+    currency: input.currency ?? "MXN",
+    status: input.status ?? "pending",
+    method: input.method ?? "transfer",
+    reference: input.reference ?? "REFERENCIA-INTERNA",
+    paidAt: input.paidAt ?? "2026-07-26T12:00:00.000Z",
+    createdAt: input.createdAt ?? "2026-07-26T12:01:00.000Z",
+    createdByUserId: input.createdByUserId === undefined ? "user-verified" : input.createdByUserId,
+    statusChangedAt: input.statusChangedAt ?? null,
+  };
+}
+
+function adminPaymentHistoryFixture(input: Readonly<{
+  memberships?: readonly AdminAgencyMembershipRecord[];
+  reservation?: ReturnType<typeof customerReservationDetailRow> | null;
+  rows?: readonly AdminPaymentHistoryRow[];
+  fail?: boolean;
+}> = {}) {
+  const requests: string[] = [];
+  const access = adminAccessFixture({ memberships: input.memberships ?? [adminMembership()] });
+  const service = createAdminPaymentHistoryService({
+    resolveAccess: access.resolver.resolve,
+    repository: {
+      async findReservation({ agencyId, reservationId }) {
+        requests.push(`reservation:${agencyId}:${reservationId}`);
+        if (input.fail) throw new Error("SQL internal detail");
+        return input.reservation === undefined ? financialReservationRow() : input.reservation;
+      },
+      async listPayments({ agencyId, reservationId }) {
+        requests.push(`payments:${agencyId}:${reservationId}`);
+        return input.rows ?? [adminPaymentRow()];
+      },
+      async findDisplayNames(userIds) {
+        requests.push(`profiles:${userIds.join(",")}`);
+        return new Map(userIds.map((userId) => [userId, "Administración Furiver"]));
+      },
+    },
+  });
+  return { service, requests };
+}
+
+function adminPaymentStatusFixture(input: Readonly<{
+  memberships?: readonly AdminAgencyMembershipRecord[];
+  paymentStatus?: ManualPaymentStatus;
+  reservationExists?: boolean;
+  conflict?: boolean;
+}> = {}) {
+  const row = { id: adminPaymentId, status: input.paymentStatus ?? "pending" as ManualPaymentStatus };
+  const writes: Array<Record<string, unknown>> = [];
+  const requests: string[] = [];
+  const access = adminAccessFixture({ memberships: input.memberships ?? [adminMembership()] });
+  const service = createAdminPaymentStatusService({
+    resolveAccess: access.resolver.resolve,
+    now: () => new Date(TEST_NOW),
+    repository: {
+      async findReservation({ agencyId, reservationId }) {
+        requests.push(`reservation:${agencyId}:${reservationId}`);
+        return input.reservationExists !== false;
+      },
+      async findPayment({ agencyId, reservationId, paymentId }) {
+        requests.push(`payment:${agencyId}:${reservationId}:${paymentId}`);
+        return paymentId === row.id ? { ...row } : null;
+      },
+      async updateStatus(update) {
+        writes.push(update);
+        if (input.conflict || update.expectedStatus !== row.status) return false;
+        row.status = update.nextStatus;
+        return true;
+      },
+    },
+  });
+  return { service, row, writes, requests };
+}
+
+test("historial administrativo autoriza antes de consultar, ordena y proyecta solamente datos operativos", async () => {
+  let queried = false;
+  const unauthenticated = createAdminPaymentHistoryService({
+    async resolveAccess() { return { status: "unauthenticated" } as const; },
+    repository: () => ({
+      async findReservation() { queried = true; return null; },
+      async listPayments() { queried = true; return []; },
+      async findDisplayNames() { queried = true; return new Map(); },
+    }),
+  });
+  assert.deepEqual(await unauthenticated.list({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId }), { status: "unauthenticated" });
+  assert.equal(queried, false);
+
+  const fixture = adminPaymentHistoryFixture({
+    rows: [
+      adminPaymentRow({ id: adminPaymentId, status: "confirmed", paidAt: "2026-07-25T12:00:00.000Z", createdAt: "2026-07-25T12:01:00.000Z" }),
+      adminPaymentRow({ id: secondAdminPaymentId, status: "pending", paidAt: "2026-07-26T12:00:00.000Z", createdAt: "2026-07-26T12:01:00.000Z", createdByUserId: null }),
+    ],
+  });
+  const listed = await fixture.service.list({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId });
+  assert.equal(listed.status, "authorized");
+  if (listed.status === "authorized") {
+    assert.deepEqual(listed.payments.map((payment) => payment.status), ["pending", "confirmed"]);
+    assert.equal(listed.payments[0].createdBy, null);
+    assert.equal(listed.payments[1].createdBy?.displayName, "Administración Furiver");
+    assert.equal(listed.financialSummary?.payments.confirmedTotal, 9563.4);
+    const serialized = JSON.stringify(listed.payments);
+    assert.equal(serialized.includes("agencyId"), false);
+    assert.equal(serialized.includes("createdByUserId"), false);
+    assert.equal(serialized.includes("idempotency"), false);
+    assert.equal(serialized.includes("snapshot"), false);
+  }
+  assert.deepEqual(fixture.requests.slice(0, 2), [
+    `reservation:agency-furiver:${customerDetailReservationId}`,
+    `payments:agency-furiver:${customerDetailReservationId}`,
+  ]);
+  const crossTenant = adminPaymentHistoryFixture();
+  assert.deepEqual(await crossTenant.service.list({ requestedAgencySlug: "crisenix", reservationId: customerDetailReservationId }), { status: "forbidden" });
+  assert.deepEqual(crossTenant.requests, []);
+
+  const failing = adminPaymentHistoryFixture({ fail: true });
+  await assert.rejects(failing.service.list({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId }), (error: unknown) => error instanceof AdminPaymentHistoryError && !error.message.includes("SQL"));
+});
+
+test("transiciones administrativas de pagos son auditadas, inmutables y evitan lost updates", async () => {
+  assert.equal(canTransitionManualPaymentStatus("pending", "confirmed"), true);
+  assert.equal(canTransitionManualPaymentStatus("pending", "cancelled"), true);
+  assert.equal(canTransitionManualPaymentStatus("confirmed", "cancelled"), true);
+  assert.equal(canTransitionManualPaymentStatus("cancelled", "confirmed"), false);
+  assert.equal(canTransitionManualPaymentStatus("confirmed", "pending"), false);
+  assert.equal(canTransitionManualPaymentStatus("cancelled", "pending"), false);
+
+  const fixture = adminPaymentStatusFixture();
+  assert.deepEqual(await fixture.service.change({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId, paymentId: adminPaymentId, nextStatus: "confirmed" }), { status: "updated", nextStatus: "confirmed" });
+  assert.equal(fixture.row.status, "confirmed");
+  assert.equal(fixture.writes[0].actorUserId, "user-verified");
+  assert.equal(fixture.writes[0].changedAt, TEST_NOW);
+  assert.equal("amount" in fixture.writes[0], false);
+  assert.equal("currency" in fixture.writes[0], false);
+  assert.equal("idempotencyKey" in fixture.writes[0], false);
+  assert.deepEqual(await fixture.service.change({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId, paymentId: adminPaymentId, nextStatus: "pending" }), { status: "invalid_transition" });
+  assert.deepEqual(await fixture.service.change({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId, paymentId: adminPaymentId, nextStatus: "cancelled" }), { status: "updated", nextStatus: "cancelled" });
+  assert.deepEqual(await fixture.service.change({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId, paymentId: adminPaymentId, nextStatus: "cancelled" }), { status: "invalid_transition" });
+
+  const concurrent = adminPaymentStatusFixture({ conflict: true });
+  assert.deepEqual(await concurrent.service.change({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId, paymentId: adminPaymentId, nextStatus: "confirmed" }), { status: "conflict" });
+  const customerOnly = adminPaymentStatusFixture({ memberships: [] });
+  assert.deepEqual(await customerOnly.service.change({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId, paymentId: adminPaymentId, nextStatus: "confirmed" }), { status: "forbidden" });
+  assert.deepEqual(customerOnly.requests, []);
+  const crossTenant = adminPaymentStatusFixture();
+  assert.deepEqual(await crossTenant.service.change({ requestedAgencySlug: "crisenix", reservationId: customerDetailReservationId, paymentId: adminPaymentId, nextStatus: "confirmed" }), { status: "forbidden" });
+  assert.deepEqual(crossTenant.requests, []);
+  const invalid = adminPaymentStatusFixture();
+  assert.deepEqual(await invalid.service.change({ requestedAgencySlug: "furiver", reservationId: "invalid", paymentId: adminPaymentId, nextStatus: "confirmed" }), { status: "invalid_input" });
+  assert.deepEqual(invalid.requests, []);
+});
+
+test("historial y cambio de status reflejan el efecto financiero sin mutar el snapshot", () => {
+  const snapshot = financialReservationRow();
+  const before = JSON.stringify(snapshot.snapshot);
+  const pending = calculateReservationFinancialSummary({ snapshot, payments: [{ amount: 9563.4, currency: "MXN", status: "pending" }] });
+  const confirmed = calculateReservationFinancialSummary({ snapshot, payments: [{ amount: 9563.4, currency: "MXN", status: "confirmed" }] });
+  const cancelled = calculateReservationFinancialSummary({ snapshot, payments: [{ amount: 9563.4, currency: "MXN", status: "cancelled" }] });
+  assert.equal(pending?.balance.remaining, 47817);
+  assert.equal(confirmed?.balance.remaining, 38253.6);
+  assert.equal(cancelled?.balance.remaining, 47817);
+  assert.equal(JSON.stringify(snapshot.snapshot), before);
+
+  const listRepository = readFileSync("lib/payments/admin-payment-list-repository.ts", "utf8");
+  const statusRepository = readFileSync("lib/payments/admin-payment-status-repository.ts", "utf8");
+  const action = readFileSync("app/admin/[agencySlug]/reservaciones/[reservationId]/payment-status-actions.ts", "utf8");
+  const controls = readFileSync("app/admin/[agencySlug]/reservaciones/[reservationId]/payment-status-controls.tsx", "utf8");
+  const page = readFileSync("app/admin/[agencySlug]/reservaciones/[reservationId]/page.tsx", "utf8");
+  assert.match(listRepository, /.eq\("reservation_id", reservationId\)[\s\S]*\.eq\("agency_id", agencyId\)/);
+  assert.match(statusRepository, /.eq\("id", paymentId\)[\s\S]*\.eq\("reservation_id", reservationId\)[\s\S]*\.eq\("agency_id", agencyId\)[\s\S]*\.eq\("status", expectedStatus\)/);
+  assert.match(statusRepository, /status_changed_by_user_id: actorUserId/);
+  assert.match(statusRepository, /status_changed_at: changedAt/);
+  assert.match(action, /changeManualPaymentStatus\(\{/);
+  assert.equal(action.includes("export const"), false);
+  assert.match(action, /revalidatePath\(detailPath\(requestedAgencySlug, reservationId\)\)/);
+  assert.match(action, /\/cuenta\/\$\{encodeURIComponent\(requestedAgencySlug\)\}\/reservaciones\/\$\{reservationId\}/);
+  assert.match(controls, /Cancelar este movimiento hará que deje de contabilizarse dentro de los pagos confirmados/);
+  assert.match(page, /<PaymentStatusControls/);
+  assert.match(page, /Aún no hay pagos registrados\./);
+  assert.equal(page.includes("idempotency_key"), false);
+  assert.equal(page.includes("created_by_user_id"), false);
 });
 
 test("vista de mis reservaciones usa el repositorio seguro, pagina y no filtra por datos privados", () => {
