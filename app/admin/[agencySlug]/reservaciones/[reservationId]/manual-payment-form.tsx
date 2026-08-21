@@ -4,13 +4,11 @@ import { useActionState, useEffect, useRef, useState, type FormEvent } from "rea
 
 import {
   createManualPaymentIdempotencyKey,
+  initialManualPaymentFormState,
   localDateTimeToIso,
   localDateTimeValue,
 } from "./manual-payment-form-core";
-import {
-  initialManualPaymentFormState,
-  registerManualPaymentAction,
-} from "./payment-actions";
+import { registerManualPaymentAction } from "./payment-actions";
 import styles from "./admin-detail.module.css";
 
 export function ManualPaymentForm({

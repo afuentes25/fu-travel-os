@@ -2455,6 +2455,9 @@ test("acción y diálogo de pago administrativo delegan al comando y mantienen i
   const clientPortal = readFileSync("app/cuenta/[agencySlug]/reservaciones/[reservationId]/page.tsx", "utf8");
 
   assert.match(action, /createManualReservationPayment\(\{/);
+  assert.equal(action.includes("export const initialManualPaymentFormState"), false);
+  assert.equal(action.includes("export const"), false);
+  assert.match(readFileSync("app/admin/[agencySlug]/reservaciones/[reservationId]/manual-payment-form-core.ts", "utf8"), /initialManualPaymentFormState/);
   assert.match(action, /revalidatePath\(detailPath\(requestedAgencySlug, reservationId\)\)/);
   assert.match(action, /\/cuenta\/\$\{encodeURIComponent\(requestedAgencySlug\)\}\/reservaciones\/\$\{reservationId\}/);
   assert.match(action, /Pago registrado correctamente\./);

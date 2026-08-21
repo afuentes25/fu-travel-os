@@ -4,23 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
 import { createManualReservationPayment } from "@/lib/payments/manual-payment";
-
-export type ManualPaymentFormState = Readonly<{
-  outcome?: "created" | "already_exists" | "idempotency_conflict";
-  success?: string;
-  error?: string;
-  fieldErrors?: Readonly<Record<string, string>>;
-  values?: Readonly<{
-    amount: string;
-    method: string;
-    initialStatus: string;
-    reference: string;
-    paidAtLocal: string;
-  }>;
-  idempotencyKey?: string;
-}>;
-
-export const initialManualPaymentFormState: ManualPaymentFormState = {};
+import type { ManualPaymentFormState } from "./manual-payment-form-core";
 
 function fieldValue(formData: FormData, key: string) {
   const value = formData.get(key);

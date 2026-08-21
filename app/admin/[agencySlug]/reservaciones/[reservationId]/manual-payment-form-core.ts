@@ -1,5 +1,22 @@
 type BrowserCrypto = Pick<Crypto, "randomUUID" | "getRandomValues">;
 
+export type ManualPaymentFormState = Readonly<{
+  outcome?: "created" | "already_exists" | "idempotency_conflict";
+  success?: string;
+  error?: string;
+  fieldErrors?: Readonly<Record<string, string>>;
+  values?: Readonly<{
+    amount: string;
+    method: string;
+    initialStatus: string;
+    reference: string;
+    paidAtLocal: string;
+  }>;
+  idempotencyKey?: string;
+}>;
+
+export const initialManualPaymentFormState: ManualPaymentFormState = {};
+
 function calendarDateIsValid(year: number, month: number, day: number) {
   const candidate = new Date(Date.UTC(year, month - 1, day));
   return candidate.getUTCFullYear() === year
