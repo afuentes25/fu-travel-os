@@ -10,6 +10,7 @@ import {
 
 import { AdminShell } from "../../../admin-shell";
 import { adminReservationStatusLabel } from "../../../admin-utils";
+import { ManualPaymentForm } from "./manual-payment-form";
 import styles from "../../../admin.module.css";
 import detailStyles from "./admin-detail.module.css";
 
@@ -88,7 +89,7 @@ export default async function AdminReservationDetailPage({
         <Link className={detailStyles.backLink} href={`/admin/${encodeURIComponent(access.agency.agencySlug)}/reservaciones`}>← Volver a reservaciones</Link>
         <header className={detailStyles.detailHeading}>
           <div><span className={styles.kicker}>Reservación</span><h1 id="admin-reservation-title">{reservation.reservationCode}</h1><span className={styles.status}>{adminReservationStatusLabel(reservation.status)}</span></div>
-          <p>Creada: {date(reservation.createdAt)}</p>
+          <div className={detailStyles.detailActions}><p>Creada: {date(reservation.createdAt)}</p><ManualPaymentForm requestedAgencySlug={access.agency.agencySlug} reservationId={reservation.id} currency={reservation.amounts.currency} /></div>
         </header>
         <div className={detailStyles.detailGrid}>
           <section className={detailStyles.detailCard} aria-labelledby="detail-trip-title"><h2 id="detail-trip-title">Viaje y salida</h2><dl><div><dt>Tour</dt><dd>{valueOrUnavailable(reservation.trip.name)}</dd></div><div><dt>Clave</dt><dd>{valueOrUnavailable(reservation.trip.code)}</dd></div><div><dt>Fecha de salida</dt><dd>{date(reservation.trip.departureDate)}</dd></div><div><dt>Punto de abordaje</dt><dd>{valueOrUnavailable(reservation.trip.boardingPointName)}</dd></div></dl></section>

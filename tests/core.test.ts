@@ -110,6 +110,11 @@ import {
   type ManualPaymentStoredRow,
 } from "../lib/payments/manual-payment-core";
 import {
+  createManualPaymentIdempotencyKey,
+  localDateTimeToIso,
+  localDateTimeValue,
+} from "../app/admin/[agencySlug]/reservaciones/[reservationId]/manual-payment-form-core";
+import {
   parseAdminReservationPage,
   parseAdminReservationStatus,
   safeAdminNext,
@@ -2431,6 +2436,50 @@ test("pago manual es idempotente ante reintentos, conflicto y concurrencia", asy
   assert.match(repository, /\.eq\("agency_id", agencyId\)[\s\S]*\.eq\("idempotency_key", idempotencyKey\)/);
   assert.match(repository, /created_by_user_id: payment\.createdByUserId/);
   assert.match(repository, /source: payment\.source/);
+});
+
+test("formulario administrativo convierte fecha local a ISO inequívoco y crea UUIDs no predecibles", () => {
+  const iso = localDateTimeToIso("2026-07-26T08:30");
+  assert.ok(iso?.endsWith("Z"));
+  assert.equal(new Date(iso as string).getTime(), new Date(2026, 6, 26, 8, 30).getTime());
+  assert.equal(localDateTimeToIso("2026-02-31T08:30"), null);
+  assert.equal(localDateTimeToIso("fecha-inválida"), null);
+  assert.match(localDateTimeValue(new Date("2026-07-26T12:00:00.000Z")), /^2026-07-\d{2}T\d{2}:\d{2}$/);
+  assert.equal(createManualPaymentIdempotencyKey({ randomUUID: () => "58d8cc3a-a91b-491d-b209-02df25bb4f6a" } as Crypto), "58d8cc3a-a91b-491d-b209-02df25bb4f6a");
+});
+
+test("acción y diálogo de pago administrativo delegan al comando y mantienen idempotencia por intento", () => {
+  const action = readFileSync("app/admin/[agencySlug]/reservaciones/[reservationId]/payment-actions.ts", "utf8");
+  const form = readFileSync("app/admin/[agencySlug]/reservaciones/[reservationId]/manual-payment-form.tsx", "utf8");
+  const page = readFileSync("app/admin/[agencySlug]/reservaciones/[reservationId]/page.tsx", "utf8");
+  const clientPortal = readFileSync("app/cuenta/[agencySlug]/reservaciones/[reservationId]/page.tsx", "utf8");
+
+  assert.match(action, /createManualReservationPayment\(\{/);
+  assert.match(action, /revalidatePath\(detailPath\(requestedAgencySlug, reservationId\)\)/);
+  assert.match(action, /\/cuenta\/\$\{encodeURIComponent\(requestedAgencySlug\)\}\/reservaciones\/\$\{reservationId\}/);
+  assert.match(action, /Pago registrado correctamente\./);
+  assert.match(action, /El pago ya había sido registrado\./);
+  assert.match(action, /Este intento de registro ya fue utilizado con datos diferentes/);
+  assert.match(action, /No fue posible registrar el pago\. Verifica la reservación o contacta al administrador del sistema\./);
+  assert.equal(action.includes("agencyId:"), false);
+  assert.equal(action.includes("currency:"), false);
+  assert.equal(action.includes("createdByUserId:"), false);
+  assert.equal(action.includes("source:"), false);
+
+  assert.match(form, /<dialog/);
+  assert.match(form, /dialog\.showModal\(\)/);
+  assert.match(form, /onCancel/);
+  assert.match(form, /type="datetime-local"/);
+  assert.match(form, /localDateTimeToIso\(localValue\)/);
+  assert.match(form, /name="idempotencyKey"/);
+  assert.match(form, /setIdempotencyKey\(createManualPaymentIdempotencyKey\(\)\)/);
+  assert.match(form, /state\.outcome === "idempotency_conflict"/);
+  assert.match(form, /Registrando…/);
+  assert.match(form, /No modifica el saldo hasta ser confirmado\./);
+  assert.equal(form.includes("Math.random"), false);
+  assert.equal(form.includes("currency"), true); // Informational display only; the action does not receive it.
+  assert.match(page, /<ManualPaymentForm/);
+  assert.match(clientPortal, /getReservationFinancialSummary/);
 });
 
 test("vista de mis reservaciones usa el repositorio seguro, pagina y no filtra por datos privados", () => {
