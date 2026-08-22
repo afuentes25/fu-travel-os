@@ -10,10 +10,12 @@ import { ensureReservationTravelerSlots } from "@/lib/travelers/traveler-slots";
 import { getReservationTravelerData } from "@/lib/travelers/traveler-data";
 import { getReservationFinancialSummary } from "@/lib/payments/reservation-financial";
 import { listCustomerReservationPayments } from "@/lib/payments/customer-payment-list";
+import { listCustomerReservationDocuments } from "@/lib/documents/customer-document-list";
 
 import { CustomerShell } from "../../../customer-shell";
 import { TravelerDataForm } from "./traveler-data-form";
 import { CustomerTransferForm } from "./customer-transfer-form";
+import { DocumentOpenButton } from "./document-open-button";
 import {
   customerReservationDetailNextStep,
   customerReservationStatusLabel,
@@ -70,6 +72,13 @@ const customerPaymentMessages = {
   confirmed: "Este pago ya se refleja en tu saldo.",
   pending: "Este pago está en validación y todavía no reduce tu saldo.",
   cancelled: "Este movimiento fue cancelado y no se contabiliza en tu saldo.",
+} as const;
+
+const customerDocumentLabels = {
+  payment_receipt: "Comprobante de pago",
+  contract: "Contrato",
+  voucher: "Voucher de viaje",
+  ticket: "Boleto de viaje",
 } as const;
 
 export default async function CustomerReservationDetailPage({
@@ -159,6 +168,20 @@ export default async function CustomerReservationDetailPage({
     );
   }
 
+  let documentList: Awaited<ReturnType<typeof listCustomerReservationDocuments>>;
+  try {
+    documentList = await listCustomerReservationDocuments({ requestedAgencySlug: agencySlug, reservationId });
+  } catch {
+    documentList = { status: "not_found" };
+  }
+  if (documentList.status === "unauthenticated") {
+    redirect(`/cuenta/login?next=${encodeURIComponent(`/cuenta/${agencySlug}/reservaciones/${reservationId}`)}`);
+  }
+  if (documentList.status === "selection_required") redirect("/cuenta");
+  if (documentList.status === "forbidden" || documentList.status === "not_found") {
+    return <CustomerShell><section className={styles.stateCard}><h1>Reservación no disponible</h1><p>No encontramos una reservación disponible para tu cuenta.</p></section></CustomerShell>;
+  }
+
   let travelerSlots: Awaited<ReturnType<typeof ensureReservationTravelerSlots>>;
   try {
     travelerSlots = await ensureReservationTravelerSlots({
@@ -188,6 +211,7 @@ export default async function CustomerReservationDetailPage({
   const { reservation } = detail;
   const financialSummary = financial.status === "authorized" ? financial.summary : null;
   const payments = paymentHistory.payments;
+  const documents = documentList.documents;
   const slots = travelerSlots.status === "ready" ? travelerSlots.slots : [];
   let travelerData: Awaited<ReturnType<typeof getReservationTravelerData>> | null = null;
   if (travelerSlots.status === "ready") {
@@ -251,6 +275,16 @@ export default async function CustomerReservationDetailPage({
             <div className={styles.customerPaymentHeading}><strong>{financialMoney(payment.amount, payment.currency)}</strong><span className={styles.customerPaymentMethod}>{customerPaymentMethodLabels[payment.method]}</span><span className={`${styles.customerPaymentStatus} ${styles[`customerPayment${payment.status}`]}`}>{customerPaymentStatusLabels[payment.status]}</span></div>
             <p className={styles.customerPaymentDate}>{date(payment.paidAt ?? payment.createdAt)}</p>
             <p className={styles.customerPaymentMessage}>{customerPaymentMessages[payment.status]}</p>
+          </article>)}</div>}
+        </section>
+
+        <section className={styles.detailCard} aria-labelledby="customer-documents-title">
+          <h2 id="customer-documents-title">Documentos</h2>
+          {documents.length === 0 ? <div className={styles.paymentEmpty}><p>Aún no hay documentos disponibles.</p><span>Los documentos de tu viaje aparecerán aquí conforme estén disponibles.</span></div> : <div className={styles.customerPaymentList}>{documents.map((document) => <article className={styles.customerPaymentItem} key={document.documentKey}>
+            <div className={styles.customerPaymentHeading}><strong>{customerDocumentLabels[document.documentType]}</strong>{document.documentType === "payment_receipt" && <span className={styles.customerPaymentMethod}>Documento no fiscal</span>}</div>
+            {document.paymentContext && <p className={styles.customerPaymentMessage}>{financialMoney(document.paymentContext.amount, document.paymentContext.currency)} · {date(document.paymentContext.paidAt)}</p>}
+            {document.documentType !== "payment_receipt" && <p className={styles.customerPaymentDate}>{date(document.generatedAt)}</p>}
+            <DocumentOpenButton requestedAgencySlug={detail.account.agencySlug} reservationId={reservationId} documentKey={document.documentKey} />
           </article>)}</div>}
         </section>
 

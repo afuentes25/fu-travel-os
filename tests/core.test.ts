@@ -149,6 +149,11 @@ import {
   createPaymentReceiptRevocationService,
   PaymentReceiptRevocationError,
 } from "../lib/documents/payment-receipt-revocation-core";
+import { createCustomerDocumentListService } from "../lib/documents/customer-document-list-core";
+import {
+  createCustomerDocumentAccessService,
+  CustomerDocumentAccessError,
+} from "../lib/documents/customer-document-access-core";
 import {
   createCustomerTransferIdempotencyKey,
   localTransferDateTimeToIso,
@@ -6690,4 +6695,75 @@ test("reintento de recibo sólo se presenta para pagos confirmed sin receipt vig
   assert.match(historyRepository, /from\("reservation_documents"\)[\s\S]*\.eq\("reservation_id", reservationId\)[\s\S]*\.eq\("agency_id", agencyId\)/);
   assert.equal(action.includes("storagePath"), false);
   assert.equal(action.includes("signedUrl"), false);
+});
+
+test("documentos cliente se autorizan antes de listar, excluyen revoked y proyectan solamente datos seguros", async () => {
+  let queried = false;
+  const unauthenticated = createCustomerDocumentListService({
+    async resolveAccess() { return { status: "unauthenticated" } as const; },
+    repository: {
+      async findLinkedReservation() { queried = true; return false; }, async listAvailableDocuments() { queried = true; return []; }, async findPaymentContexts() { queried = true; return new Map(); },
+    },
+  });
+  assert.deepEqual(await unauthenticated.list({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId }), { status: "unauthenticated" });
+  assert.equal(queried, false);
+  const access = customerAccessFixture({ accounts: [customerAccount()] });
+  const list = createCustomerDocumentListService({
+    resolveAccess: access.resolver.resolve,
+    repository: {
+      async findLinkedReservation({ customerAccountId, agencyId, reservationId }) { return customerAccountId === "customer-furiver" && agencyId === "agency-furiver" && reservationId === customerDetailReservationId; },
+      async listAvailableDocuments() {
+        return [
+          { id: paymentReceiptDocumentId, documentType: "payment_receipt", version: 1, generatedAt: "2026-08-20T12:00:00.000Z", paymentId: adminPaymentId },
+          { id: "5bd3cecf-8f8d-4e55-aa98-16fe38e4e8d1", documentType: "ticket", version: 1, generatedAt: "2026-08-19T12:00:00.000Z", paymentId: null },
+        ];
+      },
+      async findPaymentContexts() { return new Map([[adminPaymentId, { id: adminPaymentId, amount: 9563.4, currency: "MXN", paidAt: "2026-08-20T11:00:00.000Z" }]]); },
+    },
+  });
+  const result = await list.list({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId });
+  assert.equal(result.status, "authorized");
+  if (result.status === "authorized") {
+    assert.deepEqual(result.documents.map((document) => document.documentType), ["ticket", "payment_receipt"]);
+    assert.deepEqual(result.documents[1].paymentContext, { amount: 9563.4, currency: "MXN", paidAt: "2026-08-20T11:00:00.000Z" });
+    const serialized = JSON.stringify(result.documents);
+    assert.equal(serialized.includes("storagePath"), false); assert.equal(serialized.includes("paymentId"), false); assert.equal(serialized.includes("reference"), false); assert.equal(serialized.includes("signedUrl"), false);
+  }
+  assert.deepEqual(await list.list({ requestedAgencySlug: "crisenix", reservationId: customerDetailReservationId }), { status: "forbidden" });
+  const suspended = createCustomerDocumentListService({ resolveAccess: customerAccessFixture({ accounts: [customerAccount({ status: "suspended" })] }).resolver.resolve, repository: { async findLinkedReservation() { throw new Error(); }, async listAvailableDocuments() { return []; }, async findPaymentContexts() { return new Map(); } } });
+  assert.deepEqual(await suspended.list({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId }), { status: "forbidden" });
+});
+
+test("apertura de documento reautoriza, usa path del servidor y URL temporal de 60 segundos", async () => {
+  const requests: string[] = [];
+  const access = customerAccessFixture({ accounts: [customerAccount()] });
+  const service = createCustomerDocumentAccessService({
+    resolveAccess: access.resolver.resolve,
+    repository: {
+      async findLinkedReservation({ customerAccountId, agencyId, reservationId }) { requests.push(`link:${customerAccountId}:${agencyId}:${reservationId}`); return true; },
+      async findAvailableDocument({ agencyId, reservationId, documentKey }) { requests.push(`document:${agencyId}:${reservationId}:${documentKey}`); return documentKey === paymentReceiptDocumentId ? { storagePath: "agency-furiver/private/receipt.pdf" } : null; },
+    },
+    storage: { async createSignedReadUrl({ path, expiresInSeconds }) { requests.push(`storage:${expiresInSeconds}`); assert.equal(path, "agency-furiver/private/receipt.pdf"); return "https://storage.example/temporary"; } },
+  });
+  const ready = await service.get({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId, documentKey: paymentReceiptDocumentId });
+  assert.deepEqual(ready, { status: "ready", signedUrl: "https://storage.example/temporary" });
+  assert.deepEqual(requests.map((item) => item.split(":")[0]), ["link", "document", "storage"]);
+  const revoked = createCustomerDocumentAccessService({ resolveAccess: access.resolver.resolve, repository: { async findLinkedReservation() { return true; }, async findAvailableDocument() { return null; } }, storage: { async createSignedReadUrl() { throw new Error("must not sign revoked"); } } });
+  assert.deepEqual(await revoked.get({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId, documentKey: paymentReceiptDocumentId }), { status: "unavailable" });
+  const failing = createCustomerDocumentAccessService({ resolveAccess: access.resolver.resolve, repository: { async findLinkedReservation() { throw new Error("SQL path"); }, async findAvailableDocument() { return null; } }, storage: { async createSignedReadUrl() { return ""; } } });
+  await assert.rejects(failing.get({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId, documentKey: paymentReceiptDocumentId }), (error: unknown) => error instanceof CustomerDocumentAccessError && !error.message.includes("SQL"));
+});
+
+test("detalle cliente muestra documentos disponibles y apertura bajo demanda sin exponer rutas", () => {
+  const page = readFileSync("app/cuenta/[agencySlug]/reservaciones/[reservationId]/page.tsx", "utf8");
+  const action = readFileSync("app/cuenta/[agencySlug]/reservaciones/[reservationId]/document-actions.ts", "utf8");
+  const button = readFileSync("app/cuenta/[agencySlug]/reservaciones/[reservationId]/document-open-button.tsx", "utf8");
+  const listRepository = readFileSync("lib/documents/customer-document-list-repository.ts", "utf8");
+  const accessRepository = readFileSync("lib/documents/customer-document-access-repository.ts", "utf8");
+  const storage = readFileSync("lib/documents/customer-document-access-storage.ts", "utf8");
+  assert.match(page, /<h2 id="customer-documents-title">Documentos/); assert.match(page, /Documento no fiscal/); assert.match(page, /Aún no hay documentos disponibles/);
+  assert.match(listRepository, /\.eq\("reservation_id", reservationId\)\.eq\("agency_id", agencyId\)\.eq\("status", "available"\)/);
+  assert.match(accessRepository, /\.eq\("id", documentKey\)[\s\S]*\.eq\("reservation_id", reservationId\)[\s\S]*\.eq\("agency_id", agencyId\)[\s\S]*\.eq\("status", "available"\)/);
+  assert.match(storage, /CUSTOMER_DOCUMENTS_BUCKET = "reservation-documents"/); assert.match(storage, /createSignedUrl\(path, expiresInSeconds\)/); assert.match(button, /noopener,noreferrer/);
+  assert.equal(action.includes("export const"), false); assert.equal(action.includes("storagePath"), false); assert.equal(page.includes("storagePath"), false); assert.equal(page.includes("signedUrl"), false);
 });
