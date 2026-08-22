@@ -5,6 +5,7 @@ import { useActionState, useState } from "react";
 import type { AdminContractTemplate, AdminLegalProfile } from "@/lib/contracts/admin-contract-settings";
 
 import { createContractTemplateDraftAction, saveAgencyLegalProfileAction, updateContractTemplateDraftAction } from "./contract-actions";
+import { ContractActivationControl } from "./contract-activation-control";
 import { initialContractSettingsFormState } from "./contract-settings-form-core";
 import styles from "./contract-settings.module.css";
 
@@ -42,9 +43,10 @@ export function ContractTemplateForm({ agencySlug, template, onClose }: Readonly
 export function ContractTemplateManager({ agencySlug, templates }: Readonly<{ agencySlug: string; templates: readonly AdminContractTemplate[] }>) {
   const [editing, setEditing] = useState<AdminContractTemplate | "new" | null>(null);
   const labels = { draft: "Borrador", active: "Activa", retired: "Retirada" } as const;
+  const expectedActiveTemplateKey = templates.find((template) => template.status === "active")?.templateKey ?? null;
   return <div className={styles.templateManager}>
     {templates.length === 0 && <div className={styles.empty}><p>Aún no hay plantillas contractuales.</p><span>Crear primera versión</span></div>}
-    <div className={styles.templateList}>{templates.map((template) => <article className={styles.templateCard} key={template.templateKey}><div><strong>Versión {template.version}</strong><span className={styles[`status${template.status}`]}>{labels[template.status]}</span></div><h3>{template.title}</h3>{template.status === "draft" ? <button type="button" onClick={() => setEditing(template)}>Editar</button> : <p>{template.status === "active" ? "Esta versión está activa y no puede modificarse." : "Esta versión se conserva como histórico y no puede modificarse."}</p>}</article>)}</div>
+    <div className={styles.templateList}>{templates.map((template) => <article className={styles.templateCard} key={template.templateKey}><div><strong>Versión {template.version}</strong><span className={styles[`status${template.status}`]}>{labels[template.status]}</span></div><h3>{template.title}</h3>{template.status === "draft" ? <div className={styles.formActions}><button type="button" onClick={() => setEditing(template)}>Editar</button><ContractActivationControl agencySlug={agencySlug} templateKey={template.templateKey} version={template.version} title={template.title} effectiveFrom={template.effectiveFrom} expectedActiveTemplateKey={expectedActiveTemplateKey} /></div> : <p>{template.status === "active" ? "Esta versión está activa y no puede modificarse." : "Esta versión se conserva como histórico y no puede modificarse."}</p>}</article>)}</div>
     {editing ? <section className={styles.editor} aria-labelledby="contract-template-editor-title"><h3 id="contract-template-editor-title">{editing === "new" ? "Crear nueva versión" : `Editar borrador versión ${editing.version}`}</h3><ContractTemplateForm agencySlug={agencySlug} template={editing === "new" ? undefined : editing} onClose={() => setEditing(null)} /></section> : <button className={styles.primaryButton} type="button" onClick={() => setEditing("new")}>Crear nueva versión</button>}
   </div>;
 }

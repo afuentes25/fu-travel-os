@@ -159,6 +159,10 @@ import {
   createAdminContractSettingsService,
 } from "../lib/contracts/admin-contract-settings-core";
 import {
+  AdminContractActivationError,
+  createAdminContractActivationService,
+} from "../lib/contracts/admin-contract-activation-core";
+import {
   createCustomerTransferIdempotencyKey,
   localTransferDateTimeToIso,
   localTransferDateTimeValue,
@@ -6833,4 +6837,53 @@ test("ruta y acciones de contratos usan comandos server-only sin activar ni expo
   assert.match(core, /status !== "draft"/); assert.match(core, /for \(let attempt = 0; attempt < 3/); assert.match(repository, /created_by_user_id: input\.createdByUserId/);
   assert.equal(actions.includes("export const"), false); assert.equal(/export\s+(?!async function|type\b)/.test(actions), false); assert.equal(page.includes("templateKey}"), false);
   assert.equal(forms.includes(">Activar<"), false); assert.equal(repository.includes("reservation_documents"), false);
+});
+
+test("activación contractual exige autorización, perfil legal y un draft perteneciente a la agencia", async () => {
+  let queried = false;
+  const unauthenticated = createAdminContractActivationService({
+    async resolveAccess() { return { status: "unauthenticated" } as const; },
+    repository: { async findTemplate() { queried = true; return null; }, async hasLegalProfile() { queried = true; return false; }, async activate() { queried = true; return { resultStatus: "activated", activatedVersion: 1 }; } },
+  });
+  assert.deepEqual(await unauthenticated.activate({ requestedAgencySlug: "furiver", templateKey: "d2175825-1085-4854-a4b5-cd2d4e521f5c", expectedActiveTemplateKey: null }), { status: "unauthenticated" });
+  assert.equal(queried, false);
+  const access = adminAccessFixture({ memberships: [adminMembership()] });
+  const withoutLegal = createAdminContractActivationService({
+    resolveAccess: access.resolver.resolve,
+    repository: { async findTemplate() { return { templateKey: "d2175825-1085-4854-a4b5-cd2d4e521f5c", status: "draft" as const }; }, async hasLegalProfile() { return false; }, async activate() { throw new Error("must not activate"); } },
+  });
+  assert.deepEqual(await withoutLegal.activate({ requestedAgencySlug: "furiver", templateKey: "d2175825-1085-4854-a4b5-cd2d4e521f5c", expectedActiveTemplateKey: null }), { status: "legal_profile_required" });
+  assert.deepEqual(await withoutLegal.activate({ requestedAgencySlug: "crisenix", templateKey: "d2175825-1085-4854-a4b5-cd2d4e521f5c", expectedActiveTemplateKey: null }), { status: "forbidden" });
+});
+
+test("activación contractual retira el active esperado, conserva contenido y detecta pantalla obsoleta", async () => {
+  const access = adminAccessFixture({ memberships: [adminMembership()] });
+  const v2 = "b2175825-1085-4854-a4b5-cd2d4e521f5c";
+  const v3 = "c2175825-1085-4854-a4b5-cd2d4e521f5c";
+  const v4 = "e2175825-1085-4854-a4b5-cd2d4e521f5c";
+  const templates = new Map<string, { status: "draft" | "active" | "retired"; content: string }>([[v2, { status: "active", content: "v2" }], [v3, { status: "draft", content: "v3" }], [v4, { status: "draft", content: "v4" }]]);
+  const service = createAdminContractActivationService({
+    resolveAccess: access.resolver.resolve,
+    repository: {
+      async findTemplate({ templateKey }) { const row = templates.get(templateKey); return row ? { templateKey, status: row.status } : null; }, async hasLegalProfile() { return true; },
+      async activate({ templateKey, expectedActiveTemplateKey }) { const active = [...templates.entries()].find(([, row]) => row.status === "active")?.[0] ?? null; if (active !== expectedActiveTemplateKey) return { resultStatus: "conflict", activatedVersion: null }; const target = templates.get(templateKey); if (!target || target.status !== "draft") return { resultStatus: target ? "immutable_version" : "not_found", activatedVersion: null }; if (active) templates.set(active, { ...templates.get(active)!, status: "retired" }); templates.set(templateKey, { ...target, status: "active" }); return { resultStatus: "activated", activatedVersion: templateKey === v3 ? 3 : 4 }; },
+    },
+  });
+  assert.deepEqual(await service.activate({ requestedAgencySlug: "furiver", templateKey: v3, expectedActiveTemplateKey: v2 }), { status: "activated", version: 3 });
+  assert.equal(templates.get(v2)?.status, "retired"); assert.equal(templates.get(v3)?.status, "active"); assert.equal(templates.get(v2)?.content, "v2");
+  assert.deepEqual(await service.activate({ requestedAgencySlug: "furiver", templateKey: v4, expectedActiveTemplateKey: v2 }), { status: "conflict" });
+  assert.equal(templates.get(v3)?.status, "active"); assert.equal(templates.get(v4)?.status, "draft");
+  assert.deepEqual(await service.activate({ requestedAgencySlug: "furiver", templateKey: v3, expectedActiveTemplateKey: v3 }), { status: "immutable_version" });
+});
+
+test("RPC de activación bloquea por agencia, compara el activo esperado y la UI delega al dominio", () => {
+  const migration = readFileSync("supabase/migrations/20260801120000_activate_contract_template.sql", "utf8");
+  const action = readFileSync("app/admin/[agencySlug]/configuracion/contratos/contract-activation-actions.ts", "utf8");
+  const control = readFileSync("app/admin/[agencySlug]/configuracion/contratos/contract-activation-control.tsx", "utf8");
+  const repository = readFileSync("lib/contracts/admin-contract-activation-repository.ts", "utf8");
+  assert.match(migration, /for update/i); assert.match(migration, /is distinct from expected_active_template_id/i); assert.match(migration, /status = 'retired'/); assert.match(migration, /status = 'active'/); assert.match(migration, /set search_path = public, pg_temp/i); assert.match(migration, /to service_role/i);
+  assert.match(action, /activateContractTemplate\(values\)/); assert.equal(/export\s+(?!async function|type\b)/.test(action), false); assert.match(control, /Activar versión/); assert.match(control, /expectedActiveTemplateKey/); assert.match(repository, /activate_agency_contract_template/);
+  assert.equal(migration.includes("reservation_documents"), false); assert.equal(migration.includes("reservation_snapshots"), false);
+  const failing = createAdminContractActivationService({ resolveAccess: adminAccessFixture({ memberships: [adminMembership()] }).resolver.resolve, repository: { async findTemplate() { throw new Error("SQL internal"); }, async hasLegalProfile() { return false; }, async activate() { return { resultStatus: "conflict", activatedVersion: null }; } } });
+  assert.rejects(failing.activate({ requestedAgencySlug: "furiver", templateKey: "d2175825-1085-4854-a4b5-cd2d4e521f5c", expectedActiveTemplateKey: null }), (error: unknown) => error instanceof AdminContractActivationError && !error.message.includes("SQL"));
 });
