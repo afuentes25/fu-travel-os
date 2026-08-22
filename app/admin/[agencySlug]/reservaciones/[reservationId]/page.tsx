@@ -14,6 +14,7 @@ import { adminReservationStatusLabel } from "../../../admin-utils";
 import { ManualPaymentForm } from "./manual-payment-form";
 import { PaymentEvidenceButton } from "./payment-evidence-button";
 import { PaymentStatusControls } from "./payment-status-controls";
+import { PaymentReceiptControl } from "./payment-receipt-control";
 import styles from "../../../admin.module.css";
 import detailStyles from "./admin-detail.module.css";
 
@@ -152,6 +153,8 @@ export default async function AdminReservationDetailPage({
             {payment.source === "customer" && payment.status === "pending" && !payment.hasEvidence && <p className={detailStyles.unavailable}>Comprobante no disponible</p>}
             {payment.hasEvidence && <PaymentEvidenceButton requestedAgencySlug={access.agency.agencySlug} reservationId={reservation.id} paymentId={payment.paymentId} />}
             <PaymentStatusControls requestedAgencySlug={access.agency.agencySlug} reservationId={reservation.id} paymentId={payment.paymentId} status={payment.status} canConfirm={!(payment.source === "customer" && !payment.hasEvidence)} />
+            {payment.status === "confirmed" && payment.receiptStatus !== "available" && <PaymentReceiptControl requestedAgencySlug={access.agency.agencySlug} reservationId={reservation.id} paymentId={payment.paymentId} />}
+            {payment.status === "cancelled" && payment.receiptStatus === "revoked" && <p className={detailStyles.unavailable}>Comprobante revocado</p>}
           </article>)}</div>}
         </section>
       </section>

@@ -39,7 +39,22 @@ export async function changeManualPaymentStatusAction(
   if (result.status === "updated") {
     revalidatePath(detailPath(requestedAgencySlug, reservationId));
     revalidatePath(`/cuenta/${encodeURIComponent(requestedAgencySlug)}/reservaciones/${reservationId}`);
-    return { success: result.nextStatus === "confirmed" ? "Pago confirmado correctamente." : "Pago cancelado correctamente." };
+    if (result.nextStatus === "confirmed") {
+      return {
+        success: result.documentStatus === "document_error"
+          ? "Pago confirmado. El comprobante no pudo generarse; intenta nuevamente desde la gestión documental."
+          : result.documentStatus === "ready"
+            ? "Pago confirmado. Comprobante generado."
+            : "Pago confirmado correctamente.",
+      };
+    }
+    return {
+      success: result.documentStatus === "document_error"
+        ? "Pago cancelado. No fue posible revocar el comprobante; inténtalo nuevamente desde la gestión documental."
+        : result.documentStatus === "revoked"
+          ? "Pago cancelado. Comprobante revocado."
+          : "Pago cancelado correctamente.",
+    };
   }
   if (result.status === "conflict") return { error: "El estado del pago cambió. Recarga la reservación antes de intentarlo nuevamente." };
   if (result.status === "evidence_required") return { error: "No puedes confirmar un pago reportado por cliente sin comprobante disponible." };

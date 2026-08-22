@@ -1,6 +1,8 @@
 import "server-only";
 
 import { resolveAdminAgencyAccess } from "@/lib/agencies/admin-access";
+import { ensurePaymentReceiptDocument } from "@/lib/documents/payment-receipt";
+import { revokePaymentReceiptDocument } from "@/lib/documents/payment-receipt-revocation";
 
 import {
   createAdminPaymentStatusService,
@@ -22,5 +24,18 @@ export async function changeManualPaymentStatus(
   return createAdminPaymentStatusService({
     resolveAccess: resolveAdminAgencyAccess,
     repository: () => createSupabaseAdminPaymentStatusRepository(),
+    async afterStatusChanged({ requestedAgencySlug, reservationId, paymentId, nextStatus }) {
+      if (nextStatus === "pending") return "not_applicable";
+      if (nextStatus === "confirmed") {
+        const result = await ensurePaymentReceiptDocument({ requestedAgencySlug, reservationId, paymentId });
+        return result.status === "generated" ? "ready"
+          : result.status === "existing" ? "existing"
+          : "document_error";
+      }
+      const result = await revokePaymentReceiptDocument({ requestedAgencySlug, reservationId, paymentId });
+      return result.status === "revoked" ? "revoked"
+        : result.status === "already_revoked" || result.status === "no_receipt" ? "not_applicable"
+          : "document_error";
+    },
   }).change(input);
 }

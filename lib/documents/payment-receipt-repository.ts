@@ -100,6 +100,18 @@ export function createSupabasePaymentReceiptRepository(
       return data ? documentRow(data as Record<string, unknown>) : null;
     },
 
+    async revokeAvailableDocument({ agencyId, reservationId, paymentId }) {
+      const { error } = await supabase
+        .from("reservation_documents")
+        .update({ status: "revoked" })
+        .eq("reservation_id", reservationId)
+        .eq("agency_id", agencyId)
+        .eq("payment_id", paymentId)
+        .eq("document_type", "payment_receipt")
+        .eq("status", "available");
+      if (error) throw databaseFailure(error);
+    },
+
     async insertDocument(document) {
       const { data, error } = await supabase
         .from("reservation_documents")

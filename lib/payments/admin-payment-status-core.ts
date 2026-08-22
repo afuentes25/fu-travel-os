@@ -1,5 +1,6 @@
 import type { AdminAgencyAccess } from "@/lib/agencies/admin-access-core";
 import { isAdminReservationUuid } from "@/lib/reservations/admin-detail";
+import type { PaymentReceiptLifecycleStatus } from "@/lib/documents/payment-receipt-lifecycle-core";
 
 export type ManualPaymentStatus = "pending" | "confirmed" | "cancelled";
 
@@ -11,7 +12,7 @@ export type ChangeManualPaymentStatusInput = Readonly<{
 }>;
 
 export type ChangeManualPaymentStatusResult =
-  | Readonly<{ status: "updated"; nextStatus: ManualPaymentStatus }>
+  | Readonly<{ status: "updated"; nextStatus: ManualPaymentStatus; documentStatus?: PaymentReceiptLifecycleStatus }>
   | Readonly<{ status: "unauthenticated" }>
   | Readonly<{ status: "selection_required" }>
   | Readonly<{ status: "forbidden" }>
@@ -90,6 +91,12 @@ function accessStatus(access: AdminAgencyAccess): Exclude<ChangeManualPaymentSta
 export function createAdminPaymentStatusService(dependencies: Readonly<{
   resolveAccess: (input: Readonly<{ requestedAgencySlug?: string }>) => Promise<AdminAgencyAccess>;
   repository: AdminPaymentStatusRepositoryClient | (() => AdminPaymentStatusRepositoryClient);
+  afterStatusChanged?: (input: Readonly<{
+    requestedAgencySlug: string | undefined;
+    reservationId: string;
+    paymentId: string;
+    nextStatus: ManualPaymentStatus;
+  }>) => Promise<PaymentReceiptLifecycleStatus>;
   now?: () => Date;
 }>) {
   return {
@@ -144,7 +151,20 @@ export function createAdminPaymentStatusService(dependencies: Readonly<{
           actorUserId: access.identity.userId,
           changedAt: (dependencies.now ?? (() => new Date()))().toISOString(),
         });
-        return updated ? { status: "updated", nextStatus: input.nextStatus } : { status: "conflict" };
+        if (!updated) return { status: "conflict" };
+        if (!dependencies.afterStatusChanged) return { status: "updated", nextStatus: input.nextStatus };
+        let documentStatus: PaymentReceiptLifecycleStatus;
+        try {
+          documentStatus = await dependencies.afterStatusChanged({
+            requestedAgencySlug: typeof input.requestedAgencySlug === "string" ? input.requestedAgencySlug : undefined,
+            reservationId: input.reservationId,
+            paymentId: input.paymentId,
+            nextStatus: input.nextStatus,
+          });
+        } catch {
+          documentStatus = "document_error";
+        }
+        return { status: "updated", nextStatus: input.nextStatus, documentStatus };
       } catch {
         throw new AdminPaymentStatusError();
       }

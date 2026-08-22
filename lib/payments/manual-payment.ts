@@ -1,6 +1,7 @@
 import "server-only";
 
 import { resolveAdminAgencyAccess } from "@/lib/agencies/admin-access";
+import { ensurePaymentReceiptDocument } from "@/lib/documents/payment-receipt";
 
 import {
   createManualReservationPaymentService,
@@ -24,5 +25,11 @@ export async function createManualReservationPayment(
   return createManualReservationPaymentService({
     resolveAccess: resolveAdminAgencyAccess,
     repository: () => createSupabaseManualPaymentRepository(),
+    async afterConfirmedPayment({ requestedAgencySlug, reservationId, paymentId }) {
+      const result = await ensurePaymentReceiptDocument({ requestedAgencySlug, reservationId, paymentId });
+      return result.status === "generated" ? "ready"
+        : result.status === "existing" ? "existing"
+        : "document_error";
+    },
   }).create(input);
 }

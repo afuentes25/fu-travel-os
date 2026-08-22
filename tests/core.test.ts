@@ -146,6 +146,10 @@ import {
 } from "../lib/documents/payment-receipt-core";
 import { renderPaymentReceiptPdf } from "../lib/documents/payment-receipt-pdf";
 import {
+  createPaymentReceiptRevocationService,
+  PaymentReceiptRevocationError,
+} from "../lib/documents/payment-receipt-revocation-core";
+import {
   createCustomerTransferIdempotencyKey,
   localTransferDateTimeToIso,
   localTransferDateTimeValue,
@@ -2265,6 +2269,7 @@ test("detalle de cliente presenta el resumen financiero servidor sin tratar el a
 
 function manualPaymentStored(payment: ManualPaymentInsert): ManualPaymentStoredRow {
   return {
+    id: adminPaymentId,
     reservationId: payment.reservationId,
     agencyId: payment.agencyId,
     amount: payment.amount,
@@ -2283,6 +2288,11 @@ function manualPaymentFixture(input: Readonly<{
   memberships?: readonly AdminAgencyMembershipRecord[];
   reservation?: ReturnType<typeof customerReservationDetailRow> | null;
   failRepository?: boolean;
+  afterConfirmedPayment?: (input: Readonly<{
+    requestedAgencySlug: string | undefined;
+    reservationId: string;
+    paymentId: string;
+  }>) => Promise<"ready" | "existing" | "revoked" | "document_error" | "not_applicable">;
 }> = {}) {
   const rows: ManualPaymentStoredRow[] = [];
   const byIdempotency = new Map<string, ManualPaymentStoredRow>();
@@ -2317,6 +2327,7 @@ function manualPaymentFixture(input: Readonly<{
         return row;
       },
     },
+    afterConfirmedPayment: input.afterConfirmedPayment,
   });
   return { service, rows, writes, reservationRequests };
 }
@@ -2583,6 +2594,12 @@ function adminPaymentStatusFixture(input: Readonly<{
   conflict?: boolean;
   paymentSource?: string;
   hasEvidence?: boolean;
+  afterStatusChanged?: (input: Readonly<{
+    requestedAgencySlug: string | undefined;
+    reservationId: string;
+    paymentId: string;
+    nextStatus: ManualPaymentStatus;
+  }>) => Promise<"ready" | "existing" | "revoked" | "document_error" | "not_applicable">;
 }> = {}) {
   const row = { id: adminPaymentId, status: input.paymentStatus ?? "pending" as ManualPaymentStatus, source: input.paymentSource ?? "manual" };
   const writes: Array<Record<string, unknown>> = [];
@@ -2611,6 +2628,7 @@ function adminPaymentStatusFixture(input: Readonly<{
         return true;
       },
     },
+    afterStatusChanged: input.afterStatusChanged,
   });
   return { service, row, writes, requests };
 }
@@ -6384,6 +6402,7 @@ function paymentReceiptFixture(input: Readonly<{
         state.requests.push(`document:${agencyId}:${reservationId}:${paymentId}`);
         return documents.get(`${agencyId}:${reservationId}:${paymentId}`) ?? null;
       },
+      async revokeAvailableDocument() {},
       async insertDocument(document) {
         state.inserts.push(document);
         if (input.failInsert) throw new Error("database unavailable");
@@ -6423,6 +6442,7 @@ test("comprobante privado exige acceso administrativo y pago confirmado antes de
       async findPayment() { queried = true; return null; },
       async listPayments() { queried = true; return []; },
       async findExistingDocument() { queried = true; return null; },
+      async revokeAvailableDocument() { queried = true; },
       async insertDocument() { queried = true; throw new Error(); },
     },
     storage: { async upload() { queried = true; }, async remove() { queried = true; } },
@@ -6542,4 +6562,132 @@ test("estados de salida prevalecen sobre un conteo operativo", () => {
     }),
     "Cancelada",
   );
+});
+
+test("el ciclo documental se ejecuta después del ledger y nunca revierte un pago confirmado", async () => {
+  const generated: string[] = [];
+  const confirmed = manualPaymentFixture({
+    async afterConfirmedPayment({ paymentId }) {
+      generated.push(paymentId);
+      return "ready";
+    },
+  });
+  const result = await confirmed.service.create(manualPaymentInput());
+  assert.equal(result.status, "created");
+  if (result.status === "created") assert.equal(result.documentStatus, "ready");
+  assert.deepEqual(generated, [adminPaymentId]);
+
+  const pending = manualPaymentFixture({
+    async afterConfirmedPayment() { throw new Error("No debe generar para pending"); },
+  });
+  const pendingResult = await pending.service.create(manualPaymentInput({ initialStatus: "pending" }));
+  assert.equal(pendingResult.status, "created");
+  if (pendingResult.status === "created") assert.equal(pendingResult.documentStatus, undefined);
+
+  const failedDocument = manualPaymentFixture({
+    async afterConfirmedPayment() { throw new Error("storage unavailable"); },
+  });
+  const failedResult = await failedDocument.service.create(manualPaymentInput());
+  assert.equal(failedResult.status, "created");
+  if (failedResult.status === "created") assert.equal(failedResult.documentStatus, "document_error");
+  assert.equal(failedDocument.rows[0].status, "confirmed");
+  const retried = await failedDocument.service.create(manualPaymentInput());
+  assert.equal(retried.status, "already_exists");
+  if (retried.status === "already_exists") assert.equal(retried.documentStatus, "document_error");
+});
+
+test("transiciones exitosas reconcilian recibos y preservan la cancelación ante fallos documentales", async () => {
+  const calls: string[] = [];
+  const fixture = adminPaymentStatusFixture({
+    async afterStatusChanged({ nextStatus }) {
+      calls.push(nextStatus);
+      return nextStatus === "confirmed" ? "ready" : "revoked";
+    },
+  });
+  const confirmed = await fixture.service.change({
+    requestedAgencySlug: "furiver", reservationId: customerDetailReservationId, paymentId: adminPaymentId, nextStatus: "confirmed",
+  });
+  assert.deepEqual(confirmed, { status: "updated", nextStatus: "confirmed", documentStatus: "ready" });
+  const cancelled = await fixture.service.change({
+    requestedAgencySlug: "furiver", reservationId: customerDetailReservationId, paymentId: adminPaymentId, nextStatus: "cancelled",
+  });
+  assert.deepEqual(cancelled, { status: "updated", nextStatus: "cancelled", documentStatus: "revoked" });
+  assert.deepEqual(calls, ["confirmed", "cancelled"]);
+
+  const pendingCancelled = adminPaymentStatusFixture({
+    async afterStatusChanged({ nextStatus }) { return nextStatus === "cancelled" ? "not_applicable" : "ready"; },
+  });
+  const noGeneration = await pendingCancelled.service.change({
+    requestedAgencySlug: "furiver", reservationId: customerDetailReservationId, paymentId: adminPaymentId, nextStatus: "cancelled",
+  });
+  assert.deepEqual(noGeneration, { status: "updated", nextStatus: "cancelled", documentStatus: "not_applicable" });
+
+  const documentFailure = adminPaymentStatusFixture({
+    async afterStatusChanged() { throw new Error("document database failure"); },
+  });
+  const failureResult = await documentFailure.service.change({
+    requestedAgencySlug: "furiver", reservationId: customerDetailReservationId, paymentId: adminPaymentId, nextStatus: "confirmed",
+  });
+  assert.deepEqual(failureResult, { status: "updated", nextStatus: "confirmed", documentStatus: "document_error" });
+  assert.equal(documentFailure.row.status, "confirmed");
+  assert.equal(canTransitionManualPaymentStatus("cancelled", "confirmed"), false);
+});
+
+test("revocación de recibo conserva metadata y PDF, exige pago cancelado y aislamiento administrativo", async () => {
+  const access = adminAccessFixture({ memberships: [adminMembership()] });
+  const state = { paymentStatus: "cancelled", document: "available" as "available" | "revoked" | null, updates: 0 };
+  const service = createPaymentReceiptRevocationService({
+    resolveAccess: access.resolver.resolve,
+    repository: {
+      async findReservation({ agencyId, reservationId }) {
+        return agencyId === "agency-furiver" && reservationId === customerDetailReservationId;
+      },
+      async findPayment({ paymentId }) { return paymentId === adminPaymentId ? { status: state.paymentStatus } : null; },
+      async revokeAvailableReceipts() {
+        if (state.document !== "available") return 0;
+        state.document = "revoked";
+        state.updates += 1;
+        return 1;
+      },
+      async hasReceipt() { return state.document !== null; },
+    },
+  });
+  assert.deepEqual(await service.revoke(paymentReceiptInput()), { status: "revoked" });
+  assert.equal(state.document, "revoked");
+  assert.equal(state.updates, 1);
+  assert.deepEqual(await service.revoke(paymentReceiptInput()), { status: "already_revoked" });
+  state.paymentStatus = "confirmed";
+  assert.deepEqual(await service.revoke(paymentReceiptInput()), { status: "payment_not_cancelled" });
+  assert.equal(state.document, "revoked");
+  assert.deepEqual(await service.revoke(paymentReceiptInput({ requestedAgencySlug: "crisenix" })), { status: "forbidden" });
+
+  const failing = createPaymentReceiptRevocationService({
+    resolveAccess: access.resolver.resolve,
+    repository: {
+      async findReservation() { throw new Error("SQL private path"); },
+      async findPayment() { return null; }, async revokeAvailableReceipts() { return 0; }, async hasReceipt() { return false; },
+    },
+  });
+  await assert.rejects(failing.revoke(paymentReceiptInput()), (error: unknown) => error instanceof PaymentReceiptRevocationError && !error.message.includes("SQL"));
+  const revocationRepository = readFileSync("lib/documents/payment-receipt-revocation-repository.ts", "utf8");
+  assert.match(revocationRepository, /\.update\(\{ status: "revoked" \}\)/);
+  assert.equal(revocationRepository.includes("storage"), false);
+  assert.equal(revocationRepository.includes("remove("), false);
+});
+
+test("reintento de recibo sólo se presenta para pagos confirmed sin receipt vigente", () => {
+  const page = readFileSync("app/admin/[agencySlug]/reservaciones/[reservationId]/page.tsx", "utf8");
+  const action = readFileSync("app/admin/[agencySlug]/reservaciones/[reservationId]/payment-actions.ts", "utf8");
+  const statusAction = readFileSync("app/admin/[agencySlug]/reservaciones/[reservationId]/payment-status-actions.ts", "utf8");
+  const control = readFileSync("app/admin/[agencySlug]/reservaciones/[reservationId]/payment-receipt-control.tsx", "utf8");
+  const historyRepository = readFileSync("lib/payments/admin-payment-list-repository.ts", "utf8");
+  assert.match(page, /payment\.status === "confirmed" && payment\.receiptStatus !== "available"/);
+  assert.match(page, /Comprobante revocado/);
+  assert.match(action, /ensurePaymentReceiptDocument\(/);
+  assert.match(action, /El comprobante solo puede generarse para un pago confirmado/);
+  assert.match(statusAction, /Pago confirmado\. El comprobante no pudo generarse/);
+  assert.match(control, /Generar comprobante/);
+  assert.match(historyRepository, /from\("reservation_documents"\)[\s\S]*\.eq\("reservation_id", reservationId\)[\s\S]*\.eq\("agency_id", agencyId\)/);
+  assert.equal(action.includes("storagePath"), false);
+  assert.equal(action.includes("signedUrl"), false);
 });

@@ -12,6 +12,7 @@ import type {
 } from "./manual-payment-core";
 
 type SupabasePaymentRow = Readonly<{
+  id: string;
   reservation_id: string;
   agency_id: string;
   amount: number;
@@ -26,6 +27,7 @@ type SupabasePaymentRow = Readonly<{
 
 function paymentFromRow(row: SupabasePaymentRow): ManualPaymentStoredRow {
   return {
+    id: row.id,
     reservationId: row.reservation_id,
     agencyId: row.agency_id,
     amount: row.amount,
@@ -67,7 +69,7 @@ export function createSupabaseManualPaymentRepository(
     async findByIdempotencyKey({ agencyId, idempotencyKey }) {
       const { data, error } = await supabase
         .from("reservation_payments")
-        .select("reservation_id, agency_id, amount, currency, status, method, source, reference, paid_at, created_at")
+        .select("id, reservation_id, agency_id, amount, currency, status, method, source, reference, paid_at, created_at")
         .eq("agency_id", agencyId)
         .eq("idempotency_key", idempotencyKey)
         .maybeSingle();
@@ -93,7 +95,7 @@ export function createSupabaseManualPaymentRepository(
           status_changed_at: null,
           idempotency_key: payment.idempotencyKey,
         })
-        .select("reservation_id, agency_id, amount, currency, status, method, source, reference, paid_at, created_at")
+        .select("id, reservation_id, agency_id, amount, currency, status, method, source, reference, paid_at, created_at")
         .single();
       if (error) throw databaseFailure(error);
       return paymentFromRow(data as SupabasePaymentRow);

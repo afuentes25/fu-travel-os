@@ -40,6 +40,8 @@ export type AdminPaymentHistoryItem = Readonly<{
   source: string | null;
   hasEvidence: boolean;
   evidenceMimeType: "application/pdf" | "image/jpeg" | "image/png" | "image/webp" | null;
+  /** Operational state only; paths and document IDs never leave the repository. */
+  receiptStatus: "available" | "revoked" | null;
 }>;
 
 export type AdminPaymentHistoryResult =
@@ -56,6 +58,11 @@ export type AdminPaymentHistoryResult =
 export interface AdminPaymentHistoryRepositoryClient {
   findReservation(input: Readonly<{ agencyId: string; reservationId: string }>): Promise<ReservationSnapshotProjectionSource | null>;
   listPayments(input: Readonly<{ agencyId: string; reservationId: string }>): Promise<readonly AdminPaymentHistoryRow[]>;
+  findReceiptStatuses?(input: Readonly<{
+    agencyId: string;
+    reservationId: string;
+    paymentIds: readonly string[];
+  }>): Promise<ReadonlyMap<string, "available" | "revoked">>;
   findDisplayNames(userIds: readonly string[]): Promise<ReadonlyMap<string, string>>;
 }
 
@@ -133,6 +140,13 @@ export function createAdminPaymentHistoryService(dependencies: Readonly<{
           agencyId: access.agency.agencyId,
           reservationId: input.reservationId,
         }));
+        const receiptStatuses = rows.length && repository.findReceiptStatuses
+          ? await repository.findReceiptStatuses({
+              agencyId: access.agency.agencyId,
+              reservationId: input.reservationId,
+              paymentIds: rows.map((row) => row.id),
+            })
+          : new Map<string, "available" | "revoked">();
         const authorIds = [...new Set(rows.flatMap((row) => row.createdByUserId ? [row.createdByUserId] : []))];
         const displayNames = authorIds.length ? await repository.findDisplayNames(authorIds) : new Map<string, string>();
         const payments = rows.flatMap((row): AdminPaymentHistoryItem[] =>
@@ -153,6 +167,7 @@ export function createAdminPaymentHistoryService(dependencies: Readonly<{
                 source: row.source ?? null,
                 hasEvidence: row.hasEvidence === true,
                 evidenceMimeType: row.evidenceMimeType ?? null,
+                receiptStatus: receiptStatuses.get(row.id) ?? null,
               }]
             : [],
         );

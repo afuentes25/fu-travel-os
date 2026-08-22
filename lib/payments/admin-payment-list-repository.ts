@@ -75,6 +75,25 @@ export function createSupabaseAdminPaymentHistoryRepository(
         };
       });
     },
+    async findReceiptStatuses({ agencyId, reservationId, paymentIds }) {
+      if (!paymentIds.length) return new Map<string, "available" | "revoked">();
+      const { data, error } = await supabase
+        .from("reservation_documents")
+        .select("payment_id, status")
+        .eq("reservation_id", reservationId)
+        .eq("agency_id", agencyId)
+        .eq("document_type", "payment_receipt")
+        .in("payment_id", [...paymentIds]);
+      if (error) throw databaseFailure();
+      return new Map(
+        (data ?? []).flatMap((document) => {
+          const row = document as Record<string, unknown>;
+          return typeof row.payment_id === "string" && (row.status === "available" || row.status === "revoked")
+            ? [[row.payment_id, row.status] as const]
+            : [];
+        }),
+      );
+    },
     async findDisplayNames(userIds) {
       if (!userIds.length) return new Map<string, string>();
       const { data, error } = await supabase

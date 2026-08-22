@@ -8,6 +8,7 @@ import {
   type ReservationSnapshotProjectionSource,
 } from "@/lib/reservations/snapshot-projection";
 import type { Currency } from "@/types";
+import type { PaymentReceiptLifecycleStatus } from "@/lib/documents/payment-receipt-lifecycle-core";
 
 export const MANUAL_PAYMENT_METHODS = [
   "transfer",
@@ -46,6 +47,7 @@ export type ManualPaymentReceipt = Readonly<{
 }>;
 
 export type ManualPaymentStoredRow = Readonly<{
+  id: string;
   reservationId: string;
   agencyId: string;
   amount: number;
@@ -85,8 +87,8 @@ export interface ManualPaymentRepositoryClient {
 }
 
 export type CreateManualPaymentResult =
-  | Readonly<{ status: "created"; payment: ManualPaymentReceipt }>
-  | Readonly<{ status: "already_exists"; payment: ManualPaymentReceipt }>
+  | Readonly<{ status: "created"; payment: ManualPaymentReceipt; documentStatus?: PaymentReceiptLifecycleStatus }>
+  | Readonly<{ status: "already_exists"; payment: ManualPaymentReceipt; documentStatus?: PaymentReceiptLifecycleStatus }>
   | Readonly<{ status: "unauthenticated" }>
   | Readonly<{ status: "selection_required" }>
   | Readonly<{ status: "forbidden" }>
@@ -233,6 +235,11 @@ function invalid(fieldErrors: Record<string, string>): CreateManualPaymentResult
 export function createManualReservationPaymentService(dependencies: Readonly<{
   resolveAccess: (input: Readonly<{ requestedAgencySlug?: string }>) => Promise<AdminAgencyAccess>;
   repository: ManualPaymentRepositoryClient | (() => ManualPaymentRepositoryClient);
+  afterConfirmedPayment?: (input: Readonly<{
+    requestedAgencySlug: string | undefined;
+    reservationId: string;
+    paymentId: string;
+  }>) => Promise<PaymentReceiptLifecycleStatus>;
   now?: () => Date;
 }>) {
   return {
@@ -297,16 +304,37 @@ export function createManualReservationPaymentService(dependencies: Readonly<{
           agencyId: access.agency.agencyId,
           idempotencyKey,
         });
+        const attachDocumentStatus = async (row: ManualPaymentStoredRow, receipt: ManualPaymentReceipt) => {
+          if (receipt.status !== "confirmed" || !dependencies.afterConfirmedPayment) {
+            return undefined;
+          }
+          try {
+            return await dependencies.afterConfirmedPayment({
+              requestedAgencySlug: typeof input.requestedAgencySlug === "string" ? input.requestedAgencySlug : undefined,
+              reservationId,
+              paymentId: row.id,
+            });
+          } catch {
+            return "document_error" as const;
+          }
+        };
         if (existing) {
           const receipt = receiptFromStored(existing);
           if (!receipt || !samePayment(existing, candidate)) return { status: "idempotency_conflict" };
-          return { status: "already_exists", payment: receipt };
+          const documentStatus = await attachDocumentStatus(existing, receipt);
+          return documentStatus
+            ? { status: "already_exists", payment: receipt, documentStatus }
+            : { status: "already_exists", payment: receipt };
         }
 
         try {
           const created = await repository.insert(candidate);
           const receipt = receiptFromStored(created);
-          return receipt ? { status: "created", payment: receipt } : { status: "invalid_structure" };
+          if (!receipt) return { status: "invalid_structure" };
+          const documentStatus = await attachDocumentStatus(created, receipt);
+          return documentStatus
+            ? { status: "created", payment: receipt, documentStatus }
+            : { status: "created", payment: receipt };
         } catch (error) {
           if (!isUniqueViolation(error)) throw error;
           const concurrent = await repository.findByIdempotencyKey({
@@ -316,7 +344,10 @@ export function createManualReservationPaymentService(dependencies: Readonly<{
           if (!concurrent) throw error;
           const receipt = receiptFromStored(concurrent);
           if (!receipt || !samePayment(concurrent, candidate)) return { status: "idempotency_conflict" };
-          return { status: "already_exists", payment: receipt };
+          const documentStatus = await attachDocumentStatus(concurrent, receipt);
+          return documentStatus
+            ? { status: "already_exists", payment: receipt, documentStatus }
+            : { status: "already_exists", payment: receipt };
         }
       } catch {
         throw new ManualPaymentError();

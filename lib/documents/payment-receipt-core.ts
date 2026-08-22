@@ -84,6 +84,11 @@ export interface PaymentReceiptRepositoryClient {
     reservationId: string;
     paymentId: string;
   }>): Promise<PaymentReceiptDocumentRow | null>;
+  revokeAvailableDocument(input: Readonly<{
+    agencyId: string;
+    reservationId: string;
+    paymentId: string;
+  }>): Promise<void>;
   insertDocument(input: PaymentReceiptDocumentInsert): Promise<PaymentReceiptDocumentRow>;
 }
 
@@ -272,6 +277,13 @@ export function createPaymentReceiptService(dependencies: Readonly<{
           if (!document) {
             await bestEffortRemove(storage, path);
             return { status: "invalid_structure" };
+          }
+          // A cancellation can race the document upload. Re-read the ledger and
+          // revoke metadata instead of leaving a now-invalid receipt available.
+          const latestPayment = await repository.findPayment({ agencyId, reservationId, paymentId });
+          if (!latestPayment || latestPayment.status !== "confirmed") {
+            await repository.revokeAvailableDocument({ agencyId, reservationId, paymentId });
+            return latestPayment ? { status: "payment_not_confirmed" } : { status: "not_found" };
           }
           return { status: "generated", document };
         } catch (error) {

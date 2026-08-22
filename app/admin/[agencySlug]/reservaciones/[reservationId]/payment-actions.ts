@@ -5,6 +5,8 @@ import { redirect } from "next/navigation";
 
 import { createManualReservationPayment } from "@/lib/payments/manual-payment";
 import type { ManualPaymentFormState } from "./manual-payment-form-core";
+import { ensurePaymentReceiptDocument } from "@/lib/documents/payment-receipt";
+import type { PaymentReceiptFormState } from "./payment-receipt-form-core";
 
 function fieldValue(formData: FormData, key: string) {
   const value = formData.get(key);
@@ -23,6 +25,13 @@ function formValues(formData: FormData) {
 
 function detailPath(agencySlug: string, reservationId: string) {
   return `/admin/${encodeURIComponent(agencySlug)}/reservaciones/${reservationId}`;
+}
+
+function paymentDocumentMessage(documentStatus: "ready" | "existing" | "document_error" | "revoked" | "not_applicable" | undefined) {
+  if (documentStatus === "ready") return " Pago confirmado. Comprobante generado.";
+  if (documentStatus === "existing") return " Pago confirmado. El comprobante ya estaba disponible.";
+  if (documentStatus === "document_error") return " Pago confirmado. El comprobante no pudo generarse; intenta nuevamente desde la gestión documental.";
+  return "";
 }
 
 /** Delegates all payment authorization and persistence to the server command. */
@@ -81,6 +90,38 @@ export async function registerManualPaymentAction(
   revalidatePath(detailPath(requestedAgencySlug, reservationId));
   revalidatePath(`/cuenta/${encodeURIComponent(requestedAgencySlug)}/reservaciones/${reservationId}`);
   return result.status === "created"
-    ? { outcome: "created", success: "Pago registrado correctamente.", idempotencyKey }
-    : { outcome: "already_exists", success: "El pago ya había sido registrado.", idempotencyKey };
+    ? { outcome: "created", success: `Pago registrado correctamente.${paymentDocumentMessage(result.documentStatus)}`, idempotencyKey }
+    : { outcome: "already_exists", success: `El pago ya había sido registrado.${paymentDocumentMessage(result.documentStatus)}`, idempotencyKey };
+}
+
+/** Idempotent recovery path for a confirmed payment that has no available receipt. */
+export async function retryPaymentReceiptAction(
+  _previous: PaymentReceiptFormState,
+  formData: FormData,
+): Promise<PaymentReceiptFormState> {
+  const requestedAgencySlug = fieldValue(formData, "requestedAgencySlug");
+  const reservationId = fieldValue(formData, "reservationId");
+  let result: Awaited<ReturnType<typeof ensurePaymentReceiptDocument>>;
+  try {
+    result = await ensurePaymentReceiptDocument({
+      requestedAgencySlug,
+      reservationId,
+      paymentId: fieldValue(formData, "paymentId"),
+    });
+  } catch {
+    return { error: "No fue posible generar el comprobante. Inténtalo nuevamente." };
+  }
+  if (result.status === "unauthenticated") redirect("/admin/login");
+  if (result.status === "selection_required") redirect("/admin");
+  if (result.status === "forbidden" || result.status === "not_found") {
+    return { error: "El pago no está disponible para esta agencia." };
+  }
+  if (result.status === "payment_not_confirmed") {
+    return { error: "El comprobante solo puede generarse para un pago confirmado." };
+  }
+  if (result.status === "invalid_structure" || result.status === "document_storage_error") {
+    return { error: "No fue posible generar el comprobante. Inténtalo nuevamente." };
+  }
+  revalidatePath(detailPath(requestedAgencySlug, reservationId));
+  return { success: result.status === "generated" ? "Comprobante generado." : "El comprobante ya estaba disponible." };
 }
