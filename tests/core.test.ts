@@ -162,6 +162,7 @@ import {
   AdminContractActivationError,
   createAdminContractActivationService,
 } from "../lib/contracts/admin-contract-activation-core";
+import { createReservationContractService } from "../lib/contracts/reservation-contract-core";
 import {
   createCustomerTransferIdempotencyKey,
   localTransferDateTimeToIso,
@@ -6886,4 +6887,25 @@ test("RPC de activación bloquea por agencia, compara el activo esperado y la UI
   assert.equal(migration.includes("reservation_documents"), false); assert.equal(migration.includes("reservation_snapshots"), false);
   const failing = createAdminContractActivationService({ resolveAccess: adminAccessFixture({ memberships: [adminMembership()] }).resolver.resolve, repository: { async findTemplate() { throw new Error("SQL internal"); }, async hasLegalProfile() { return false; }, async activate() { return { resultStatus: "conflict", activatedVersion: null }; } } });
   assert.rejects(failing.activate({ requestedAgencySlug: "furiver", templateKey: "d2175825-1085-4854-a4b5-cd2d4e521f5c", expectedActiveTemplateKey: null }), (error: unknown) => error instanceof AdminContractActivationError && !error.message.includes("SQL"));
+});
+
+test("instancia contractual congela perfil y plantilla activa, es idempotente y no expone snapshots", async () => {
+  const access = adminAccessFixture({ memberships: [adminMembership()] });
+  const state: { current: { status: "prepared"; templateVersion: number; preparedAt: string; legal?: unknown; content?: unknown } | null } = { current: null };
+  const template = { id: "d2175825-1085-4854-a4b5-cd2d4e521f5c", version: 2, status: "active", title: "Contrato v2", introductoryText: null, termsText: "Términos v2", paymentPolicyText: null, cancellationPolicyText: null, travelerResponsibilityText: null, jurisdictionText: null, effectiveFrom: null };
+  const service = createReservationContractService({ resolveAccess: access.resolver.resolve, repository: { async findReservation({ agencyId }) { return agencyId === "agency-furiver"; }, async findCurrent() { return state.current ? { status: state.current.status, templateVersion: state.current.templateVersion, preparedAt: state.current.preparedAt } : null; }, async findLegalProfile() { return { legalName: "Agencia Legal", taxId: null, legalAddress: null, supportEmail: null, supportPhone: null, jurisdiction: null }; }, async findActiveTemplate() { return template; }, async insert(input) { state.current = { status: "prepared", templateVersion: input.template.version, preparedAt: "2026-08-22T00:00:00.000Z", legal: structuredClone(input.legal), content: structuredClone(input.template) }; return { status: state.current.status, templateVersion: state.current.templateVersion, preparedAt: state.current.preparedAt }; } } });
+  const input = { requestedAgencySlug: "furiver", reservationId: customerDetailReservationId };
+  assert.equal((await service.prepare(input)).status, "prepared");
+  template.version = 3; template.title = "Contrato mutable";
+  const second = await service.prepare(input); assert.equal(second.status, "existing"); if (second.status === "existing") { assert.equal(second.contract.templateVersion, 2); assert.equal(JSON.stringify(second.contract).includes("legal"), false); }
+  assert.equal((state.current?.content as { title: string }).title, "Contrato v2");
+  assert.equal((await service.prepare({ ...input, requestedAgencySlug: "crisenix" })).status, "forbidden");
+});
+
+test("migración de instancia contractual aplica FKs, inmutabilidad y RLS sin tocar documentos", () => {
+  const migration = readFileSync("supabase/migrations/20260801130000_reservation_contract_instances.sql", "utf8");
+  const repo = readFileSync("lib/contracts/reservation-contract-repository.ts", "utf8");
+  const page = readFileSync("app/admin/[agencySlug]/reservaciones/[reservationId]/page.tsx", "utf8");
+  const control = readFileSync("app/admin/[agencySlug]/reservaciones/[reservationId]/contract-preparation-control.tsx", "utf8");
+  assert.match(migration, /unique \(id, agency_id\)/); assert.match(migration, /where status in \('prepared', 'accepted'\)/); assert.match(migration, /context is immutable/); assert.match(migration, /has_customer_reservation_access/); assert.match(repo, /legal_profile_snapshot:legal/); assert.match(repo, /contract_content_snapshot/); assert.match(page, /ContractPreparationControl/); assert.match(control, /Contrato aún no preparado/); assert.equal(migration.includes("reservation_documents"), false);
 });

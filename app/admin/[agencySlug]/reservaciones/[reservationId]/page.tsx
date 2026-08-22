@@ -15,6 +15,7 @@ import { ManualPaymentForm } from "./manual-payment-form";
 import { PaymentEvidenceButton } from "./payment-evidence-button";
 import { PaymentStatusControls } from "./payment-status-controls";
 import { PaymentReceiptControl } from "./payment-receipt-control";
+import { ContractPreparationControl } from "./contract-preparation-control";
 import styles from "../../../admin.module.css";
 import detailStyles from "./admin-detail.module.css";
 
@@ -157,6 +158,7 @@ export default async function AdminReservationDetailPage({
             {payment.status === "cancelled" && payment.receiptStatus === "revoked" && <p className={detailStyles.unavailable}>Comprobante revocado</p>}
           </article>)}</div>}
         </section>
+        <section className={detailStyles.detailCard} aria-labelledby="detail-contract-title"><h2 id="detail-contract-title">Contrato</h2><ContractPreparationControl agencySlug={access.agency.agencySlug} reservationId={reservation.id} /></section>
       </section>
     </AdminShell>
   );
