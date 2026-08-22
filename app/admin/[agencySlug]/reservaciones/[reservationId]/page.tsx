@@ -12,6 +12,7 @@ import {
 import { AdminShell } from "../../../admin-shell";
 import { adminReservationStatusLabel } from "../../../admin-utils";
 import { ManualPaymentForm } from "./manual-payment-form";
+import { PaymentEvidenceButton } from "./payment-evidence-button";
 import { PaymentStatusControls } from "./payment-status-controls";
 import styles from "../../../admin.module.css";
 import detailStyles from "./admin-detail.module.css";
@@ -148,7 +149,9 @@ export default async function AdminReservationDetailPage({
           {paymentHistory.status !== "authorized" ? <p className={detailStyles.unavailable}>No fue posible cargar los pagos de esta reservación.</p> : payments.length === 0 ? <p className={detailStyles.unavailable}>Aún no hay pagos registrados.</p> : <div className={detailStyles.paymentsList}>{payments.map((payment) => <article className={detailStyles.paymentItem} key={payment.paymentId}>
             <div className={detailStyles.paymentItemHeading}><div><strong>{money(payment.amount, payment.currency)}</strong><span className={detailStyles.paymentMeta}>{paymentMethodLabels[payment.method]}</span></div><span className={`${detailStyles.paymentStatus} ${detailStyles[`paymentStatus${payment.status}`]}`}>{paymentStatusLabels[payment.status]}</span></div>
             <dl className={detailStyles.paymentDetails}><div><dt>Fecha de pago</dt><dd>{dateTime(payment.paidAt)}</dd></div><div><dt>Registrado</dt><dd>{dateTime(payment.createdAt)}</dd></div>{payment.reference && <div><dt>Referencia</dt><dd>{payment.reference}</dd></div>}{payment.createdBy && <div><dt>Registrado por</dt><dd>{payment.createdBy.displayName}</dd></div>}{payment.statusChangedAt && <div><dt>Estado actualizado</dt><dd>{dateTime(payment.statusChangedAt)}</dd></div>}</dl>
-            <PaymentStatusControls requestedAgencySlug={access.agency.agencySlug} reservationId={reservation.id} paymentId={payment.paymentId} status={payment.status} />
+            {payment.source === "customer" && payment.status === "pending" && !payment.hasEvidence && <p className={detailStyles.unavailable}>Comprobante no disponible</p>}
+            {payment.hasEvidence && <PaymentEvidenceButton requestedAgencySlug={access.agency.agencySlug} reservationId={reservation.id} paymentId={payment.paymentId} />}
+            <PaymentStatusControls requestedAgencySlug={access.agency.agencySlug} reservationId={reservation.id} paymentId={payment.paymentId} status={payment.status} canConfirm={!(payment.source === "customer" && !payment.hasEvidence)} />
           </article>)}</div>}
         </section>
       </section>

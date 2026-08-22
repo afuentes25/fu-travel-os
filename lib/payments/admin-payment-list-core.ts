@@ -19,6 +19,9 @@ export type AdminPaymentHistoryRow = Readonly<{
   createdAt: string;
   createdByUserId: string | null;
   statusChangedAt: string | null;
+  source?: string | null;
+  hasEvidence?: boolean;
+  evidenceMimeType?: "application/pdf" | "image/jpeg" | "image/png" | "image/webp" | null;
 }>;
 
 export type AdminPaymentHistoryItem = Readonly<{
@@ -33,6 +36,10 @@ export type AdminPaymentHistoryItem = Readonly<{
   createdAt: string;
   createdBy: Readonly<{ displayName: string }> | null;
   statusChangedAt: string | null;
+  /** Internal UI context; never rendered as a payment field. */
+  source: string | null;
+  hasEvidence: boolean;
+  evidenceMimeType: "application/pdf" | "image/jpeg" | "image/png" | "image/webp" | null;
 }>;
 
 export type AdminPaymentHistoryResult =
@@ -143,6 +150,9 @@ export function createAdminPaymentHistoryService(dependencies: Readonly<{
                   ? { displayName: displayNames.get(row.createdByUserId)! }
                   : null,
                 statusChangedAt: row.statusChangedAt,
+                source: row.source ?? null,
+                hasEvidence: row.hasEvidence === true,
+                evidenceMimeType: row.evidenceMimeType ?? null,
               }]
             : [],
         );

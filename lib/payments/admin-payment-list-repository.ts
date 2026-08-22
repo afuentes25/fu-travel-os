@@ -18,6 +18,8 @@ type SupabasePaymentRow = Readonly<{
   created_at: string;
   created_by_user_id: string | null;
   status_changed_at: string | null;
+  source: string | null;
+  payment_evidence: Readonly<{ mime_type: string }> | Readonly<{ mime_type: string }>[] | null;
 }>;
 
 function databaseFailure() {
@@ -42,7 +44,7 @@ export function createSupabaseAdminPaymentHistoryRepository(
     async listPayments({ agencyId, reservationId }) {
       const { data, error } = await supabase
         .from("reservation_payments")
-        .select("id, amount, currency, status, method, reference, paid_at, created_at, created_by_user_id, status_changed_at")
+        .select("id, amount, currency, status, method, reference, paid_at, created_at, created_by_user_id, status_changed_at, source, payment_evidence(mime_type)")
         .eq("reservation_id", reservationId)
         .eq("agency_id", agencyId)
         .order("paid_at", { ascending: false, nullsFirst: false })
@@ -50,6 +52,10 @@ export function createSupabaseAdminPaymentHistoryRepository(
       if (error) throw databaseFailure();
       return (data ?? []).map((row) => {
         const payment = row as SupabasePaymentRow;
+        const evidence = Array.isArray(payment.payment_evidence)
+          ? payment.payment_evidence[0] ?? null
+          : payment.payment_evidence;
+        const mimeType = evidence?.mime_type;
         return {
           id: payment.id,
           amount: payment.amount,
@@ -61,6 +67,11 @@ export function createSupabaseAdminPaymentHistoryRepository(
           createdAt: payment.created_at,
           createdByUserId: payment.created_by_user_id,
           statusChangedAt: payment.status_changed_at,
+          source: payment.source,
+          hasEvidence: Boolean(evidence),
+          evidenceMimeType: mimeType === "application/pdf" || mimeType === "image/jpeg" || mimeType === "image/png" || mimeType === "image/webp"
+            ? mimeType
+            : null,
         };
       });
     },

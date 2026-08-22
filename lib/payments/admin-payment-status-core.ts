@@ -18,16 +18,19 @@ export type ChangeManualPaymentStatusResult =
   | Readonly<{ status: "not_found" }>
   | Readonly<{ status: "invalid_input" }>
   | Readonly<{ status: "invalid_transition" }>
+  | Readonly<{ status: "evidence_required" }>
   | Readonly<{ status: "conflict" }>;
 
 export type StoredPaymentStatusRow = Readonly<{
   id: string;
   status: ManualPaymentStatus;
+  source?: string | null;
 }>;
 
 export interface AdminPaymentStatusRepositoryClient {
   findReservation(input: Readonly<{ agencyId: string; reservationId: string }>): Promise<boolean>;
   findPayment(input: Readonly<{ agencyId: string; reservationId: string; paymentId: string }>): Promise<StoredPaymentStatusRow | null>;
+  hasEvidence(input: Readonly<{ agencyId: string; reservationId: string; paymentId: string }>): Promise<boolean>;
   updateStatus(input: Readonly<{
     agencyId: string;
     reservationId: string;
@@ -74,6 +77,7 @@ function accessStatus(access: AdminAgencyAccess): Exclude<ChangeManualPaymentSta
   | Readonly<{ status: "not_found" }>
   | Readonly<{ status: "invalid_input" }>
   | Readonly<{ status: "invalid_transition" }>
+  | Readonly<{ status: "evidence_required" }>
   | Readonly<{ status: "conflict" }>
 > | null {
   if (access.status === "unauthenticated") return { status: "unauthenticated" };
@@ -122,6 +126,14 @@ export function createAdminPaymentStatusService(dependencies: Readonly<{
         if (!payment) return { status: "not_found" };
         if (!canTransitionManualPaymentStatus(payment.status, input.nextStatus)) {
           return { status: "invalid_transition" };
+        }
+        if (payment.source === "customer" && payment.status === "pending" && input.nextStatus === "confirmed") {
+          const hasEvidence = await repository.hasEvidence({
+            agencyId: access.agency.agencyId,
+            reservationId: input.reservationId,
+            paymentId: input.paymentId,
+          });
+          if (!hasEvidence) return { status: "evidence_required" };
         }
         const updated = await repository.updateStatus({
           agencyId: access.agency.agencyId,

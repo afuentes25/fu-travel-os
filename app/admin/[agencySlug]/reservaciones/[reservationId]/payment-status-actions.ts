@@ -42,6 +42,7 @@ export async function changeManualPaymentStatusAction(
     return { success: result.nextStatus === "confirmed" ? "Pago confirmado correctamente." : "Pago cancelado correctamente." };
   }
   if (result.status === "conflict") return { error: "El estado del pago cambió. Recarga la reservación antes de intentarlo nuevamente." };
+  if (result.status === "evidence_required") return { error: "No puedes confirmar un pago reportado por cliente sin comprobante disponible." };
   if (result.status === "invalid_transition") return { error: "Esta transición de estado no está permitida." };
   if (result.status === "not_found") return { error: "El pago no está disponible para esta agencia." };
   if (result.status === "forbidden") return { error: "No tienes permiso para actualizar este pago." };

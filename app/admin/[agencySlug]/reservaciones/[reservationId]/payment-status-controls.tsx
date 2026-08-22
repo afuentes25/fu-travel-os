@@ -11,11 +11,13 @@ export function PaymentStatusControls({
   reservationId,
   paymentId,
   status,
+  canConfirm,
 }: Readonly<{
   requestedAgencySlug: string;
   reservationId: string;
   paymentId: string;
   status: "pending" | "confirmed" | "cancelled";
+  canConfirm: boolean;
 }>) {
   const [state, formAction, pending] = useActionState(
     changeManualPaymentStatusAction,
@@ -34,7 +36,7 @@ export function PaymentStatusControls({
       <input type="hidden" name="requestedAgencySlug" value={requestedAgencySlug} />
       <input type="hidden" name="reservationId" value={reservationId} />
       <input type="hidden" name="paymentId" value={paymentId} />
-      {status === "pending" && <button className={styles.paymentConfirmButton} type="submit" name="nextStatus" value="confirmed" disabled={pending}>Confirmar</button>}
+      {status === "pending" && canConfirm && <button className={styles.paymentConfirmButton} type="submit" name="nextStatus" value="confirmed" disabled={pending}>Confirmar</button>}
       <button className={styles.paymentCancelButton} type="submit" name="nextStatus" value="cancelled" disabled={pending} onClick={confirmCancellation}>Cancelar</button>
       {state.error && <p role="alert">{state.error}</p>}
       {state.success && <p role="status">{state.success}</p>}

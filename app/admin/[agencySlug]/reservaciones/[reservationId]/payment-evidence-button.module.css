@@ -1,0 +1,6 @@
+.access{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:16px}
+.access button{min-height:44px;border:1px solid #35647a;background:#fff;padding:0 12px;color:#17465e;font:inherit;font-size:.86rem;font-weight:800;cursor:pointer}
+.access button:focus-visible{outline:3px solid #ef9a4d;outline-offset:2px}
+.access button:disabled{opacity:.6;cursor:wait}
+.access p{flex-basis:100%;margin:0;font-size:.85rem;color:#8b3320}
+@media(max-width:760px){.access button{flex:1}}

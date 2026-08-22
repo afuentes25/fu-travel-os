@@ -32,13 +32,24 @@ export function createSupabaseAdminPaymentStatusRepository(
     async findPayment({ agencyId, reservationId, paymentId }) {
       const { data, error } = await supabase
         .from("reservation_payments")
-        .select("id, status")
+        .select("id, status, source")
         .eq("id", paymentId)
         .eq("reservation_id", reservationId)
         .eq("agency_id", agencyId)
         .maybeSingle();
       if (error) throw databaseFailure();
       return data as StoredPaymentStatusRow | null;
+    },
+    async hasEvidence({ agencyId, reservationId, paymentId }) {
+      const { data, error } = await supabase
+        .from("payment_evidence")
+        .select("id")
+        .eq("payment_id", paymentId)
+        .eq("reservation_id", reservationId)
+        .eq("agency_id", agencyId)
+        .maybeSingle();
+      if (error) throw databaseFailure();
+      return Boolean(data);
     },
     async updateStatus({ agencyId, reservationId, paymentId, expectedStatus, nextStatus, actorUserId, changedAt }) {
       const { data, error } = await supabase

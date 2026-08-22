@@ -121,6 +121,10 @@ import {
   type ManualPaymentStatus,
 } from "../lib/payments/admin-payment-status-core";
 import {
+  AdminPaymentEvidenceError,
+  createAdminPaymentEvidenceService,
+} from "../lib/payments/admin-payment-evidence-core";
+import {
   CustomerPaymentHistoryError,
   createCustomerPaymentHistoryService,
   type CustomerPaymentHistoryRow,
@@ -2530,6 +2534,9 @@ function adminPaymentRow(input: Partial<AdminPaymentHistoryRow> = {}): AdminPaym
     createdAt: input.createdAt ?? "2026-07-26T12:01:00.000Z",
     createdByUserId: input.createdByUserId === undefined ? "user-verified" : input.createdByUserId,
     statusChangedAt: input.statusChangedAt ?? null,
+    source: input.source ?? "manual",
+    hasEvidence: input.hasEvidence ?? false,
+    evidenceMimeType: input.evidenceMimeType ?? null,
   };
 }
 
@@ -2567,8 +2574,10 @@ function adminPaymentStatusFixture(input: Readonly<{
   paymentStatus?: ManualPaymentStatus;
   reservationExists?: boolean;
   conflict?: boolean;
+  paymentSource?: string;
+  hasEvidence?: boolean;
 }> = {}) {
-  const row = { id: adminPaymentId, status: input.paymentStatus ?? "pending" as ManualPaymentStatus };
+  const row = { id: adminPaymentId, status: input.paymentStatus ?? "pending" as ManualPaymentStatus, source: input.paymentSource ?? "manual" };
   const writes: Array<Record<string, unknown>> = [];
   const requests: string[] = [];
   const access = adminAccessFixture({ memberships: input.memberships ?? [adminMembership()] });
@@ -2583,6 +2592,10 @@ function adminPaymentStatusFixture(input: Readonly<{
       async findPayment({ agencyId, reservationId, paymentId }) {
         requests.push(`payment:${agencyId}:${reservationId}:${paymentId}`);
         return paymentId === row.id ? { ...row } : null;
+      },
+      async hasEvidence({ agencyId, reservationId, paymentId }) {
+        requests.push(`evidence:${agencyId}:${reservationId}:${paymentId}`);
+        return input.hasEvidence === true && paymentId === row.id;
       },
       async updateStatus(update) {
         writes.push(update);
@@ -2701,6 +2714,86 @@ test("historial y cambio de status reflejan el efecto financiero sin mutar el sn
   assert.match(page, /Aún no hay pagos registrados\./);
   assert.equal(page.includes("idempotency_key"), false);
   assert.equal(page.includes("created_by_user_id"), false);
+});
+
+test("comprobante administrativo se autoriza antes de generar URL temporal y no expone rutas", async () => {
+  const requests: string[] = [];
+  const access = adminAccessFixture({ memberships: [adminMembership()] });
+  const service = createAdminPaymentEvidenceService({
+    resolveAccess: access.resolver.resolve,
+    repository: {
+      async findReservation({ agencyId, reservationId }) { requests.push(`reservation:${agencyId}:${reservationId}`); return true; },
+      async findPayment({ agencyId, reservationId, paymentId }) { requests.push(`payment:${agencyId}:${reservationId}:${paymentId}`); return paymentId === adminPaymentId; },
+      async findEvidence({ agencyId, reservationId, paymentId }) {
+        requests.push(`evidence:${agencyId}:${reservationId}:${paymentId}`);
+        return paymentId === adminPaymentId ? { storagePath: "agency-furiver/reservation/payment/evidence.pdf", mimeType: "application/pdf" } : null;
+      },
+    },
+    storage: {
+      async createSignedReadUrl({ path, expiresInSeconds }) {
+        requests.push(`storage:${expiresInSeconds}`);
+        assert.equal(path.includes("agency-furiver"), true);
+        return "https://storage.example/signed-temporary";
+      },
+    },
+  });
+  const ready = await service.request({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId, paymentId: adminPaymentId });
+  assert.deepEqual(ready, { status: "ready", signedUrl: "https://storage.example/signed-temporary", mimeType: "application/pdf" });
+  assert.deepEqual(requests.map((request) => request.split(":")[0]), ["reservation", "payment", "evidence", "storage"]);
+  assert.equal(JSON.stringify(ready).includes("storagePath"), false);
+
+  const noEvidence = createAdminPaymentEvidenceService({
+    resolveAccess: access.resolver.resolve,
+    repository: {
+      async findReservation() { return true; }, async findPayment() { return true; }, async findEvidence() { return null; },
+    },
+    storage: { async createSignedReadUrl() { throw new Error("should not read storage"); } },
+  });
+  assert.deepEqual(await noEvidence.request({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId, paymentId: adminPaymentId }), { status: "no_evidence" });
+  const unauthenticated = createAdminPaymentEvidenceService({
+    async resolveAccess() { return { status: "unauthenticated" } as const; },
+    repository: { async findReservation() { throw new Error(); }, async findPayment() { throw new Error(); }, async findEvidence() { throw new Error(); } },
+    storage: { async createSignedReadUrl() { throw new Error(); } },
+  });
+  assert.deepEqual(await unauthenticated.request({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId, paymentId: adminPaymentId }), { status: "unauthenticated" });
+  const failing = createAdminPaymentEvidenceService({
+    resolveAccess: access.resolver.resolve,
+    repository: { async findReservation() { throw new Error("SQL private"); }, async findPayment() { return false; }, async findEvidence() { return null; } },
+    storage: { async createSignedReadUrl() { return ""; } },
+  });
+  await assert.rejects(failing.request({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId, paymentId: adminPaymentId }), (error: unknown) => error instanceof AdminPaymentEvidenceError && !error.message.includes("SQL"));
+});
+
+test("confirmación administrativa exige evidencia para pending customer, no para manual", async () => {
+  const customerWithoutEvidence = adminPaymentStatusFixture({ paymentSource: "customer", hasEvidence: false });
+  assert.deepEqual(await customerWithoutEvidence.service.change({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId, paymentId: adminPaymentId, nextStatus: "confirmed" }), { status: "evidence_required" });
+  assert.equal(customerWithoutEvidence.writes.length, 0);
+  assert.deepEqual(await customerWithoutEvidence.service.change({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId, paymentId: adminPaymentId, nextStatus: "cancelled" }), { status: "updated", nextStatus: "cancelled" });
+  const customerWithEvidence = adminPaymentStatusFixture({ paymentSource: "customer", hasEvidence: true });
+  assert.equal((await customerWithEvidence.service.change({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId, paymentId: adminPaymentId, nextStatus: "confirmed" })).status, "updated");
+  const manual = adminPaymentStatusFixture({ paymentSource: "manual", hasEvidence: false });
+  assert.equal((await manual.service.change({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId, paymentId: adminPaymentId, nextStatus: "confirmed" })).status, "updated");
+});
+
+test("UI administrativa solicita evidencia bajo demanda sin rutas internas ni descarga por Vercel", () => {
+  const action = readFileSync("app/admin/[agencySlug]/reservaciones/[reservationId]/payment-evidence-actions.ts", "utf8");
+  const button = readFileSync("app/admin/[agencySlug]/reservaciones/[reservationId]/payment-evidence-button.tsx", "utf8");
+  const evidenceRepository = readFileSync("lib/payments/admin-payment-evidence-repository.ts", "utf8");
+  const storage = readFileSync("lib/payments/admin-payment-evidence-storage.ts", "utf8");
+  const core = readFileSync("lib/payments/admin-payment-evidence-core.ts", "utf8");
+  const page = readFileSync("app/admin/[agencySlug]/reservaciones/[reservationId]/page.tsx", "utf8");
+  assert.equal(action.includes("export const"), false);
+  assert.match(action, /getAdminPaymentEvidenceAccess/);
+  assert.equal(action.includes("storagePath"), false);
+  assert.match(button, /Preparando comprobante…/);
+  assert.match(button, /window\.open/);
+  assert.match(button, /noopener,noreferrer/);
+  assert.equal(button.includes("storagePath"), false);
+  assert.match(evidenceRepository, /.eq\("payment_id", paymentId\)[\s\S]*\.eq\("reservation_id", reservationId\)[\s\S]*\.eq\("agency_id", agencyId\)/);
+  assert.match(storage, /createSignedUrl\(path, expiresInSeconds\)/);
+  assert.match(core, /expiresInSeconds: 60/);
+  assert.match(page, /<PaymentEvidenceButton/);
+  assert.match(page, /Comprobante no disponible/);
 });
 
 function customerPaymentRow(input: Partial<CustomerPaymentHistoryRow> = {}): CustomerPaymentHistoryRow {
