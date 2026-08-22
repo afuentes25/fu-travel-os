@@ -139,6 +139,13 @@ import {
   type CustomerTransferPaymentRow,
 } from "../lib/payments/customer-transfer-core";
 import {
+  createPaymentReceiptService,
+  PaymentReceiptError,
+  type PaymentReceiptDocumentInsert,
+  type PaymentReceiptDocumentRow,
+} from "../lib/documents/payment-receipt-core";
+import { renderPaymentReceiptPdf } from "../lib/documents/payment-receipt-pdf";
+import {
   createCustomerTransferIdempotencyKey,
   localTransferDateTimeToIso,
   localTransferDateTimeValue,
@@ -6319,6 +6326,197 @@ test("visibilidad de disponibilidad distingue oculto, estado y conteo", () => {
     getAvailabilityLabel("remaining_places", departure),
     "40 lugares",
   );
+});
+
+const paymentReceiptDocumentId = "24cf2e61-23bd-4d4a-85ca-e1d7a36fc183";
+
+function paymentReceiptFixture(input: Readonly<{
+  memberships?: readonly AdminAgencyMembershipRecord[];
+  paymentStatus?: string;
+  paymentSource?: string;
+  reservation?: ReturnType<typeof financialReservationRow> | null;
+  payments?: readonly ReservationPaymentFinancialRow[];
+  failStorage?: boolean;
+  failInsert?: boolean;
+}> = {}) {
+  const documents = new Map<string, PaymentReceiptDocumentRow>();
+  const state = {
+    requests: [] as string[],
+    uploads: [] as string[],
+    removals: [] as string[],
+    inserts: [] as PaymentReceiptDocumentInsert[],
+    pdfs: [] as Parameters<typeof renderPaymentReceiptPdf>[0][],
+  };
+  const access = adminAccessFixture({ memberships: input.memberships ?? [adminMembership()] });
+  const service = createPaymentReceiptService({
+    resolveAccess: access.resolver.resolve,
+    now: () => new Date(TEST_NOW),
+    createDocumentId: () => paymentReceiptDocumentId,
+    renderPdf: async (data) => {
+      state.pdfs.push(data);
+      return new TextEncoder().encode("%PDF-1.7 private receipt");
+    },
+    repository: {
+      async findReservation({ agencyId, reservationId }) {
+        state.requests.push(`reservation:${agencyId}:${reservationId}`);
+        return input.reservation === undefined ? financialReservationRow() : input.reservation;
+      },
+      async findPayment({ agencyId, reservationId, paymentId }) {
+        state.requests.push(`payment:${agencyId}:${reservationId}:${paymentId}`);
+        return paymentId === adminPaymentId
+          ? {
+              id: paymentId,
+              status: input.paymentStatus ?? "confirmed",
+              source: input.paymentSource ?? "manual",
+              amount: 9563.4,
+              currency: "MXN",
+              method: "transfer",
+              reference: "  REFERENCIA-OPERATIVA  ",
+              paidAt: "2026-07-26T12:00:00.000Z",
+            }
+          : null;
+      },
+      async listPayments({ agencyId, reservationId }) {
+        state.requests.push(`payments:${agencyId}:${reservationId}`);
+        return input.payments ?? [{ amount: 9563.4, currency: "MXN", status: "confirmed" }];
+      },
+      async findExistingDocument({ agencyId, reservationId, paymentId }) {
+        state.requests.push(`document:${agencyId}:${reservationId}:${paymentId}`);
+        return documents.get(`${agencyId}:${reservationId}:${paymentId}`) ?? null;
+      },
+      async insertDocument(document) {
+        state.inserts.push(document);
+        if (input.failInsert) throw new Error("database unavailable");
+        const key = `${document.agencyId}:${document.reservationId}:${document.paymentId}`;
+        if (documents.has(key)) throw Object.assign(new Error("duplicate"), { code: "23505" });
+        const row = { status: document.status, version: document.version, generatedAt: document.generatedAt } as const;
+        documents.set(key, row);
+        return row;
+      },
+    },
+    storage: {
+      async upload({ path }) {
+        if (input.failStorage) throw new Error("storage unavailable");
+        state.uploads.push(path);
+      },
+      async remove(path) { state.removals.push(path); },
+    },
+  });
+  return { service, documents, state };
+}
+
+function paymentReceiptInput(input: Partial<Record<string, unknown>> = {}) {
+  return {
+    requestedAgencySlug: "furiver",
+    reservationId: customerDetailReservationId,
+    paymentId: adminPaymentId,
+    ...input,
+  };
+}
+
+test("comprobante privado exige acceso administrativo y pago confirmado antes de generar", async () => {
+  let queried = false;
+  const unauthenticated = createPaymentReceiptService({
+    async resolveAccess() { return { status: "unauthenticated" } as const; },
+    repository: {
+      async findReservation() { queried = true; return null; },
+      async findPayment() { queried = true; return null; },
+      async listPayments() { queried = true; return []; },
+      async findExistingDocument() { queried = true; return null; },
+      async insertDocument() { queried = true; throw new Error(); },
+    },
+    storage: { async upload() { queried = true; }, async remove() { queried = true; } },
+    renderPdf: async () => new TextEncoder().encode("%PDF"),
+  });
+  assert.deepEqual(await unauthenticated.ensure(paymentReceiptInput()), { status: "unauthenticated" });
+  assert.equal(queried, false);
+
+  const invalid = paymentReceiptFixture();
+  assert.deepEqual(await invalid.service.ensure(paymentReceiptInput({ reservationId: "invalid" })), { status: "not_found" });
+  assert.deepEqual(invalid.state.requests, []);
+  const pending = paymentReceiptFixture({ paymentStatus: "pending" });
+  assert.deepEqual(await pending.service.ensure(paymentReceiptInput()), { status: "payment_not_confirmed" });
+  assert.equal(pending.state.uploads.length, 0);
+  const cancelled = paymentReceiptFixture({ paymentStatus: "cancelled" });
+  assert.deepEqual(await cancelled.service.ensure(paymentReceiptInput()), { status: "payment_not_confirmed" });
+  const customer = paymentReceiptFixture({ paymentSource: "customer" });
+  assert.equal((await customer.service.ensure(paymentReceiptInput())).status, "generated");
+  const crossTenant = paymentReceiptFixture();
+  assert.deepEqual(await crossTenant.service.ensure(paymentReceiptInput({ requestedAgencySlug: "crisenix" })), { status: "forbidden" });
+  assert.deepEqual(crossTenant.state.requests, []);
+});
+
+test("comprobante de pago usa ledger real, genera PDF privado e idempotente sin PII", async () => {
+  const fixture = paymentReceiptFixture({
+    payments: [
+      { amount: 9563.4, currency: "MXN", status: "confirmed" },
+      { amount: 1000, currency: "MXN", status: "pending" },
+    ],
+  });
+  const beforeSnapshot = JSON.stringify(financialReservationRow().snapshot);
+  const first = await fixture.service.ensure(paymentReceiptInput());
+  assert.equal(first.status, "generated");
+  assert.deepEqual(first.status === "generated" ? first.document : null, {
+    documentType: "payment_receipt", version: 1, generatedAt: TEST_NOW,
+  });
+  assert.equal(fixture.state.inserts.length, 1);
+  assert.equal(fixture.state.inserts[0].mimeType, "application/pdf");
+  assert.ok(fixture.state.inserts[0].fileSizeBytes > 0);
+  assert.match(fixture.state.inserts[0].storagePath, /^agency-furiver\/[0-9a-f-]+\/payment_receipt\/[0-9a-f-]+\/v1\.pdf$/i);
+  assert.equal(fixture.state.inserts[0].storagePath.includes("REFERENCIA"), false);
+  assert.equal(fixture.state.pdfs[0].confirmedTotal, 9563.4);
+  assert.equal(fixture.state.pdfs[0].remaining, 38253.6);
+  assert.equal(fixture.state.pdfs[0].reference, "REFERENCIA-OPERATIVA");
+  assert.equal(JSON.stringify(financialReservationRow().snapshot), beforeSnapshot);
+  const serialized = JSON.stringify(first);
+  assert.equal(serialized.includes("paymentId"), false);
+  assert.equal(serialized.includes("storagePath"), false);
+  assert.equal(serialized.includes("userId"), false);
+
+  const retry = await fixture.service.ensure(paymentReceiptInput());
+  assert.equal(retry.status, "existing");
+  assert.equal(fixture.state.uploads.length, 1);
+  assert.equal(fixture.state.inserts.length, 1);
+
+  const bytes = await renderPaymentReceiptPdf({
+    ...fixture.state.pdfs[0],
+    reference: null,
+  });
+  assert.equal(new TextDecoder().decode(bytes.slice(0, 4)), "%PDF");
+  assert.ok(bytes.length > 0);
+  const renderer = readFileSync("lib/documents/payment-receipt-pdf.ts", "utf8");
+  assert.match(renderer, /Documento no fiscal/);
+  assert.equal(renderer.includes("email"), false);
+  assert.equal(renderer.includes("birthDate"), false);
+});
+
+test("comprobante privado recupera fallos de Storage o DB sin metadata falsa ni duplicados", async () => {
+  const storageFailure = paymentReceiptFixture({ failStorage: true });
+  assert.deepEqual(await storageFailure.service.ensure(paymentReceiptInput()), { status: "document_storage_error" });
+  assert.equal(storageFailure.state.inserts.length, 0);
+
+  const databaseFailure = paymentReceiptFixture({ failInsert: true });
+  await assert.rejects(
+    databaseFailure.service.ensure(paymentReceiptInput()),
+    (error: unknown) => error instanceof PaymentReceiptError && !error.message.includes("database"),
+  );
+  assert.equal(databaseFailure.state.uploads.length, 1);
+  assert.equal(databaseFailure.state.removals.length, 1);
+
+  const concurrent = paymentReceiptFixture();
+  const results = await Promise.all([
+    concurrent.service.ensure(paymentReceiptInput()),
+    concurrent.service.ensure(paymentReceiptInput()),
+  ]);
+  assert.deepEqual(results.map((result) => result.status).sort(), ["existing", "generated"]);
+  assert.equal(concurrent.documents.size, 1);
+  assert.ok(concurrent.state.removals.length <= 1);
+  const repository = readFileSync("lib/documents/payment-receipt-repository.ts", "utf8");
+  const storage = readFileSync("lib/documents/payment-receipt-storage.ts", "utf8");
+  assert.match(repository, /\.eq\("id", paymentId\)[\s\S]*\.eq\("reservation_id", reservationId\)[\s\S]*\.eq\("agency_id", agencyId\)/);
+  assert.match(repository, /\.eq\("reservation_id", reservationId\)[\s\S]*\.eq\("agency_id", agencyId\)[\s\S]*\.eq\("payment_id", paymentId\)/);
+  assert.match(storage, /upsert: false/);
+  assert.equal(storage.includes("createSignedUrl"), false);
 });
 
 test("estados de salida prevalecen sobre un conteo operativo", () => {
