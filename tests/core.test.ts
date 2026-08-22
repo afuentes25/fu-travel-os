@@ -129,10 +129,16 @@ import {
   CUSTOMER_TRANSFER_MAX_FILE_BYTES,
   CustomerTransferError,
   createCustomerTransferEvidenceService,
+  createCustomerTransferUploadService,
   detectCustomerTransferFile,
   type CustomerTransferPaymentInsert,
   type CustomerTransferPaymentRow,
 } from "../lib/payments/customer-transfer-core";
+import {
+  createCustomerTransferIdempotencyKey,
+  localTransferDateTimeToIso,
+  localTransferDateTimeValue,
+} from "../app/cuenta/[agencySlug]/reservaciones/[reservationId]/customer-transfer-form-core";
 import {
   createManualPaymentIdempotencyKey,
   localDateTimeToIso,
@@ -3048,6 +3054,98 @@ test("transferencia cliente recupera reintentos y compensa evidencia sin duplica
   assert.match(storage, /upsert: false/);
   assert.equal(storage.includes("createSignedUrl"), false);
   assert.equal(storage.includes("getPublicUrl"), false);
+});
+
+test("transferencia staged firma después de autorizar, valida bytes y crea payment sólo al finalizar", async () => {
+  const access = customerAccessFixture({ accounts: [customerAccount()] });
+  const payments = new Map<string, CustomerTransferPaymentRow>();
+  const evidence = new Set<string>();
+  const objects = new Map<string, Uint8Array>();
+  const keyFor = (agencyId: string, idempotencyKey: string) => `${agencyId}:${idempotencyKey}`;
+  const service = createCustomerTransferUploadService({
+    resolveAccess: access.resolver.resolve,
+    now: () => new Date(TEST_NOW),
+    repository: {
+      async findAuthorizedReservation({ agencyId, reservationId }) {
+        return agencyId === "agency-furiver" && reservationId === customerDetailReservationId ? financialReservationRow() : null;
+      },
+      async findByIdempotencyKey({ agencyId, idempotencyKey }) { return payments.get(keyFor(agencyId, idempotencyKey)) ?? null; },
+      async insertPayment(insert) {
+        const key = keyFor(insert.agencyId, insert.idempotencyKey);
+        if (payments.has(key)) throw Object.assign(new Error("duplicate"), { code: "23505" });
+        const payment = customerTransferStored(insert); payments.set(key, payment); return payment;
+      },
+      async hasEvidence({ paymentId, reservationId, agencyId }) { return evidence.has(`${paymentId}:${reservationId}:${agencyId}`); },
+      async insertEvidence({ paymentId, reservationId, agencyId }) { evidence.add(`${paymentId}:${reservationId}:${agencyId}`); },
+    },
+    storage: {
+      async createSignedUpload({ path }) { return { path, token: "temporary-upload-token" }; },
+      async download(path) { const bytes = objects.get(path); if (!bytes) throw new Error("missing"); return bytes; },
+      async move({ fromPath, toPath }) { const bytes = objects.get(fromPath); if (!bytes || objects.has(toPath)) throw new Error("move"); objects.delete(fromPath); objects.set(toPath, bytes); },
+      async remove(path) { objects.delete(path); },
+    },
+  });
+  const input = customerTransferInput();
+  const prepared = await service.prepare({ ...input, fileSize: 8 });
+  assert.equal(prepared.status, "ready");
+  assert.equal(payments.size, 0);
+  if (prepared.status !== "ready") return;
+  assert.match(prepared.upload.path, /^agency-furiver\/[0-9a-f-]+\/staging\/[0-9a-f-]+$/i);
+  objects.set(prepared.upload.path, new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x37]));
+  const finalized = await service.finalize(input);
+  assert.equal(finalized.status, "submitted");
+  assert.equal(payments.size, 1);
+  assert.equal(evidence.size, 1);
+  assert.equal([...objects.keys()].some((path) => /\/evidence\.pdf$/.test(path)), true);
+  assert.equal((await service.finalize(input)).status, "already_submitted");
+
+  const invalidKey = "48f3dddf-5c89-43b2-8fec-a42199f5a9f8";
+  const invalidPrepared = await service.prepare({ ...input, idempotencyKey: invalidKey, fileSize: 2 });
+  if (invalidPrepared.status !== "ready") throw new Error("expected signed staging upload");
+  objects.set(invalidPrepared.upload.path, new Uint8Array([0, 1]));
+  assert.deepEqual(await service.finalize({ ...input, idempotencyKey: invalidKey }), { status: "invalid_file" });
+  assert.equal(objects.has(invalidPrepared.upload.path), false);
+  assert.equal(payments.size, 1);
+});
+
+test("formulario cliente usa URL firmada, conserva UTC e idempotencia sin enviar File a Vercel", () => {
+  const action = readFileSync("app/cuenta/[agencySlug]/reservaciones/[reservationId]/transfer-actions.ts", "utf8");
+  const form = readFileSync("app/cuenta/[agencySlug]/reservaciones/[reservationId]/customer-transfer-form.tsx", "utf8");
+  const core = readFileSync("app/cuenta/[agencySlug]/reservaciones/[reservationId]/customer-transfer-form-core.ts", "utf8");
+  const page = readFileSync("app/cuenta/[agencySlug]/reservaciones/[reservationId]/page.tsx", "utf8");
+  const iso = localTransferDateTimeToIso("2026-07-26T08:30");
+  assert.ok(iso?.endsWith("Z"));
+  assert.match(iso as string, /^2026-07-26T/);
+  assert.equal(localTransferDateTimeToIso("2026-02-31T08:30"), null);
+  assert.match(localTransferDateTimeValue(new Date("2026-07-26T12:00:00.000Z")), /^2026-07-\d{2}T\d{2}:\d{2}$/);
+  assert.equal(createCustomerTransferIdempotencyKey({ randomUUID: () => "2dce1e1a-5d14-4cff-b2ea-d506aa4c7eb3" } as Crypto), "2dce1e1a-5d14-4cff-b2ea-d506aa4c7eb3");
+
+  assert.match(action, /prepareCustomerTransferUpload\(/);
+  assert.match(action, /finalizeCustomerTransferUpload\(/);
+  assert.match(action, /revalidatePath\(customerDetailPath\(input\.requestedAgencySlug, input\.reservationId\)\)/);
+  assert.match(action, /\/admin\/\$\{encodeURIComponent\(input\.requestedAgencySlug\)\}\/reservaciones\/\$\{input\.reservationId\}/);
+  assert.equal(action.includes("export const"), false);
+  assert.equal(action.includes('formData.get("file")'), false);
+  assert.equal(action.includes("agencyId:"), false);
+  assert.equal(action.includes("currency:"), false);
+  assert.equal(action.includes("customerAccountId:"), false);
+  assert.equal(action.includes("storagePath:"), false);
+  assert.match(form, /<dialog/);
+  assert.match(form, /type="datetime-local"/);
+  assert.match(form, /localTransferDateTimeToIso\(/);
+  assert.match(form, /accept="application\/pdf,image\/jpeg,image\/png,image\/webp"/);
+  assert.match(form, /PDF, JPG, PNG o WebP\. Máximo 10 MB\./);
+  assert.match(form, /uploadToSignedUrl/);
+  assert.match(form, /prepared\.upload\.path, prepared\.upload\.token, file/);
+  assert.match(form, /Preparando carga…/);
+  assert.match(form, /Subiendo comprobante…/);
+  assert.match(form, /Validando comprobante…/);
+  assert.equal(form.includes("action={"), false);
+  assert.equal(form.includes("localStorage"), false);
+  assert.equal(form.includes("storagePath"), false);
+  assert.equal(form.includes("paymentId"), false);
+  assert.match(page, /<CustomerTransferForm/);
+  assert.throws(() => readFileSync("next.config.mjs", "utf8"));
 });
 
 test("vista de mis reservaciones usa el repositorio seguro, pagina y no filtra por datos privados", () => {

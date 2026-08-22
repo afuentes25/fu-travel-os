@@ -3,27 +3,42 @@ import "server-only";
 import { resolveCustomerAgencyAccess } from "@/lib/customers/customer-access";
 
 import {
-  createCustomerTransferEvidenceService,
-  type SubmitCustomerTransferInput,
-  type SubmitCustomerTransferResult,
+  createCustomerTransferUploadService,
+  type FinalizeCustomerTransferUploadInput,
+  type FinalizeCustomerTransferUploadResult,
+  type PrepareCustomerTransferUploadInput,
+  type PrepareCustomerTransferUploadResult,
 } from "./customer-transfer-core";
 import { createSupabaseCustomerTransferRepository } from "./customer-transfer-repository";
 import { createSupabaseCustomerTransferStorage } from "./customer-transfer-storage";
 
 export {
-  createCustomerTransferEvidenceService,
+  createCustomerTransferUploadService,
   CustomerTransferError,
   CUSTOMER_TRANSFER_MAX_FILE_BYTES,
-  detectCustomerTransferFile,
-  type SubmitCustomerTransferResult,
+  detectCustomerTransferBytes,
+  type FinalizeCustomerTransferUploadResult,
+  type PrepareCustomerTransferUploadResult,
 } from "./customer-transfer-core";
 
-export async function submitCustomerTransferEvidence(
-  input: SubmitCustomerTransferInput,
-): Promise<SubmitCustomerTransferResult> {
-  return createCustomerTransferEvidenceService({
+function service() {
+  return createCustomerTransferUploadService({
     resolveAccess: resolveCustomerAgencyAccess,
     repository: () => createSupabaseCustomerTransferRepository(),
     storage: () => createSupabaseCustomerTransferStorage(),
-  }).submit(input);
+  });
+}
+
+/** Creates a short-lived, path-specific upload capability after customer authorization. */
+export async function prepareCustomerTransferUpload(
+  input: PrepareCustomerTransferUploadInput,
+): Promise<PrepareCustomerTransferUploadResult> {
+  return service().prepare(input);
+}
+
+/** Re-authorizes and validates staging bytes before a pending payment can be created. */
+export async function finalizeCustomerTransferUpload(
+  input: FinalizeCustomerTransferUploadInput,
+): Promise<FinalizeCustomerTransferUploadResult> {
+  return service().finalize(input);
 }
