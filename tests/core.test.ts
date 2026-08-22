@@ -126,6 +126,14 @@ import {
   type CustomerPaymentHistoryRow,
 } from "../lib/payments/customer-payment-list-core";
 import {
+  CUSTOMER_TRANSFER_MAX_FILE_BYTES,
+  CustomerTransferError,
+  createCustomerTransferEvidenceService,
+  detectCustomerTransferFile,
+  type CustomerTransferPaymentInsert,
+  type CustomerTransferPaymentRow,
+} from "../lib/payments/customer-transfer-core";
+import {
   createManualPaymentIdempotencyKey,
   localDateTimeToIso,
   localDateTimeValue,
@@ -2814,6 +2822,232 @@ test("detalle cliente usa historial seguro sin recalcular el saldo ni exponer ca
   assert.equal(page.includes("reservation_payments"), false);
   assert.equal(page.includes("calculateReservationFinancialSummary"), false);
   assert.match(page, /TravelerDataForm/);
+});
+
+const customerTransferPaymentId = "6f3b5ea4-f3bf-4ccd-8979-7c08da34df51";
+
+function customerTransferFile(bytes: readonly number[], size = bytes.length) {
+  const copy = new Uint8Array(bytes);
+  return {
+    size,
+    type: "application/not-trusted",
+    name: "referencia-privada.exe",
+    async arrayBuffer() {
+      return copy.buffer.slice(0) as ArrayBuffer;
+    },
+  };
+}
+
+const validTransferPdf = () => customerTransferFile([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x37]);
+
+function customerTransferStored(insert: CustomerTransferPaymentInsert): CustomerTransferPaymentRow {
+  return {
+    id: customerTransferPaymentId,
+    reservationId: insert.reservationId,
+    agencyId: insert.agencyId,
+    amount: insert.amount,
+    currency: insert.currency,
+    status: insert.status,
+    method: insert.method,
+    source: insert.source,
+    reference: insert.reference,
+    paidAt: insert.paidAt,
+    submittedByCustomerAccountId: insert.submittedByCustomerAccountId,
+    createdAt: "2026-07-26T12:00:01.000Z",
+  };
+}
+
+function customerTransferFixture(input: Readonly<{
+  accounts?: readonly CustomerAgencyAccountRecord[];
+  linked?: boolean;
+  reservation?: ReturnType<typeof financialReservationRow> | null;
+}> = {}) {
+  const payments = new Map<string, CustomerTransferPaymentRow>();
+  const evidence = new Set<string>();
+  const state = { failUpload: false, failEvidence: false, uploads: [] as string[], removals: [] as string[], writes: [] as CustomerTransferPaymentInsert[], reads: [] as string[] };
+  const access = customerAccessFixture({ accounts: input.accounts ?? [customerAccount()] });
+  const keyFor = (agencyId: string, idempotencyKey: string) => `${agencyId}:${idempotencyKey}`;
+  const evidenceKey = (paymentId: string, reservationId: string, agencyId: string) => `${paymentId}:${reservationId}:${agencyId}`;
+  const service = createCustomerTransferEvidenceService({
+    resolveAccess: access.resolver.resolve,
+    now: () => new Date(TEST_NOW),
+    repository: {
+      async findAuthorizedReservation({ customerAccountId, agencyId, reservationId }) {
+        state.reads.push(`reservation:${customerAccountId}:${agencyId}:${reservationId}`);
+        return input.linked === false ? null : input.reservation === undefined ? financialReservationRow() : input.reservation;
+      },
+      async findByIdempotencyKey({ agencyId, idempotencyKey }) {
+        state.reads.push(`idempotency:${agencyId}`);
+        return payments.get(keyFor(agencyId, idempotencyKey)) ?? null;
+      },
+      async insertPayment(payment) {
+        const key = keyFor(payment.agencyId, payment.idempotencyKey);
+        if (payments.has(key)) throw Object.assign(new Error("duplicate"), { code: "23505" });
+        const stored = customerTransferStored(payment);
+        payments.set(key, stored);
+        state.writes.push(payment);
+        return stored;
+      },
+      async hasEvidence({ paymentId, reservationId, agencyId }) {
+        state.reads.push(`evidence:${paymentId}`);
+        return evidence.has(evidenceKey(paymentId, reservationId, agencyId));
+      },
+      async insertEvidence({ paymentId, reservationId, agencyId }) {
+        if (state.failEvidence) throw new Error("metadata unavailable");
+        const key = evidenceKey(paymentId, reservationId, agencyId);
+        if (evidence.has(key)) throw Object.assign(new Error("duplicate evidence"), { code: "23505" });
+        evidence.add(key);
+      },
+    },
+    storage: {
+      async upload({ path }) {
+        if (state.failUpload) throw new Error("storage unavailable");
+        if (state.uploads.includes(path)) throw new Error("object already exists");
+        state.uploads.push(path);
+      },
+      async remove(path) {
+        state.removals.push(path);
+      },
+    },
+  });
+  return { service, payments, evidence, state, keyFor, evidenceKey };
+}
+
+function customerTransferInput(input: Partial<Record<string, unknown>> = {}) {
+  return {
+    requestedAgencySlug: "furiver",
+    reservationId: customerDetailReservationId,
+    amount: "9563.40",
+    paidAt: "2026-07-26T12:00:00.000Z",
+    reference: "  TRANSFERENCIA-QA  ",
+    idempotencyKey: "9164b7b3-7f98-4b39-9569-4fbd5041376d",
+    file: validTransferPdf(),
+    ...input,
+  };
+}
+
+test("comprobante de transferencia valida firmas reales, tamaño y no confía en MIME o nombre", async () => {
+  assert.equal((await detectCustomerTransferFile(validTransferPdf()))?.mimeType, "application/pdf");
+  assert.equal((await detectCustomerTransferFile(customerTransferFile([0xff, 0xd8, 0xff, 0x00])))?.mimeType, "image/jpeg");
+  assert.equal((await detectCustomerTransferFile(customerTransferFile([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])))?.mimeType, "image/png");
+  assert.equal((await detectCustomerTransferFile(customerTransferFile([0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x45, 0x42, 0x50])))?.mimeType, "image/webp");
+  assert.equal(await detectCustomerTransferFile(customerTransferFile([0x00, 0x01], 2)), null);
+  assert.equal(await detectCustomerTransferFile(customerTransferFile([], 0)), null);
+  assert.equal(await detectCustomerTransferFile(customerTransferFile([0x25, 0x50, 0x44, 0x46, 0x2d], CUSTOMER_TRANSFER_MAX_FILE_BYTES + 1)), null);
+});
+
+test("cliente autorizado crea un payment pending customer con evidencia privada y receipt seguro", async () => {
+  const fixture = customerTransferFixture();
+  const source = financialReservationRow();
+  const before = JSON.stringify(source.snapshot);
+  const submitted = await fixture.service.submit(customerTransferInput());
+  assert.equal(submitted.status, "submitted");
+  assert.equal(fixture.payments.size, 1);
+  assert.equal(fixture.evidence.size, 1);
+  assert.equal(fixture.state.writes[0].status, "pending");
+  assert.equal(fixture.state.writes[0].method, "transfer");
+  assert.equal(fixture.state.writes[0].source, "customer");
+  assert.equal(fixture.state.writes[0].currency, "MXN");
+  assert.equal(fixture.state.writes[0].submittedByCustomerAccountId, "customer-furiver");
+  assert.equal(fixture.state.writes[0].reference, "TRANSFERENCIA-QA");
+  assert.match(fixture.state.uploads[0], /^agency-furiver\/[0-9a-f-]+\/[0-9a-f-]+\/evidence\.pdf$/i);
+  assert.equal(fixture.state.uploads[0].includes("referencia-privada"), false);
+  assert.equal(JSON.stringify(source.snapshot), before);
+  if (submitted.status === "submitted") {
+    const receipt = JSON.stringify(submitted.payment);
+    assert.equal(receipt.includes("paymentId"), false);
+    assert.equal(receipt.includes("storage"), false);
+    assert.equal(receipt.includes("customerAccount"), false);
+    assert.equal(receipt.includes("idempotency"), false);
+  }
+  const financial = calculateReservationFinancialSummary({
+    snapshot: financialReservationRow(),
+    payments: [...fixture.payments.values()].map(({ amount, currency, status }) => ({ amount, currency, status })),
+  });
+  assert.equal(financial?.balance.remaining, 47817);
+});
+
+test("transferencia de cliente conserva aislamiento y valida campos antes de DB o Storage", async () => {
+  let wrote = false;
+  const unauthenticated = createCustomerTransferEvidenceService({
+    async resolveAccess() { return { status: "unauthenticated" } as const; },
+    repository: {
+      async findAuthorizedReservation() { wrote = true; return null; }, async findByIdempotencyKey() { wrote = true; return null; }, async insertPayment() { wrote = true; throw new Error(); }, async hasEvidence() { wrote = true; return false; }, async insertEvidence() { wrote = true; },
+    },
+    storage: { async upload() { wrote = true; }, async remove() { wrote = true; } },
+  });
+  assert.deepEqual(await unauthenticated.submit(customerTransferInput()), { status: "unauthenticated" });
+  assert.equal(wrote, false);
+
+  const invalid = customerTransferFixture();
+  for (const [field, value] of [["reservationId", "invalid"], ["amount", "0"], ["amount", "1.001"], ["paidAt", "fecha"], ["idempotencyKey", "invalid"]] as const) {
+    const result = await invalid.service.submit(customerTransferInput({ [field]: value }));
+    assert.equal(result.status, "invalid_input");
+  }
+  assert.equal(invalid.payments.size, 0);
+  assert.equal(invalid.state.uploads.length, 0);
+  const fileInvalid = await invalid.service.submit(customerTransferInput({ file: customerTransferFile([1, 2]) }));
+  assert.deepEqual(fileInvalid, { status: "invalid_file" });
+  assert.equal(invalid.payments.size, 0);
+
+  const otherAccount = customerTransferFixture({ accounts: [customerAccount({ customerAccountId: "other-account" })], linked: false });
+  assert.deepEqual(await otherAccount.service.submit(customerTransferInput()), { status: "not_found" });
+  assert.equal(otherAccount.state.writes.length, 0);
+  const crisenix = customerTransferFixture();
+  assert.deepEqual(await crisenix.service.submit(customerTransferInput({ requestedAgencySlug: "crisenix" })), { status: "forbidden" });
+  assert.equal(crisenix.state.writes.length, 0);
+  const suspended = customerTransferFixture({ accounts: [customerAccount({ status: "suspended" })] });
+  assert.deepEqual(await suspended.service.submit(customerTransferInput()), { status: "forbidden" });
+  const administratorWithoutCustomerAccount = customerTransferFixture({ accounts: [] });
+  assert.deepEqual(await administratorWithoutCustomerAccount.service.submit(customerTransferInput()), { status: "forbidden" });
+  assert.equal(administratorWithoutCustomerAccount.state.writes.length, 0);
+});
+
+test("transferencia cliente recupera reintentos y compensa evidencia sin duplicar payment", async () => {
+  const fixture = customerTransferFixture();
+  const input = customerTransferInput();
+  const first = await fixture.service.submit(input);
+  const retry = await fixture.service.submit(input);
+  assert.equal(first.status, "submitted");
+  assert.equal(retry.status, "already_submitted");
+  assert.equal(fixture.payments.size, 1);
+  assert.equal(fixture.evidence.size, 1);
+  assert.equal(fixture.state.uploads.length, 1);
+  assert.deepEqual(await fixture.service.submit(customerTransferInput({ amount: "5000.00" })), { status: "idempotency_conflict" });
+
+  const resumable = customerTransferFixture();
+  resumable.state.failUpload = true;
+  assert.deepEqual(await resumable.service.submit(customerTransferInput()), { status: "storage_error" });
+  assert.equal(resumable.payments.size, 1);
+  resumable.state.failUpload = false;
+  assert.equal((await resumable.service.submit(customerTransferInput())).status, "submitted");
+  assert.equal(resumable.payments.size, 1);
+  assert.equal(resumable.evidence.size, 1);
+
+  const metadataFailure = customerTransferFixture();
+  metadataFailure.state.failEvidence = true;
+  await assert.rejects(metadataFailure.service.submit(customerTransferInput()), (error: unknown) => error instanceof CustomerTransferError && !error.message.includes("metadata"));
+  assert.equal(metadataFailure.payments.size, 1);
+  assert.equal(metadataFailure.state.removals.length, 1);
+
+  const concurrent = customerTransferFixture();
+  const results = await Promise.all([concurrent.service.submit(customerTransferInput()), concurrent.service.submit(customerTransferInput())]);
+  assert.deepEqual(results.map((result) => result.status).sort(), ["already_submitted", "submitted"]);
+  assert.equal(concurrent.payments.size, 1);
+  assert.equal(concurrent.evidence.size, 1);
+  assert.equal(concurrent.state.uploads.length, 1);
+
+  const repository = readFileSync("lib/payments/customer-transfer-repository.ts", "utf8");
+  const storage = readFileSync("lib/payments/customer-transfer-storage.ts", "utf8");
+  assert.match(repository, /submitted_by_customer_account_id: payment\.submittedByCustomerAccountId/);
+  assert.match(repository, /source: "customer"/);
+  assert.match(repository, /status: "pending"/);
+  assert.match(repository, /created_by_user_id: null/);
+  assert.match(repository, /\.eq\("customer_account_id", customerAccountId\)[\s\S]*\.eq\("agency_id", agencyId\)[\s\S]*\.eq\("reservation_id", reservationId\)/);
+  assert.match(repository, /\.from\("payment_evidence"\)[\s\S]*\.eq\("payment_id", paymentId\)[\s\S]*\.eq\("reservation_id", reservationId\)[\s\S]*\.eq\("agency_id", agencyId\)/);
+  assert.match(storage, /upsert: false/);
+  assert.equal(storage.includes("createSignedUrl"), false);
+  assert.equal(storage.includes("getPublicUrl"), false);
 });
 
 test("vista de mis reservaciones usa el repositorio seguro, pagina y no filtra por datos privados", () => {
