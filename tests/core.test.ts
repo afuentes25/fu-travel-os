@@ -155,6 +155,10 @@ import {
   CustomerDocumentAccessError,
 } from "../lib/documents/customer-document-access-core";
 import {
+  AdminContractSettingsError,
+  createAdminContractSettingsService,
+} from "../lib/contracts/admin-contract-settings-core";
+import {
   createCustomerTransferIdempotencyKey,
   localTransferDateTimeToIso,
   localTransferDateTimeValue,
@@ -6766,4 +6770,67 @@ test("detalle cliente muestra documentos disponibles y apertura bajo demanda sin
   assert.match(accessRepository, /\.eq\("id", documentKey\)[\s\S]*\.eq\("reservation_id", reservationId\)[\s\S]*\.eq\("agency_id", agencyId\)[\s\S]*\.eq\("status", "available"\)/);
   assert.match(storage, /CUSTOMER_DOCUMENTS_BUCKET = "reservation-documents"/); assert.match(storage, /createSignedUrl\(path, expiresInSeconds\)/); assert.match(button, /noopener,noreferrer/);
   assert.equal(action.includes("export const"), false); assert.equal(action.includes("storagePath"), false); assert.equal(page.includes("storagePath"), false); assert.equal(page.includes("signedUrl"), false);
+});
+
+test("configuración contractual administrativa aísla la agencia, normaliza perfil y versiona borradores en servidor", async () => {
+  const access = adminAccessFixture({ memberships: [adminMembership()] });
+  const records: { profiles: unknown[]; drafts: unknown[] } = { profiles: [], drafts: [] };
+  const service = createAdminContractSettingsService({
+    resolveAccess: access.resolver.resolve,
+    repository: {
+      async findLegalProfile() { return null; }, async listTemplates() { return []; },
+      async upsertLegalProfile(input) { records.profiles.push(input); },
+      async getMaxVersion() { return records.drafts.length; },
+      async insertDraft(input) { records.drafts.push(input); },
+      async findTemplate() { return null; }, async updateDraft() { return false; },
+    },
+  });
+  const settings = await service.get({ requestedAgencySlug: "furiver" });
+  assert.equal(settings.status, "authorized");
+  if (settings.status === "authorized") assert.deepEqual(settings.settings, { legalProfile: null, templates: [] });
+  const saved = await service.saveLegalProfile({ requestedAgencySlug: "furiver", legalName: "  Agencia Real  ", taxId: " ", legalAddress: "", supportEmail: "atencion@example.com ", supportPhone: " ", jurisdiction: " México " });
+  assert.deepEqual(saved, { status: "saved" });
+  assert.deepEqual(records.profiles[0], { agencyId: "agency-furiver", legalName: "Agencia Real", taxId: null, legalAddress: null, supportEmail: "atencion@example.com", supportPhone: null, jurisdiction: "México" });
+  assert.equal((await service.saveLegalProfile({ requestedAgencySlug: "furiver", legalName: "X", taxId: "", legalAddress: "", supportEmail: "not-an-email", supportPhone: "", jurisdiction: "" })).status, "invalid_input");
+  const draftInput = { requestedAgencySlug: "furiver", title: "  Términos  ", introductoryText: "", termsText: " Condiciones ", paymentPolicyText: "", cancellationPolicyText: "", travelerResponsibilityText: "", jurisdictionText: "", effectiveFrom: "2026-09-01" };
+  assert.deepEqual(await service.createDraft(draftInput), { status: "created", version: 1 });
+  assert.deepEqual(await service.createDraft(draftInput), { status: "created", version: 2 });
+  assert.deepEqual(records.drafts.map((draft) => ({ version: (draft as { version: number }).version, agencyId: (draft as { agencyId: string }).agencyId, createdByUserId: (draft as { createdByUserId: string }).createdByUserId, title: (draft as { title: string }).title })), [{ version: 1, agencyId: "agency-furiver", createdByUserId: "user-verified", title: "Términos" }, { version: 2, agencyId: "agency-furiver", createdByUserId: "user-verified", title: "Términos" }]);
+  assert.deepEqual(await service.createDraft({ ...draftInput, requestedAgencySlug: "crisenix" }), { status: "forbidden" });
+  assert.equal((await service.createDraft({ ...draftInput, title: "<b>HTML</b>" })).status, "invalid_input");
+});
+
+test("solo borradores contractuales pueden editarse y conflictos de versión se reintentan sin sobrescribir", async () => {
+  const access = adminAccessFixture({ memberships: [adminMembership()] });
+  const draft = { templateKey: "d2175825-1085-4854-a4b5-cd2d4e521f5c", version: 1, status: "draft" as const, title: "v1", introductoryText: null, termsText: "texto", paymentPolicyText: null, cancellationPolicyText: null, travelerResponsibilityText: null, jurisdictionText: null, effectiveFrom: null, activatedAt: null, createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" };
+  let updates = 0; let attempts = 0;
+  const service = createAdminContractSettingsService({
+    resolveAccess: access.resolver.resolve,
+    repository: {
+      async findLegalProfile() { return null; }, async listTemplates() { return []; }, async upsertLegalProfile() {},
+      async getMaxVersion() { return 4; },
+      async insertDraft() { attempts += 1; if (attempts === 1) { const error = new Error() as Error & { code: string }; error.code = "23505"; throw error; } },
+      async findTemplate({ templateKey }) { return templateKey === draft.templateKey ? draft : { ...draft, status: "active" as const }; },
+      async updateDraft(input) { updates += 1; return input.templateKey === draft.templateKey; },
+    },
+  });
+  const values = { requestedAgencySlug: "furiver", templateKey: draft.templateKey, title: "actualizado", introductoryText: "", termsText: "texto actualizado", paymentPolicyText: "", cancellationPolicyText: "", travelerResponsibilityText: "", jurisdictionText: "", effectiveFrom: "" };
+  assert.deepEqual(await service.updateDraft(values), { status: "updated" }); assert.equal(updates, 1);
+  assert.deepEqual(await service.updateDraft({ ...values, templateKey: "c2175825-1085-4854-a4b5-cd2d4e521f5c" }), { status: "immutable_version" });
+  const { templateKey: _templateKey, ...newDraftValues } = values;
+  assert.deepEqual(await service.createDraft(newDraftValues), { status: "created", version: 5 }); assert.equal(attempts, 2);
+  const failing = createAdminContractSettingsService({ resolveAccess: access.resolver.resolve, repository: { async findLegalProfile() { throw new Error("SQL"); }, async listTemplates() { return []; }, async upsertLegalProfile() {}, async getMaxVersion() { return 0; }, async insertDraft() {}, async findTemplate() { return null; }, async updateDraft() { return false; } } });
+  await assert.rejects(failing.get({ requestedAgencySlug: "furiver" }), (error: unknown) => error instanceof AdminContractSettingsError && !error.message.includes("SQL"));
+});
+
+test("ruta y acciones de contratos usan comandos server-only sin activar ni exponer IDs", () => {
+  const page = readFileSync("app/admin/[agencySlug]/configuracion/contratos/page.tsx", "utf8");
+  const forms = readFileSync("app/admin/[agencySlug]/configuracion/contratos/contract-settings-forms.tsx", "utf8");
+  const actions = readFileSync("app/admin/[agencySlug]/configuracion/contratos/contract-actions.ts", "utf8");
+  const core = readFileSync("lib/contracts/admin-contract-settings-core.ts", "utf8");
+  const repository = readFileSync("lib/contracts/admin-contract-settings-repository.ts", "utf8");
+  assert.match(page, /Datos legales de la agencia/); assert.match(page, /Plantillas de contrato/); assert.match(forms, /Crear nueva versión/);
+  assert.match(core, /status !== "draft"/); assert.match(core, /for \(let attempt = 0; attempt < 3/); assert.match(repository, /created_by_user_id: input\.createdByUserId/);
+  assert.equal(actions.includes("export const"), false); assert.equal(/export\s+(?!async function|type\b)/.test(actions), false); assert.equal(page.includes("templateKey}"), false);
+  assert.equal(forms.includes(">Activar<"), false); assert.equal(repository.includes("reservation_documents"), false);
 });
