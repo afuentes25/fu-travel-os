@@ -7002,3 +7002,17 @@ test("aceptación contractual exige cuenta primary, verifica bytes privados y gu
   assert.deepEqual(await mismatch.accept({requestedAgencySlug:"furiver",reservationId:customerDetailReservationId}),{status:"document_integrity_error"});
   const migration=readFileSync("supabase/migrations/20260801160000_contract_acceptance.sql","utf8"); assert.match(migration,/for update/i);assert.match(migration,/unique \(contract_instance_id\)/i);assert.match(migration,/to service_role/i); assert.equal(readFileSync("app/cuenta/[agencySlug]/reservaciones/[reservationId]/contract-acceptance-actions.ts","utf8").includes("export const"),false);
 });
+
+test("la migración de constancia vincula acceptance, instancia, reservación y agencia sin tocar documentos históricos", () => {
+  const migration = readFileSync("supabase/migrations/20260801170000_acceptance_certificate_document.sql", "utf8");
+  assert.match(migration, /drop constraint reservation_documents_type_check/);
+  assert.match(migration, /acceptance_certificate/);
+  assert.match(migration, /contract_acceptance_id uuid/);
+  assert.match(migration, /foreign key \(contract_acceptance_id, contract_instance_id, reservation_id, agency_id\)/);
+  assert.match(migration, /on delete restrict/);
+  assert.match(migration, /document_type = 'acceptance_certificate'[\s\S]*contract_acceptance_id is not null/);
+  assert.match(migration, /document_type = 'contract'[\s\S]*contract_acceptance_id is null/);
+  assert.match(migration, /document_type = 'payment_receipt'[\s\S]*contract_acceptance_id is null/);
+  assert.match(migration, /reservation_documents_acceptance_version_unique/);
+  assert.equal(migration.includes("insert into"), false);
+});
