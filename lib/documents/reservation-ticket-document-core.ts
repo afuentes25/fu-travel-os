@@ -21,13 +21,14 @@ export type ReservationTicketTravelerRow = Readonly<{
   firstName: string | null;
   lastName: string | null;
 }>;
-export type ReservationTicketDocumentRow = Readonly<{ status: string; version: number; generatedAt: string }>;
+export type ReservationTicketDocumentRow = Readonly<{ id: string; status: string; version: number; generatedAt: string }>;
 
 export interface ReservationTicketRepository {
   findReservation(input: Readonly<{ agencyId: string; reservationId: string }>): Promise<ReservationSnapshotProjectionSource | null>;
   findTraveler(input: Readonly<{ agencyId: string; reservationId: string; travelerKey: string }>): Promise<ReservationTicketTravelerRow | null>;
   listTickets(input: Readonly<{ agencyId: string; reservationId: string; travelerId: string }>): Promise<readonly ReservationTicketDocumentRow[]>;
-  insertTicket(input: Readonly<{ agencyId: string; reservationId: string; travelerId: string; version: number; storagePath: string; fileSizeBytes: number; contentSha256: string; generatedAt: string; createdByUserId: string }>): Promise<ReservationTicketDocumentRow>;
+  hasActiveBoardingCredential(input: Readonly<{ agencyId: string; reservationId: string; travelerId: string; ticketDocumentId: string }>): Promise<boolean>;
+  finalizeTicketWithCredential(input: Readonly<{ agencyId: string; reservationId: string; travelerId: string; documentId: string; version: number; storagePath: string; fileSizeBytes: number; contentSha256: string; tokenSha256: string; generatedAt: string; issuedByUserId: string }>): Promise<Readonly<{ status: "created" | "existing" | "not_found" | "traveler_incomplete" | "invalid_structure" | "conflict"; version: number | null; generatedAt: string | null }>>;
 }
 
 export class ReservationTicketDocumentError extends Error {
@@ -52,6 +53,7 @@ export function createReservationTicketDocumentService(dependencies: Readonly<{
   repository: ReservationTicketRepository | (() => ReservationTicketRepository);
   storage: ReservationTicketDocumentStorage | (() => ReservationTicketDocumentStorage);
   renderPdf: (data: ReservationTicketPdfData) => Promise<Uint8Array>;
+  createCredentialMaterial: () => Promise<Readonly<{ tokenSha256: string; qrPng: Uint8Array }>>;
   now?: () => Date;
   createDocumentId?: () => string;
 }>) {
@@ -77,7 +79,9 @@ export function createReservationTicketDocumentService(dependencies: Readonly<{
         if (!traveler.firstName || !traveler.lastName || (traveler.travelerType !== "adult" && traveler.travelerType !== "minor")) return { status: "invalid_structure" };
         const ticketRows = await data.listTickets({ ...scope, travelerId: traveler.id });
         const current = available(ticketRows);
-        if (current) return ticketResult(traveler, current, "existing") ?? { status: "invalid_structure" };
+        if (current && await data.hasActiveBoardingCredential({ ...scope, travelerId: traveler.id, ticketDocumentId: current.id })) {
+          return ticketResult(traveler, current, "existing") ?? { status: "invalid_structure" };
+        }
         const reservation = await data.findReservation(scope);
         if (!reservation) return { status: "not_found" };
         const projected = projectReservationSnapshotOperational(reservation);
@@ -86,21 +90,27 @@ export function createReservationTicketDocumentService(dependencies: Readonly<{
         const documentId = (dependencies.createDocumentId ?? crypto.randomUUID)();
         if (!isUuid(documentId)) return { status: "invalid_structure" };
         const generatedAt = (dependencies.now ?? (() => new Date()))().toISOString();
-        const bytes = await dependencies.renderPdf({ agencyName: access.agency.agencyName, version, generatedAt, traveler: { position: traveler.position, firstName: traveler.firstName, lastName: traveler.lastName, travelerType: traveler.travelerType }, reservation: { code: projected.reservationCode, tripName: projected.trip.name, tripCode: projected.trip.code, departureDate: projected.trip.departureDate, boarding: projected.trip.boardingPointName, currency: projected.amounts.currency } });
+        const credential = await dependencies.createCredentialMaterial();
+        if (!/^[0-9a-f]{64}$/.test(credential.tokenSha256) || !credential.qrPng.length) return { status: "invalid_structure" };
+        const bytes = await dependencies.renderPdf({ agencyName: access.agency.agencyName, version, generatedAt, boardingQrPng: credential.qrPng, traveler: { position: traveler.position, firstName: traveler.firstName, lastName: traveler.lastName, travelerType: traveler.travelerType }, reservation: { code: projected.reservationCode, tripName: projected.trip.name, tripCode: projected.trip.code, departureDate: projected.trip.departureDate, boarding: projected.trip.boardingPointName, currency: projected.amounts.currency } });
         if (!isPdf(bytes)) return { status: "invalid_structure" };
         const storagePath = `${scope.agencyId}/${scope.reservationId}/ticket/${traveler.id}/${documentId}/v${version}.pdf`;
         try { await storage().upload({ path: storagePath, bytes, mimeType: "application/pdf" }); }
         catch { return { status: "document_storage_error" };
         }
         try {
-          const row = await data.insertTicket({ ...scope, travelerId: traveler.id, version, storagePath, fileSizeBytes: bytes.length, contentSha256: calculateContractDocumentSha256(bytes), generatedAt, createdByUserId: access.identity.userId });
-          return ticketResult(traveler, row, "generated") ?? { status: "invalid_structure" };
+          const finalized = await data.finalizeTicketWithCredential({ ...scope, travelerId: traveler.id, documentId, version, storagePath, fileSizeBytes: bytes.length, contentSha256: calculateContractDocumentSha256(bytes), tokenSha256: credential.tokenSha256, generatedAt, issuedByUserId: access.identity.userId });
+          if (finalized.status === "created" || finalized.status === "existing") {
+            if (!finalized.version || !finalized.generatedAt) return { status: "invalid_structure" };
+            if (finalized.status === "existing") {
+              try { await storage().remove(storagePath); } catch { /* best-effort cleanup of concurrent render */ }
+            }
+            return ticketResult(traveler, { id: documentId, status: "available", version: finalized.version, generatedAt: finalized.generatedAt }, finalized.status === "created" ? "generated" : "existing") ?? { status: "invalid_structure" };
+          }
+          try { await storage().remove(storagePath); } catch { /* no financial or credential state was created */ }
+          return finalized.status === "traveler_incomplete" ? { status: "traveler_incomplete" } : finalized.status === "not_found" ? { status: "not_found" } : { status: "invalid_structure" };
         } catch (error) {
           try { await storage().remove(storagePath); } catch { /* best-effort compensation */ }
-          if (typeof error === "object" && error !== null && "code" in error && (error as { code?: unknown }).code === "23505") {
-            const concurrent = available(await data.listTickets({ ...scope, travelerId: traveler.id }));
-            if (concurrent) return ticketResult(traveler, concurrent, "existing") ?? { status: "invalid_structure" };
-          }
           throw new ReservationTicketDocumentError();
         }
       } catch (error) {

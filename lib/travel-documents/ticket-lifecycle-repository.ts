@@ -16,8 +16,9 @@ export function createSupabaseTicketLifecycleRepository(
       return Boolean(data);
     },
     async revokeAvailableTickets({ agencyId, reservationId }) {
-      const { error } = await supabase.from("reservation_documents").update({ status: "revoked" })
-        .eq("agency_id", agencyId).eq("reservation_id", reservationId).eq("document_type", "ticket").eq("status", "available");
+      const { error } = await supabase.rpc("revoke_available_tickets_with_credentials_atomic", {
+        target_agency_id: agencyId, target_reservation_id: reservationId, target_traveler_id: null,
+      });
       if (error) throw new Error("No fue posible reconciliar los boletos.");
     },
     async findTravelerByPosition({ agencyId, reservationId, position }) {
@@ -27,8 +28,9 @@ export function createSupabaseTicketLifecycleRepository(
       return data && typeof data.id === "string" ? { id: data.id } : null;
     },
     async revokeAvailableTicketsForTraveler({ agencyId, reservationId, travelerId }) {
-      const { error } = await supabase.from("reservation_documents").update({ status: "revoked" })
-        .eq("agency_id", agencyId).eq("reservation_id", reservationId).eq("reservation_traveler_id", travelerId).eq("document_type", "ticket").eq("status", "available");
+      const { error } = await supabase.rpc("revoke_available_tickets_with_credentials_atomic", {
+        target_agency_id: agencyId, target_reservation_id: reservationId, target_traveler_id: travelerId,
+      });
       if (error) throw new Error("No fue posible reconciliar los boletos.");
     },
   };

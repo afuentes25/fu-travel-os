@@ -7,6 +7,7 @@ import { createReservationTicketDocumentService, type EnsureReservationTravelerT
 import { renderReservationTicketPdf } from "./reservation-ticket-document-pdf";
 import { createSupabaseReservationTicketRepository } from "./reservation-ticket-document-repository";
 import { createSupabaseReservationTicketDocumentStorage } from "./reservation-ticket-document-storage";
+import { createTicketBoardingCredentialMaterial } from "./ticket-boarding-credential";
 
 export * from "./reservation-ticket-document-core";
 
@@ -19,5 +20,6 @@ export async function ensureReservationTravelerTicket(
     repository: () => createSupabaseReservationTicketRepository(),
     storage: () => createSupabaseReservationTicketDocumentStorage(),
     renderPdf: renderReservationTicketPdf,
+    createCredentialMaterial: createTicketBoardingCredentialMaterial,
   }).ensure(input);
 }

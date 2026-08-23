@@ -57,38 +57,38 @@ export function createSupabaseReservationTicketRepository(
     },
     async listTickets({ agencyId, reservationId, travelerId }) {
       const { data, error } = await supabase.from("reservation_documents")
-        .select("status,version,generated_at")
+        .select("id,status,version,generated_at")
         .eq("reservation_id", reservationId).eq("agency_id", agencyId).eq("document_type", "ticket").eq("reservation_traveler_id", travelerId).order("version", { ascending: false });
       if (error) throw failure(error);
-      return (data ?? []).map((row) => ({ status: String(row.status), version: Number(row.version), generatedAt: String(row.generated_at) }));
+      return (data ?? []).map((row) => ({ id: String(row.id), status: String(row.status), version: Number(row.version), generatedAt: String(row.generated_at) }));
     },
     async listReservationTickets({ agencyId, reservationId }) {
       const { data, error } = await supabase.from("reservation_documents")
-        .select("status,version,generated_at,reservation_traveler_id")
+        .select("id,status,version,generated_at,reservation_traveler_id")
         .eq("reservation_id", reservationId).eq("agency_id", agencyId).eq("document_type", "ticket").order("version", { ascending: false });
       if (error) throw failure(error);
-      return (data ?? []).flatMap((row) => typeof row.reservation_traveler_id === "string" ? [{ travelerId: row.reservation_traveler_id, status: String(row.status), version: Number(row.version), generatedAt: String(row.generated_at) }] : []);
+      return (data ?? []).flatMap((row) => typeof row.reservation_traveler_id === "string" ? [{ travelerId: row.reservation_traveler_id, id: String(row.id), status: String(row.status), version: Number(row.version), generatedAt: String(row.generated_at) }] : []);
     },
-    async insertTicket(input) {
-      const { data, error } = await supabase.from("reservation_documents").insert({
-        reservation_id: input.reservationId,
-        agency_id: input.agencyId,
-        document_type: "ticket",
-        status: "available",
-        storage_path: input.storagePath,
-        mime_type: "application/pdf",
-        file_size_bytes: input.fileSizeBytes,
-        version: input.version,
-        payment_id: null,
-        contract_instance_id: null,
-        contract_acceptance_id: null,
-        reservation_traveler_id: input.travelerId,
-        content_sha256: input.contentSha256,
-        generated_at: input.generatedAt,
-        created_by_user_id: input.createdByUserId,
-      }).select("status,version,generated_at").single();
+    async hasActiveBoardingCredential({ agencyId, reservationId, travelerId, ticketDocumentId }) {
+      const { data, error } = await supabase.from("traveler_boarding_credentials").select("id")
+        .eq("agency_id", agencyId).eq("reservation_id", reservationId).eq("reservation_traveler_id", travelerId)
+        .eq("ticket_document_id", ticketDocumentId).eq("status", "active").maybeSingle();
       if (error) throw failure(error);
-      return { status: String(data.status), version: Number(data.version), generatedAt: String(data.generated_at) };
+      return Boolean(data);
+    },
+    async finalizeTicketWithCredential(input) {
+      const { data, error } = await supabase.rpc("finalize_ticket_with_boarding_credential_atomic", {
+        target_agency_id: input.agencyId, target_reservation_id: input.reservationId, target_traveler_id: input.travelerId,
+        target_document_id: input.documentId, target_version: input.version, target_storage_path: input.storagePath,
+        target_file_size_bytes: input.fileSizeBytes, target_content_sha256: input.contentSha256, target_token_sha256: input.tokenSha256,
+        target_generated_at: input.generatedAt, target_issued_by_user_id: input.issuedByUserId,
+      });
+      if (error) throw failure(error);
+      const row = (Array.isArray(data) ? data[0] : data) as Record<string, unknown> | null;
+      if (!row || typeof row.result_status !== "string") throw failure();
+      const status = row.result_status;
+      if (!["created", "existing", "not_found", "traveler_incomplete", "invalid_structure", "conflict"].includes(status)) throw failure();
+      return { status: status as "created" | "existing" | "not_found" | "traveler_incomplete" | "invalid_structure" | "conflict", version: typeof row.ticket_version === "number" ? row.ticket_version : null, generatedAt: typeof row.ticket_generated_at === "string" ? row.ticket_generated_at : null };
     },
   };
 }

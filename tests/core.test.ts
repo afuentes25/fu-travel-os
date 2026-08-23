@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import QRCode from "qrcode";
 import { agencies, departurePoints, travels } from "../data/demo/index";
 import {
   filterCatalog,
@@ -178,6 +179,11 @@ import {
   type AcceptanceCertificateInsert,
 } from "../lib/documents/acceptance-certificate-core";
 import { renderAcceptanceCertificatePdf } from "../lib/documents/acceptance-certificate-pdf";
+import {
+  BOARDING_QR_PREFIX,
+  boardingQrPayload,
+  hashBoardingToken,
+} from "../lib/documents/ticket-boarding-credential-core";
 import { createReservationDocumentEligibilityService, DEFAULT_TICKET_PAYMENT_THRESHOLD_BPS } from "../lib/travel-documents/document-eligibility-core";
 import {
   createReservationVoucherDocumentService,
@@ -7638,7 +7644,9 @@ test("Ticket individual reutiliza la elegibilidad global, versiona por traveler 
   ]);
   const tickets = new Map<string, ReservationTicketDocumentRow[]>();
   const state = { uploads: [] as string[], removals: [] as string[], inserts: [] as unknown[], pdf: null as Parameters<typeof renderReservationTicketPdf>[0] | null };
+  const credentials = new Set<string>();
   const bytes = new TextEncoder().encode("%PDF-1.7 ticket individual");
+  const credentialMaterial = async () => ({ tokenSha256: "a".repeat(64), qrPng: new Uint8Array([137]) });
   const service = createReservationTicketDocumentService({
     resolveAccess: access.resolver.resolve,
     eligibility: async () => ({ status: "authorized", eligibility: { ticket: { eligible: true, blockers: [] } } }),
@@ -7646,10 +7654,12 @@ test("Ticket individual reutiliza la elegibilidad global, versiona por traveler 
       async findReservation() { return financialReservationRow(); },
       async findTraveler({ travelerKey, agencyId, reservationId }) { return agencyId === "agency-furiver" && reservationId === customerDetailReservationId ? travelers.get(travelerKey) ?? null : null; },
       async listTickets({ travelerId }) { return tickets.get(travelerId) ?? []; },
-      async insertTicket(input) { state.inserts.push(input); const row = { status: "available", version: input.version, generatedAt: input.generatedAt }; tickets.set(input.travelerId, [...(tickets.get(input.travelerId) ?? []), row]); return row; },
+      async hasActiveBoardingCredential({ ticketDocumentId }) { return credentials.has(ticketDocumentId); },
+      async finalizeTicketWithCredential(input) { state.inserts.push(input); const rows = tickets.get(input.travelerId) ?? []; const historical = rows.map((row) => { if (row.status === "available") credentials.delete(row.id); return row.status === "available" ? { ...row, status: "superseded" } : row; }); const row = { id: input.documentId, status: "available", version: input.version, generatedAt: input.generatedAt }; tickets.set(input.travelerId, [...historical, row]); credentials.add(row.id); return { status: "created" as const, version: row.version, generatedAt: row.generatedAt }; },
     },
     storage: { async upload({ path }) { state.uploads.push(path); }, async remove(path) { state.removals.push(path); }, async download() { return bytes; } },
     renderPdf: async (data) => { state.pdf = data; return bytes; },
+    createCredentialMaterial: credentialMaterial,
     now: () => new Date(TEST_NOW),
     createDocumentId: () => "94cf2e61-23bd-4d4a-85ca-e1d7a36fc183",
   });
@@ -7668,14 +7678,14 @@ test("Ticket individual reutiliza la elegibilidad global, versiona por traveler 
   const blocked = createReservationTicketDocumentService({
     resolveAccess: access.resolver.resolve,
     eligibility: async () => ({ status: "authorized", eligibility: { ticket: { eligible: false, blockers: ["payment_threshold_not_met"] } } }),
-    repository: { async findReservation() { throw new Error("must not query"); }, async findTraveler() { throw new Error("must not query"); }, async listTickets() { return []; }, async insertTicket() { throw new Error("must not insert"); } },
-    storage: { async upload() { throw new Error("must not upload"); }, async remove() {}, async download() { return bytes; } }, renderPdf: async () => bytes,
+    repository: { async findReservation() { throw new Error("must not query"); }, async findTraveler() { throw new Error("must not query"); }, async listTickets() { return []; }, async hasActiveBoardingCredential() { return false; }, async finalizeTicketWithCredential() { throw new Error("must not insert"); } },
+    storage: { async upload() { throw new Error("must not upload"); }, async remove() {}, async download() { return bytes; } }, renderPdf: async () => bytes, createCredentialMaterial: credentialMaterial,
   });
   assert.deepEqual(await blocked.ensure(request), { status: "not_eligible", blockers: ["payment_threshold_not_met"] });
   const pending = createReservationTicketDocumentService({
     resolveAccess: access.resolver.resolve, eligibility: async () => ({ status: "authorized", eligibility: { ticket: { eligible: true, blockers: [] } } }),
-    repository: { async findReservation() { return financialReservationRow(); }, async findTraveler() { return { ...travelers.get(travelerOne)!, status: "pending" }; }, async listTickets() { return []; }, async insertTicket() { throw new Error("must not insert"); } },
-    storage: { async upload() { throw new Error("must not upload"); }, async remove() {}, async download() { return bytes; } }, renderPdf: async () => bytes,
+    repository: { async findReservation() { return financialReservationRow(); }, async findTraveler() { return { ...travelers.get(travelerOne)!, status: "pending" }; }, async listTickets() { return []; }, async hasActiveBoardingCredential() { return false; }, async finalizeTicketWithCredential() { throw new Error("must not insert"); } },
+    storage: { async upload() { throw new Error("must not upload"); }, async remove() {}, async download() { return bytes; } }, renderPdf: async () => bytes, createCredentialMaterial: credentialMaterial,
   });
   assert.deepEqual(await pending.ensure(request), { status: "traveler_incomplete" });
   assert.deepEqual(await service.ensure({ ...request, requestedAgencySlug: "crisenix" }), { status: "forbidden" });
@@ -7685,10 +7695,11 @@ test("Ticket recupera fallos y el lifecycle revoca todos sólo al perder la eleg
   const access = adminAccessFixture({ memberships: [adminMembership()] });
   const travelerId = "74cf2e61-23bd-4d4a-85ca-e1d7a36fc183";
   const bytes = new TextEncoder().encode("%PDF-1.7 ticket");
+  const credentialMaterial = async () => ({ tokenSha256: "b".repeat(64), qrPng: new Uint8Array([137]) });
   const failure = createReservationTicketDocumentService({
     resolveAccess: access.resolver.resolve, eligibility: async () => ({ status: "authorized", eligibility: { ticket: { eligible: true, blockers: [] } } }),
-    repository: { async findReservation() { return financialReservationRow(); }, async findTraveler() { return { id: travelerId, position: 1, travelerType: "adult", status: "complete", firstName: "Ana", lastName: "Pérez" }; }, async listTickets() { return []; }, async insertTicket() { throw new Error("database private"); } },
-    storage: { async upload() {}, async remove() {}, async download() { return bytes; } }, renderPdf: async () => bytes, createDocumentId: () => "94cf2e61-23bd-4d4a-85ca-e1d7a36fc183",
+    repository: { async findReservation() { return financialReservationRow(); }, async findTraveler() { return { id: travelerId, position: 1, travelerType: "adult", status: "complete", firstName: "Ana", lastName: "Pérez" }; }, async listTickets() { return []; }, async hasActiveBoardingCredential() { return false; }, async finalizeTicketWithCredential() { throw new Error("database private"); } },
+    storage: { async upload() {}, async remove() {}, async download() { return bytes; } }, renderPdf: async () => bytes, createCredentialMaterial: credentialMaterial, createDocumentId: () => "94cf2e61-23bd-4d4a-85ca-e1d7a36fc183",
   });
   await assert.rejects(failure.ensure({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId, travelerKey: travelerId }), (error: unknown) => error instanceof ReservationTicketDocumentError && !error.message.includes("database"));
   let revoked = 0;
@@ -7696,10 +7707,54 @@ test("Ticket recupera fallos y el lifecycle revoca todos sólo al perder la eleg
   assert.equal(await lifecycle.reconcile({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId }), "revoked"); assert.equal(revoked, 1);
   const retained = createReservationTicketLifecycleService({ resolveAccess: access.resolver.resolve, eligibility: async () => ({ status: "authorized", eligibility: { ticket: { eligible: true } } }), repository: { async hasAvailableTickets() { return true; }, async revokeAvailableTickets() { throw new Error("must not revoke"); }, async findTravelerByPosition() { return null; }, async revokeAvailableTicketsForTraveler() {} } });
   assert.equal(await retained.reconcile({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId }), "not_applicable");
-  const pdf = await renderReservationTicketPdf({ agencyName: "Furiver", version: 1, generatedAt: TEST_NOW, traveler: { position: 1, firstName: "María", lastName: "Pérez", travelerType: "adult" }, reservation: { code: "FT-004-260801-D01B4E", tripName: "Viaje", tripCode: "FT", departureDate: TEST_NOW, boarding: "Terminal", currency: "MXN" } });
+  const tinyPng = Uint8Array.from(Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+wwf7WQAAAABJRU5ErkJggg==", "base64"));
+  const pdf = await renderReservationTicketPdf({ agencyName: "Furiver", version: 1, generatedAt: TEST_NOW, boardingQrPng: tinyPng, traveler: { position: 1, firstName: "María", lastName: "Pérez", travelerType: "adult" }, reservation: { code: "FT-004-260801-D01B4E", tripName: "Viaje", tripCode: "FT", departureDate: TEST_NOW, boarding: "Terminal", currency: "MXN" } });
   assert.equal(new TextDecoder().decode(pdf.slice(0, 4)), "%PDF");
   const repository = readFileSync("lib/documents/reservation-ticket-document-repository.ts", "utf8"); const lifecycleRepository = readFileSync("lib/travel-documents/ticket-lifecycle-repository.ts", "utf8"); const action = readFileSync("app/admin/[agencySlug]/reservaciones/[reservationId]/ticket-actions.ts", "utf8");
-  assert.match(repository, /reservation_traveler_id: input\.travelerId/); assert.match(repository, /payment_id: null/); assert.match(repository, /contract_instance_id: null/); assert.match(repository, /contract_acceptance_id: null/); assert.match(lifecycleRepository, /document_type", "ticket"/); assert.match(action, /ensureReservationTravelerTicket/); assert.equal(/export\s+(?!async function|type\b)/.test(action), false);
+  assert.match(repository, /finalize_ticket_with_boarding_credential_atomic/); assert.match(repository, /target_traveler_id: input\.travelerId/); assert.match(repository, /target_content_sha256: input\.contentSha256/); assert.match(repository, /target_token_sha256: input\.tokenSha256/); assert.match(lifecycleRepository, /revoke_available_tickets_with_credentials_atomic/); assert.match(action, /ensureReservationTravelerTicket/); assert.equal(/export\s+(?!async function|type\b)/.test(action), false);
+});
+
+test("credencial de abordaje emite un QR opaco, finaliza Ticket y credencial de forma atómica y conserva el estado operativo", () => {
+  const migration = readFileSync("supabase/migrations/20260801220000_atomic_ticket_boarding_credential.sql", "utf8");
+  const issuer = readFileSync("lib/documents/ticket-boarding-credential.ts", "utf8");
+  const core = readFileSync("lib/documents/reservation-ticket-document-core.ts", "utf8");
+  const renderer = readFileSync("lib/documents/reservation-ticket-document-pdf.ts", "utf8");
+  const lifecycleRepository = readFileSync("lib/travel-documents/ticket-lifecycle-repository.ts", "utf8");
+  const adminPage = readFileSync("app/admin/[agencySlug]/reservaciones/[reservationId]/page.tsx", "utf8");
+  const rawToken = "a-opaque-token-that-is-never-an-id";
+  const payload = boardingQrPayload(rawToken);
+  assert.equal(payload, `${BOARDING_QR_PREFIX}${rawToken}`);
+  assert.equal(hashBoardingToken(rawToken).length, 64);
+  assert.match(hashBoardingToken(rawToken), /^[0-9a-f]{64}$/);
+  assert.equal(payload.includes("74cf2e61-23bd-4d4a-85ca-e1d7a36fc183"), false);
+  assert.match(issuer, /randomBytes\(32\)\.toString\("base64url"\)/);
+  assert.match(issuer, /QRCode\.toDataURL\(boardingQrPayload\(rawToken\)/);
+  assert.doesNotMatch(migration, /raw_token|token_raw|token\s+text/i);
+  assert.match(migration, /security definer set search_path = public, pg_temp/i);
+  assert.match(migration, /from public\.reservation_travelers[\s\S]*for update/i);
+  assert.match(migration, /insert into public\.reservation_documents[\s\S]*insert into public\.traveler_boarding_credentials[\s\S]*insert into public\.traveler_boarding_state/i);
+  assert.match(migration, /on conflict \(reservation_traveler_id\) do nothing/i);
+  assert.match(migration, /revoke all on function public\.finalize_ticket_with_boarding_credential_atomic[\s\S]*from public, anon, authenticated/i);
+  assert.match(migration, /grant execute on function public\.finalize_ticket_with_boarding_credential_atomic[\s\S]*to service_role/i);
+  assert.match(migration, /set status = 'superseded'/i);
+  assert.match(migration, /set status = 'revoked', revoked_at = issued_time/i);
+  assert.match(core, /hasActiveBoardingCredential/);
+  assert.match(core, /finalizeTicketWithCredential/);
+  assert.match(core, /calculateContractDocumentSha256\(bytes\)/);
+  assert.match(renderer, /embedPng\(data\.boardingQrPng\)/);
+  assert.match(renderer, /Código de abordaje/);
+  assert.match(renderer, /no sustituye los procedimientos de check-in o abordaje/i);
+  assert.match(lifecycleRepository, /revoke_available_tickets_with_credentials_atomic/);
+  assert.match(adminPage, /Boleto sin credencial de abordaje/);
+  assert.match(adminPage, /Credencial de abordaje: Activa/);
+});
+
+test("payload de abordaje genera PNG QR sin incorporar identificadores internos", async () => {
+  const rawToken = "hXU3s9YQq8aYlV1Wq7E1F6WqRk8cB2zM-opaque";
+  const dataUrl = await QRCode.toDataURL(boardingQrPayload(rawToken), { type: "image/png", errorCorrectionLevel: "M", margin: 1, width: 240 });
+  assert.match(dataUrl, /^data:image\/png;base64,/);
+  assert.equal(boardingQrPayload(rawToken).includes("agency-furiver"), false);
+  assert.equal(boardingQrPayload(rawToken).includes(customerDetailReservationId), false);
 });
 
 test("contexto cliente y cambios de nombre distinguen tickets sin exponer IDs ni revocar otros viajeros", async () => {

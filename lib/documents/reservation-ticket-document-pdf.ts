@@ -4,6 +4,7 @@ export type ReservationTicketPdfData = Readonly<{
   agencyName: string;
   version: number;
   generatedAt: string;
+  boardingQrPng: Uint8Array;
   traveler: Readonly<{ position: number; firstName: string; lastName: string; travelerType: "adult" | "minor" }>;
   reservation: Readonly<{ code: string; tripName: string | null; tripCode: string | null; departureDate: string; boarding: string; currency: string }>;
 }>;
@@ -12,7 +13,7 @@ function utcDate(value: string) {
   return `${new Intl.DateTimeFormat("es-MX", { timeZone: "UTC", day: "numeric", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(value))} UTC`;
 }
 
-/** Compact, QR-free operational ticket. It receives only server-projected passenger data. */
+/** Compact operational ticket. The QR image encodes an opaque, memory-only credential secret. */
 export async function renderReservationTicketPdf(data: ReservationTicketPdfData): Promise<Uint8Array> {
   const pdf = await PDFDocument.create();
   const regular = await pdf.embedFont(StandardFonts.Helvetica);
@@ -42,6 +43,14 @@ export async function renderReservationTicketPdf(data: ReservationTicketPdfData)
   line(`Salida: ${utcDate(data.reservation.departureDate)}`);
   line(`Punto de abordaje: ${data.reservation.boarding}`);
   line(`Moneda contractual: ${data.reservation.currency}`);
+  section("Código de abordaje");
+  const qr = await pdf.embedPng(data.boardingQrPng);
+  const qrSize = 132;
+  page.drawImage(qr, { x: left, y: y - qrSize, width: qrSize, height: qrSize });
+  page.drawText("Presenta este código al personal de la agencia.", { x: left + qrSize + 18, y: y - 24, size: 10, font: regular, color: rgb(0.09, 0.14, 0.13) });
+  page.drawText("Este código identifica la credencial vigente del pasajero.", { x: left + qrSize + 18, y: y - 42, size: 9, font: regular, color: rgb(0.36, 0.41, 0.39) });
+  page.drawText("Su validación se realiza durante el proceso de check-in y abordaje.", { x: left + qrSize + 18, y: y - 57, size: 9, font: regular, color: rgb(0.36, 0.41, 0.39) });
+  y -= qrSize + 14;
   section("Emisión");
   line("Condición de emisión: cumplida", 11, true);
   y -= 6;
