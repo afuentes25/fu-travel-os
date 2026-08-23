@@ -179,6 +179,13 @@ import {
 import { renderAcceptanceCertificatePdf } from "../lib/documents/acceptance-certificate-pdf";
 import { createReservationDocumentEligibilityService, DEFAULT_TICKET_PAYMENT_THRESHOLD_BPS } from "../lib/travel-documents/document-eligibility-core";
 import {
+  createReservationVoucherDocumentService,
+  ReservationVoucherDocumentError,
+  type VoucherDocumentRow,
+} from "../lib/documents/reservation-voucher-document-core";
+import { createVoucherLifecycleService } from "../lib/travel-documents/voucher-lifecycle-core";
+import { renderReservationVoucherPdf } from "../lib/documents/reservation-voucher-document-pdf";
+import {
   createCustomerTransferIdempotencyKey,
   localTransferDateTimeToIso,
   localTransferDateTimeValue,
@@ -7115,4 +7122,94 @@ test("migración de tickets exige traveler tenant-safe y conserva voucher/docume
   assert.match(migration, /reservation_documents_ticket_traveler_version_unique/);
   assert.equal(migration.includes("create policy"), false);
   assert.equal(migration.includes("update public.reservation_snapshots"), false);
+});
+
+test("Voucher reutiliza la elegibilidad, genera V1 privada con SHA y reemite V2 sin datos sensibles", async () => {
+  const access = adminAccessFixture({ memberships: [adminMembership()] });
+  const travelers = deriveTravelerSlotStructure(financialReservationRow())!.map((slot, index) => ({
+    position: slot.position,
+    travelerType: slot.travelerType,
+    status: "complete",
+    firstName: index ? "Luis" : "Ana",
+    lastName: index ? "García" : "Pérez",
+  }));
+  const rows: VoucherDocumentRow[] = [];
+  const state = { uploads: [] as string[], removals: [] as string[], inserted: [] as unknown[], pdf: null as Parameters<typeof renderReservationVoucherPdf>[0] | null };
+  const bytes = new TextEncoder().encode("%PDF-1.7 voucher privado");
+  const service = createReservationVoucherDocumentService({
+    resolveAccess: access.resolver.resolve,
+    eligibility: async () => ({ status: "authorized", eligibility: { voucher: { eligible: true, blockers: [] } } }),
+    repository: {
+      async findReservation() { return financialReservationRow(); },
+      async listTravelers() { return travelers; },
+      async listVouchers() { return rows; },
+      async insertVoucher(input) { state.inserted.push(input); const row = { status: "available", version: input.version, generatedAt: input.generatedAt }; rows.push(row); return row; },
+    },
+    storage: { async upload({ path }) { state.uploads.push(path); }, async remove(path) { state.removals.push(path); }, async download() { return bytes; } },
+    renderPdf: async (data) => { state.pdf = data; return bytes; },
+    now: () => new Date(TEST_NOW),
+    createDocumentId: () => "64cf2e61-23bd-4d4a-85ca-e1d7a36fc183",
+  });
+  const input = { requestedAgencySlug: "furiver", reservationId: customerDetailReservationId };
+  assert.deepEqual(await service.ensure(input), { status: "generated", voucher: { version: 1, generatedAt: TEST_NOW } });
+  assert.match(state.uploads[0], /^agency-furiver\/[0-9a-f-]+\/voucher\/[0-9a-f-]+\/v1\.pdf$/i);
+  const inserted = state.inserted[0] as Record<string, unknown>;
+  assert.equal(inserted.contentSha256, calculateContractDocumentSha256(bytes));
+  assert.equal(JSON.stringify(inserted).includes("paymentId"), false);
+  assert.equal(state.pdf?.travelers[0].firstName, "Ana");
+  assert.equal(JSON.stringify(state.pdf).includes("birthDate"), false);
+  assert.equal((await service.ensure(input)).status, "existing");
+  rows[0] = { ...rows[0], status: "revoked" };
+  assert.deepEqual(await service.ensure(input), { status: "generated", voucher: { version: 2, generatedAt: TEST_NOW } });
+  assert.equal(state.uploads.length, 2);
+
+  const blocked = createReservationVoucherDocumentService({
+    resolveAccess: access.resolver.resolve,
+    eligibility: async () => ({ status: "authorized", eligibility: { voucher: { eligible: false, blockers: ["deposit_not_covered"] } } }),
+    repository: { async findReservation() { throw new Error("must not query"); }, async listTravelers() { return []; }, async listVouchers() { return []; }, async insertVoucher() { throw new Error("must not insert"); } },
+    storage: { async upload() { throw new Error("must not upload"); }, async remove() {}, async download() { return new Uint8Array(); } },
+    renderPdf: async () => bytes,
+  });
+  assert.deepEqual(await blocked.ensure(input), { status: "not_eligible", blockers: ["deposit_not_covered"] });
+  await assert.rejects(createReservationVoucherDocumentService({
+    resolveAccess: access.resolver.resolve,
+    eligibility: async () => ({ status: "authorized", eligibility: { voucher: { eligible: true, blockers: [] } } }),
+    repository: { async findReservation() { return financialReservationRow(); }, async listTravelers() { return travelers; }, async listVouchers() { return []; }, async insertVoucher() { throw new Error("DB secret"); } },
+    storage: { async upload() {}, async remove(path) { state.removals.push(path); }, async download() { return bytes; } },
+    renderPdf: async () => bytes,
+    createDocumentId: () => "64cf2e61-23bd-4d4a-85ca-e1d7a36fc183",
+  }).ensure(input), (error: unknown) => error instanceof ReservationVoucherDocumentError && !error.message.includes("DB"));
+  assert.ok(state.removals.length > 0);
+});
+
+test("ciclo de vida del Voucher revoca sólo tras perder elegibilidad y no revierte el ledger", async () => {
+  const access = adminAccessFixture({ memberships: [adminMembership()] });
+  let revoked = 0;
+  const ineligible = createVoucherLifecycleService({
+    resolveAccess: access.resolver.resolve,
+    eligibility: async () => ({ status: "authorized", eligibility: { voucher: { eligible: false } } }),
+    repository: { async hasAvailableVoucher() { return true; }, async revokeAvailableVoucher() { revoked += 1; } },
+  });
+  assert.equal(await ineligible.reconcile({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId }), "revoked");
+  assert.equal(revoked, 1);
+  const stillEligible = createVoucherLifecycleService({
+    resolveAccess: access.resolver.resolve,
+    eligibility: async () => ({ status: "authorized", eligibility: { voucher: { eligible: true } } }),
+    repository: { async hasAvailableVoucher() { return true; }, async revokeAvailableVoucher() { throw new Error("must not revoke"); } },
+  });
+  assert.equal(await stillEligible.reconcile({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId }), "not_applicable");
+  const uncertain = createVoucherLifecycleService({
+    resolveAccess: access.resolver.resolve,
+    eligibility: async () => { throw new Error("temporary read failure"); },
+    repository: { async hasAvailableVoucher() { return true; }, async revokeAvailableVoucher() { throw new Error("must not revoke"); } },
+  });
+  assert.equal(await uncertain.reconcile({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId }), "document_error");
+  const repository = readFileSync("lib/documents/reservation-voucher-document-repository.ts", "utf8");
+  const lifecycleRepository = readFileSync("lib/travel-documents/voucher-lifecycle-repository.ts", "utf8");
+  const action = readFileSync("app/admin/[agencySlug]/reservaciones/[reservationId]/voucher-actions.ts", "utf8");
+  const page = readFileSync("app/admin/[agencySlug]/reservaciones/[reservationId]/page.tsx", "utf8");
+  const control = readFileSync("app/admin/[agencySlug]/reservaciones/[reservationId]/voucher-control.tsx", "utf8");
+  assert.match(repository, /payment_id\s*:\s*null/); assert.match(repository, /contract_instance_id\s*:\s*null/); assert.match(repository, /contract_acceptance_id\s*:\s*null/); assert.match(repository, /reservation_traveler_id\s*:\s*null/);
+  assert.match(lifecycleRepository, /status\s*:\s*"revoked"/); assert.match(action, /ensureReservationVoucherDocument/); assert.equal(/export\s+(?!async function|type\b)/.test(action), false);
+  assert.match(control, /Generar Voucher/); assert.match(page, /reconcileReservationVoucherLifecycle/); assert.match(page, /Voucher disponible/);
 });

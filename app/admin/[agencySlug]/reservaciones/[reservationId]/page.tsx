@@ -18,7 +18,10 @@ import { PaymentStatusControls } from "./payment-status-controls";
 import { PaymentReceiptControl } from "./payment-receipt-control";
 import { ContractPreparationControl } from "./contract-preparation-control";
 import { ContractDocumentControl } from "./contract-document-control";
+import { VoucherControl } from "./voucher-control";
 import { createSupabaseReservationContractDocumentRepository } from "@/lib/documents/reservation-contract-document-repository";
+import { createSupabaseReservationVoucherRepository } from "@/lib/documents/reservation-voucher-document-repository";
+import { reconcileReservationVoucherLifecycle } from "@/lib/travel-documents/voucher-lifecycle";
 import type { ReservationContractDocumentRow, ReservationContractInstanceRow } from "@/lib/documents/reservation-contract-document-core";
 import styles from "../../../admin.module.css";
 import detailStyles from "./admin-detail.module.css";
@@ -137,6 +140,26 @@ export default async function AdminReservationDetailPage({
   const financialSummary = paymentHistory.status === "authorized" ? paymentHistory.financialSummary : null;
   let documentEligibility: Awaited<ReturnType<typeof getReservationDocumentEligibility>> | null = null;
   try { documentEligibility = await getReservationDocumentEligibility({ requestedAgencySlug: access.agency.agencySlug, reservationId }); } catch { documentEligibility = null; }
+  let voucherAvailable = false;
+  let voucherRevoked = false;
+  let voucherNextVersion = 1;
+  let voucherReconciliationError = false;
+  try {
+    const vouchers = await createSupabaseReservationVoucherRepository().listVouchers({ agencyId: access.agency.agencyId, reservationId: reservation.id });
+    voucherAvailable = vouchers.some((voucher) => voucher.status === "available");
+    voucherRevoked = !voucherAvailable && vouchers.some((voucher) => voucher.status === "revoked" || voucher.status === "superseded");
+    voucherNextVersion = Math.max(0, ...vouchers.map((voucher) => voucher.version)) + 1;
+    if (voucherAvailable && documentEligibility?.status === "authorized" && !documentEligibility.eligibility.voucher.eligible) {
+      const lifecycle = await reconcileReservationVoucherLifecycle({ requestedAgencySlug: access.agency.agencySlug, reservationId: reservation.id });
+      if (lifecycle === "revoked") {
+        voucherAvailable = false;
+        voucherRevoked = true;
+        voucherNextVersion = Math.max(voucherNextVersion, 2);
+      } else if (lifecycle === "document_error") {
+        voucherReconciliationError = true;
+      }
+    }
+  } catch { voucherAvailable = false; voucherReconciliationError = true; }
   let contractInstance: ReservationContractInstanceRow | null = null;
   let contractDocument: ReservationContractDocumentRow | null = null;
   try {
@@ -179,7 +202,7 @@ export default async function AdminReservationDetailPage({
           </article>)}</div>}
         </section>
         <section className={detailStyles.detailCard} aria-labelledby="detail-contract-title"><h2 id="detail-contract-title">Contrato</h2>{contractInstance && (contractInstance.status === "prepared" || contractInstance.status === "accepted") ? <ContractDocumentControl agencySlug={access.agency.agencySlug} reservationId={reservation.id} templateVersion={contractInstance.contractTemplateVersion} contractStatus={contractInstance.status} hasDocument={contractDocument?.status === "available" && contractDocument.version === 1} /> : <ContractPreparationControl agencySlug={access.agency.agencySlug} reservationId={reservation.id} />}</section>
-        <section className={detailStyles.detailCard} aria-labelledby="detail-travel-documents-title"><h2 id="detail-travel-documents-title">Documentos de viaje</h2>{documentEligibility?.status === "authorized" ? <div>{(["voucher", "ticket"] as const).map((type) => { const item = documentEligibility.eligibility[type]; const ticket = documentEligibility.eligibility.ticket; return <article key={type}><h3>{type === "voucher" ? "Voucher" : "Boleto"}</h3><p role="status">{item.eligible ? "Listo para generar" : "Pendiente"}</p>{type === "ticket" && <p>Pago confirmado: {ticket.confirmedPaymentPercent === null ? "No disponible" : `${ticket.confirmedPaymentPercent}%`} · Requerido: {ticket.requiredPaymentPercent}%</p>}{item.blockers.length > 0 && <ul>{item.blockers.map((blocker) => <li key={blocker}>{documentBlockerLabels[blocker]}</li>)}</ul>}</article>; })}</div> : <p className={detailStyles.unavailable}>No fue posible calcular la elegibilidad de documentos de viaje.</p>}</section>
+        <section className={detailStyles.detailCard} aria-labelledby="detail-travel-documents-title"><h2 id="detail-travel-documents-title">Documentos de viaje</h2>{documentEligibility?.status === "authorized" ? <div><article><h3>Voucher</h3>{voucherReconciliationError ? <p className={detailStyles.unavailable}>No fue posible reconciliar el estado del Voucher. Intenta nuevamente.</p> : voucherAvailable ? <p role="status">Voucher disponible</p> : documentEligibility.eligibility.voucher.eligible ? <><p role="status">{voucherRevoked ? "Listo para reemitir" : "Listo para generar"}</p><VoucherControl agencySlug={access.agency.agencySlug} reservationId={reservation.id} revoked={voucherRevoked} nextVersion={voucherNextVersion}/></> : <><p role="status">Pendiente</p><ul>{documentEligibility.eligibility.voucher.blockers.map((blocker) => <li key={blocker}>{documentBlockerLabels[blocker]}</li>)}</ul></>}</article><article><h3>Boleto</h3><p role="status">{documentEligibility.eligibility.ticket.eligible ? "Listo para generar" : "Pendiente"}</p><p>Pago confirmado: {documentEligibility.eligibility.ticket.confirmedPaymentPercent === null ? "No disponible" : `${documentEligibility.eligibility.ticket.confirmedPaymentPercent}%`} · Requerido: {documentEligibility.eligibility.ticket.requiredPaymentPercent}%</p>{documentEligibility.eligibility.ticket.blockers.length > 0 && <ul>{documentEligibility.eligibility.ticket.blockers.map((blocker) => <li key={blocker}>{documentBlockerLabels[blocker]}</li>)}</ul>}</article></div> : <p className={detailStyles.unavailable}>No fue posible calcular la elegibilidad de documentos de viaje.</p>}</section>
       </section>
     </AdminShell>
   );
