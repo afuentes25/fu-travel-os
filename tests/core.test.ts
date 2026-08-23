@@ -7099,3 +7099,20 @@ test("elegibilidad de voucher y boleto reutiliza ledger, slots, contrato aceptad
   const page = readFileSync("app/admin/[agencySlug]/reservaciones/[reservationId]/page.tsx", "utf8");
   assert.match(page, /Documentos de viaje/); assert.match(page, /Pago confirmado:/); assert.match(page, /Listo para generar/); assert.equal(page.includes("Generar voucher"), false);
 });
+
+test("migración de tickets exige traveler tenant-safe y conserva voucher/documentos generales a nivel reservación", () => {
+  const migration = readFileSync("supabase/migrations/20260801180000_ticket_traveler_provenance.sql", "utf8");
+  assert.match(migration, /add column reservation_traveler_id uuid/i);
+  assert.match(migration, /unique \(id, reservation_id, agency_id\)/i);
+  assert.match(migration, /foreign key \(reservation_traveler_id, reservation_id, agency_id\)/i);
+  assert.match(migration, /references public\.reservation_travelers \(id, reservation_id, agency_id\)[\s\S]*on delete restrict/i);
+  assert.match(migration, /drop constraint reservation_documents_acceptance_consistency_check/i);
+  assert.match(migration, /document_type = 'ticket'[\s\S]*reservation_traveler_id is not null/i);
+  assert.match(migration, /document_type = 'voucher'[\s\S]*reservation_traveler_id is null/i);
+  assert.match(migration, /document_type = 'contract'[\s\S]*reservation_traveler_id is null/i);
+  assert.match(migration, /document_type = 'payment_receipt'[\s\S]*reservation_traveler_id is null/i);
+  assert.match(migration, /document_type = 'acceptance_certificate'[\s\S]*reservation_traveler_id is null/i);
+  assert.match(migration, /reservation_documents_ticket_traveler_version_unique/);
+  assert.equal(migration.includes("create policy"), false);
+  assert.equal(migration.includes("update public.reservation_snapshots"), false);
+});
