@@ -164,6 +164,13 @@ import {
 } from "../lib/contracts/admin-contract-activation-core";
 import { createReservationContractService } from "../lib/contracts/reservation-contract-core";
 import {
+  createReservationContractDocumentService,
+  ReservationContractDocumentError,
+  type ReservationContractDocumentInsert,
+  type ReservationContractDocumentRow,
+} from "../lib/documents/reservation-contract-document-core";
+import { renderReservationContractPdf } from "../lib/documents/reservation-contract-document-pdf";
+import {
   createCustomerTransferIdempotencyKey,
   localTransferDateTimeToIso,
   localTransferDateTimeValue,
@@ -6908,4 +6915,58 @@ test("migración de instancia contractual aplica FKs, inmutabilidad y RLS sin to
   const page = readFileSync("app/admin/[agencySlug]/reservaciones/[reservationId]/page.tsx", "utf8");
   const control = readFileSync("app/admin/[agencySlug]/reservaciones/[reservationId]/contract-preparation-control.tsx", "utf8");
   assert.match(migration, /unique \(id, agency_id\)/); assert.match(migration, /where status in \('prepared', 'accepted'\)/); assert.match(migration, /context is immutable/); assert.match(migration, /has_customer_reservation_access/); assert.match(repo, /legal_profile_snapshot:legal/); assert.match(repo, /contract_content_snapshot/); assert.match(page, /ContractPreparationControl/); assert.match(control, /Contrato aún no preparado/); assert.equal(migration.includes("reservation_documents"), false);
+});
+
+const contractInstanceDocumentId = "14cf2e61-23bd-4d4a-85ca-e1d7a36fc183";
+const contractInstanceId = "34cf2e61-23bd-4d4a-85ca-e1d7a36fc183";
+
+function contractDocumentFixture(input: Readonly<{ status?: string; failStorage?: boolean; failInsert?: boolean; mismatch?: boolean }> = {}) {
+  const documents = new Map<string, ReservationContractDocumentRow>();
+  const state = { inserts: [] as ReservationContractDocumentInsert[], uploads: [] as string[], removals: [] as string[], pdfs: [] as Parameters<typeof renderReservationContractPdf>[0][] };
+  const service = createReservationContractDocumentService({
+    resolveAccess: adminAccessFixture({ memberships: [adminMembership()] }).resolver.resolve,
+    now: () => new Date(TEST_NOW), createDocumentId: () => contractInstanceDocumentId,
+    renderPdf: async (data) => { state.pdfs.push(data); return new TextEncoder().encode("%PDF-1.7 frozen contract"); },
+    repository: {
+      async findReservation({ agencyId }) { return agencyId === "agency-furiver" ? financialReservationRow() : null; },
+      async findLatestInstance() { return { id: contractInstanceId, status: input.status ?? "prepared", contractTemplateVersion: 2, preparedAt: TEST_NOW, legalProfileSnapshot: { legalName: "Agencia Congelada", taxId: null, legalAddress: null, supportEmail: null, supportPhone: null, jurisdiction: "México" }, contractContentSnapshot: { templateVersion: input.mismatch ? 3 : 2, title: "Contrato congelado", introductoryText: "Introducción", termsText: "Términos congelados.", paymentPolicyText: "Política de pagos", cancellationPolicyText: null, travelerResponsibilityText: null, jurisdictionText: "Jurisdicción congelada", effectiveFrom: null } }; },
+      async findExistingDocument({ contractInstanceId: instanceId }) { return documents.get(instanceId) ?? null; },
+      async insertDocument(document) { state.inserts.push(document); if (input.failInsert) throw new Error("database unavailable"); if (documents.has(document.contractInstanceId)) throw Object.assign(new Error("duplicate"), { code: "23505" }); const row = { status: document.status, version: document.version, generatedAt: document.generatedAt } as const; documents.set(document.contractInstanceId, row); return row; },
+    },
+    storage: { async upload({ path }) { if (input.failStorage) throw new Error("storage unavailable"); state.uploads.push(path); }, async remove(path) { state.removals.push(path); } },
+  });
+  return { service, documents, state };
+}
+
+test("contrato PDF usa exclusivamente la instancia congelada y registra metadata privada idempotente", async () => {
+  const fixture = contractDocumentFixture();
+  const input = { requestedAgencySlug: "furiver", reservationId: customerDetailReservationId };
+  const first = await fixture.service.ensure(input);
+  assert.deepEqual(first.status === "generated" ? first.document : null, { documentType: "contract", documentVersion: 1, contractTemplateVersion: 2, contractStatus: "prepared", generatedAt: TEST_NOW });
+  assert.equal(fixture.state.inserts.length, 1); assert.equal(fixture.state.inserts[0].paymentId, null); assert.equal(fixture.state.inserts[0].contractInstanceId, contractInstanceId);
+  assert.match(fixture.state.inserts[0].storagePath, /^agency-furiver\/[0-9a-f-]+\/contract\/[0-9a-f-]+\/v1\.pdf$/i);
+  assert.equal(fixture.state.pdfs[0].agency.legalName, "Agencia Congelada"); assert.equal(fixture.state.pdfs[0].contract.title, "Contrato congelado"); assert.equal(fixture.state.pdfs[0].reservation.total, 47817); assert.equal("remainingAmount" in fixture.state.pdfs[0].reservation, false);
+  assert.equal(JSON.stringify(first).includes("contractInstanceId"), false); assert.equal(JSON.stringify(first).includes("storagePath"), false);
+  assert.equal((await fixture.service.ensure(input)).status, "existing"); assert.equal(fixture.state.uploads.length, 1);
+});
+
+test("contrato PDF exige admin e instancia vigente, valida snapshots y recupera errores sin mutar contratos", async () => {
+  let queried = false;
+  const unauthenticated = createReservationContractDocumentService({ async resolveAccess() { return { status: "unauthenticated" } as const; }, repository: { async findReservation() { queried = true; return null; }, async findLatestInstance() { queried = true; return null; }, async findExistingDocument() { queried = true; return null; }, async insertDocument() { queried = true; throw new Error(); } }, storage: { async upload() { queried = true; }, async remove() { queried = true; } }, renderPdf: async () => new TextEncoder().encode("%PDF") });
+  assert.deepEqual(await unauthenticated.ensure({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId }), { status: "unauthenticated" }); assert.equal(queried, false);
+  assert.deepEqual(await contractDocumentFixture({ status: "superseded" }).service.ensure({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId }), { status: "contract_unavailable" });
+  assert.deepEqual(await contractDocumentFixture({ status: "revoked" }).service.ensure({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId }), { status: "contract_unavailable" });
+  assert.deepEqual(await contractDocumentFixture({ mismatch: true }).service.ensure({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId }), { status: "invalid_structure" });
+  assert.deepEqual(await contractDocumentFixture().service.ensure({ requestedAgencySlug: "crisenix", reservationId: customerDetailReservationId }), { status: "forbidden" });
+  assert.deepEqual(await contractDocumentFixture().service.ensure({ requestedAgencySlug: "furiver", reservationId: "bad" }), { status: "not_found" });
+  const storageFailure = contractDocumentFixture({ failStorage: true }); assert.deepEqual(await storageFailure.service.ensure({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId }), { status: "document_storage_error" }); assert.equal(storageFailure.state.inserts.length, 0);
+  const dbFailure = contractDocumentFixture({ failInsert: true }); await assert.rejects(dbFailure.service.ensure({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId }), (error: unknown) => error instanceof ReservationContractDocumentError && !error.message.includes("database")); assert.equal(dbFailure.state.removals.length, 1);
+});
+
+test("render y UI de contrato mantienen estado pendiente, paginación y documentos cliente sin IDs internos", async () => {
+  const bytes = await renderReservationContractPdf({ agency: { legalName: "Agencia Española", taxId: null, legalAddress: null, supportEmail: null, supportPhone: null, jurisdiction: null }, contract: { templateVersion: 2, status: "prepared", preparedAt: TEST_NOW, title: "Contrato", introductoryText: null, termsText: "á é í ó ú ñ ü ".repeat(2200), paymentPolicyText: null, cancellationPolicyText: null, travelerResponsibilityText: null, jurisdictionText: null, effectiveFrom: null }, reservation: { code: "FT-004-260801-D01B4E", tripName: null, tripCode: null, departureDate: null, boarding: null, rooms: null, adults: null, minors: null, travelers: null, currency: "MXN", total: 47817, depositAmount: 9563.4, depositPercent: 20 } });
+  assert.equal(new TextDecoder().decode(bytes.slice(0, 4)), "%PDF"); assert.ok(bytes.length > 0);
+  const core = readFileSync("lib/documents/reservation-contract-document-core.ts", "utf8"); const repository = readFileSync("lib/documents/reservation-contract-document-repository.ts", "utf8"); const page = readFileSync("app/admin/[agencySlug]/reservaciones/[reservationId]/page.tsx", "utf8"); const action = readFileSync("app/admin/[agencySlug]/reservaciones/[reservationId]/contract-actions.ts", "utf8");
+  assert.match(core, /legalProfileSnapshot/); assert.match(core, /contractContentSnapshot/); assert.equal(core.includes("agency_legal_profiles"), false); assert.equal(core.includes("agency_contract_templates"), false);
+  assert.match(repository, /contract_instance_id: document\.contractInstanceId/); assert.match(repository, /payment_id: document\.paymentId/); assert.match(page, /ContractDocumentControl/); assert.match(action, /ensureReservationContractDocument/); assert.equal(/export\s+(?!async function|type\b)/.test(action), false);
 });

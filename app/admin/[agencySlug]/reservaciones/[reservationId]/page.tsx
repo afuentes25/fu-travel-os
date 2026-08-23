@@ -16,6 +16,9 @@ import { PaymentEvidenceButton } from "./payment-evidence-button";
 import { PaymentStatusControls } from "./payment-status-controls";
 import { PaymentReceiptControl } from "./payment-receipt-control";
 import { ContractPreparationControl } from "./contract-preparation-control";
+import { ContractDocumentControl } from "./contract-document-control";
+import { createSupabaseReservationContractDocumentRepository } from "@/lib/documents/reservation-contract-document-repository";
+import type { ReservationContractDocumentRow, ReservationContractInstanceRow } from "@/lib/documents/reservation-contract-document-core";
 import styles from "../../../admin.module.css";
 import detailStyles from "./admin-detail.module.css";
 
@@ -127,6 +130,16 @@ export default async function AdminReservationDetailPage({
   }
   const payments = paymentHistory.status === "authorized" ? paymentHistory.payments : [];
   const financialSummary = paymentHistory.status === "authorized" ? paymentHistory.financialSummary : null;
+  let contractInstance: ReservationContractInstanceRow | null = null;
+  let contractDocument: ReservationContractDocumentRow | null = null;
+  try {
+    const contractRepository = createSupabaseReservationContractDocumentRepository();
+    contractInstance = await contractRepository.findLatestInstance({ agencyId: access.agency.agencyId, reservationId: reservation.id });
+    if (contractInstance && (contractInstance.status === "prepared" || contractInstance.status === "accepted")) contractDocument = await contractRepository.findExistingDocument({ agencyId: access.agency.agencyId, reservationId: reservation.id, contractInstanceId: contractInstance.id });
+  } catch {
+    contractInstance = null;
+    contractDocument = null;
+  }
 
   return (
     <AdminShell agency={access.agency} memberships={access.memberships}>
@@ -158,7 +171,7 @@ export default async function AdminReservationDetailPage({
             {payment.status === "cancelled" && payment.receiptStatus === "revoked" && <p className={detailStyles.unavailable}>Comprobante revocado</p>}
           </article>)}</div>}
         </section>
-        <section className={detailStyles.detailCard} aria-labelledby="detail-contract-title"><h2 id="detail-contract-title">Contrato</h2><ContractPreparationControl agencySlug={access.agency.agencySlug} reservationId={reservation.id} /></section>
+        <section className={detailStyles.detailCard} aria-labelledby="detail-contract-title"><h2 id="detail-contract-title">Contrato</h2>{contractInstance && (contractInstance.status === "prepared" || contractInstance.status === "accepted") ? <ContractDocumentControl agencySlug={access.agency.agencySlug} reservationId={reservation.id} templateVersion={contractInstance.contractTemplateVersion} contractStatus={contractInstance.status} hasDocument={contractDocument?.status === "available" && contractDocument.version === 1} /> : <ContractPreparationControl agencySlug={access.agency.agencySlug} reservationId={reservation.id} />}</section>
       </section>
     </AdminShell>
   );
