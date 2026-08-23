@@ -177,6 +177,7 @@ import {
   type AcceptanceCertificateInsert,
 } from "../lib/documents/acceptance-certificate-core";
 import { renderAcceptanceCertificatePdf } from "../lib/documents/acceptance-certificate-pdf";
+import { createReservationDocumentEligibilityService, DEFAULT_TICKET_PAYMENT_THRESHOLD_BPS } from "../lib/travel-documents/document-eligibility-core";
 import {
   createCustomerTransferIdempotencyKey,
   localTransferDateTimeToIso,
@@ -7065,4 +7066,36 @@ test("constancia se integra como documento privado sin exponer hash, acceptance 
   assert.equal(core.includes("agency_legal_profiles"), false); assert.equal(core.includes("agency_contract_templates"), false);
   assert.match(repository, /contract_acceptance_id/); assert.match(customerDocuments, /acceptance_certificate/); assert.match(page, /Constancia de aceptación/);
   assert.equal(customerDocuments.includes("contentSha256"), false); assert.equal(page.includes("contractAcceptanceId"), false);
+});
+
+test("elegibilidad de voucher y boleto reutiliza ledger, slots, contrato aceptado y basis points", async () => {
+  const access = adminAccessFixture({ memberships: [adminMembership()] });
+  const snapshot = financialReservationRow();
+  const expected = deriveTravelerSlotStructure(snapshot)!;
+  const slots = expected.map((slot, index) => ({ id: `slot-${index}`, position: slot.position, traveler_type: slot.travelerType, status: "complete" }));
+  const service = createReservationDocumentEligibilityService({
+    resolveAccess: access.resolver.resolve,
+    repository: {
+      async findReservation() { return snapshot; },
+      async findPayments() { return [{ amount: 9563.4, currency: "MXN", status: "confirmed" }, { amount: 10000, currency: "MXN", status: "pending" }, { amount: 10000, currency: "MXN", status: "cancelled" }]; },
+      async findTravelerSlots() { return slots; }, async hasAcceptedContract() { return true; },
+    },
+  });
+  const result = await service.get({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId });
+  assert.equal(result.status, "authorized");
+  if (result.status === "authorized") {
+    assert.equal(result.eligibility.voucher.eligible, true);
+    assert.equal(result.eligibility.ticket.eligible, false);
+    assert.deepEqual(result.eligibility.ticket.blockers, ["payment_threshold_not_met"]);
+    assert.equal(result.eligibility.ticket.requiredPaymentPercent, 75);
+    assert.equal(DEFAULT_TICKET_PAYMENT_THRESHOLD_BPS, 7500);
+  }
+  const threshold = createReservationDocumentEligibilityService({ resolveAccess: access.resolver.resolve, repository: { async findReservation(){return snapshot;}, async findPayments(){return[{amount:35862.75,currency:"MXN",status:"confirmed"}]},async findTravelerSlots(){return slots;},async hasAcceptedContract(){return true;} } });
+  const atThreshold = await threshold.get({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId });
+  assert.equal(atThreshold.status === "authorized" && atThreshold.eligibility.ticket.eligible, true);
+  const blocked = createReservationDocumentEligibilityService({ async resolveAccess(){return { status: "unauthenticated" } as const;}, repository: { async findReservation(){throw new Error("must not query");},async findPayments(){return[]},async findTravelerSlots(){return[]},async hasAcceptedContract(){return false;} } });
+  assert.deepEqual(await blocked.get({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId }), { status: "unauthenticated" });
+  assert.deepEqual(await service.get({ requestedAgencySlug: "crisenix", reservationId: customerDetailReservationId }), { status: "forbidden" });
+  const page = readFileSync("app/admin/[agencySlug]/reservaciones/[reservationId]/page.tsx", "utf8");
+  assert.match(page, /Documentos de viaje/); assert.match(page, /Pago confirmado:/); assert.match(page, /Listo para generar/); assert.equal(page.includes("Generar voucher"), false);
 });

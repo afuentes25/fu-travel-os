@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 
 import { resolveAdminAgencyAccess } from "@/lib/agencies/admin-access";
 import { listAdminReservationPayments } from "@/lib/payments/admin-payment-list";
+import { getReservationDocumentEligibility } from "@/lib/travel-documents/document-eligibility";
 import {
   AdminReservationDetailError,
   createAdminReservationDetailRepository,
@@ -78,6 +79,10 @@ const paymentStatusLabels = {
   cancelled: "Cancelado",
 } as const;
 
+const documentBlockerLabels = {
+  contract_not_accepted: "Contrato pendiente de aceptación.", deposit_not_covered: "El anticipo requerido aún no está cubierto.", travelers_incomplete: "Faltan datos de viajeros.", departure_missing: "Falta la fecha de salida.", boarding_point_missing: "Falta el punto de abordaje.", payment_threshold_not_met: "El pago confirmado aún no alcanza el porcentaje requerido para emitir el boleto.", invalid_structure: "La reservación tiene información incompleta o inconsistente.",
+} as const;
+
 export default async function AdminReservationDetailPage({
   params,
 }: {
@@ -130,6 +135,8 @@ export default async function AdminReservationDetailPage({
   }
   const payments = paymentHistory.status === "authorized" ? paymentHistory.payments : [];
   const financialSummary = paymentHistory.status === "authorized" ? paymentHistory.financialSummary : null;
+  let documentEligibility: Awaited<ReturnType<typeof getReservationDocumentEligibility>> | null = null;
+  try { documentEligibility = await getReservationDocumentEligibility({ requestedAgencySlug: access.agency.agencySlug, reservationId }); } catch { documentEligibility = null; }
   let contractInstance: ReservationContractInstanceRow | null = null;
   let contractDocument: ReservationContractDocumentRow | null = null;
   try {
@@ -172,6 +179,7 @@ export default async function AdminReservationDetailPage({
           </article>)}</div>}
         </section>
         <section className={detailStyles.detailCard} aria-labelledby="detail-contract-title"><h2 id="detail-contract-title">Contrato</h2>{contractInstance && (contractInstance.status === "prepared" || contractInstance.status === "accepted") ? <ContractDocumentControl agencySlug={access.agency.agencySlug} reservationId={reservation.id} templateVersion={contractInstance.contractTemplateVersion} contractStatus={contractInstance.status} hasDocument={contractDocument?.status === "available" && contractDocument.version === 1} /> : <ContractPreparationControl agencySlug={access.agency.agencySlug} reservationId={reservation.id} />}</section>
+        <section className={detailStyles.detailCard} aria-labelledby="detail-travel-documents-title"><h2 id="detail-travel-documents-title">Documentos de viaje</h2>{documentEligibility?.status === "authorized" ? <div>{(["voucher", "ticket"] as const).map((type) => { const item = documentEligibility.eligibility[type]; const ticket = documentEligibility.eligibility.ticket; return <article key={type}><h3>{type === "voucher" ? "Voucher" : "Boleto"}</h3><p role="status">{item.eligible ? "Listo para generar" : "Pendiente"}</p>{type === "ticket" && <p>Pago confirmado: {ticket.confirmedPaymentPercent === null ? "No disponible" : `${ticket.confirmedPaymentPercent}%`} · Requerido: {ticket.requiredPaymentPercent}%</p>}{item.blockers.length > 0 && <ul>{item.blockers.map((blocker) => <li key={blocker}>{documentBlockerLabels[blocker]}</li>)}</ul>}</article>; })}</div> : <p className={detailStyles.unavailable}>No fue posible calcular la elegibilidad de documentos de viaje.</p>}</section>
       </section>
     </AdminShell>
   );
