@@ -73,6 +73,15 @@ export type ManualPaymentInsert = Readonly<{
   createdByUserId: string;
   idempotencyKey: string;
 }>;
+export type ManualPaymentAtomicCreateResult =
+  | Readonly<{ status: "created" | "existing"; payment: ManualPaymentStoredRow }>
+  | Readonly<{ status: "reservation_paid_in_full" }>
+  | Readonly<{ status: "amount_exceeds_reportable_balance" }>
+  | Readonly<{ status: "amount_exceeds_confirmable_balance" }>
+  | Readonly<{ status: "historical_overpayment" }>
+  | Readonly<{ status: "idempotency_conflict" }>
+  | Readonly<{ status: "invalid_structure" }>
+  | Readonly<{ status: "not_found" }>;
 
 export interface ManualPaymentRepositoryClient {
   findReservation(input: Readonly<{
@@ -83,7 +92,11 @@ export interface ManualPaymentRepositoryClient {
     agencyId: string;
     idempotencyKey: string;
   }>): Promise<ManualPaymentStoredRow | null>;
-  insert(input: ManualPaymentInsert): Promise<ManualPaymentStoredRow>;
+  /** Reservation-scoped transaction that applies the final capacity rule. */
+  createAtomic(input: Readonly<{
+    contractTotalCents: number;
+    payment: ManualPaymentInsert;
+  }>): Promise<ManualPaymentAtomicCreateResult>;
 }
 
 export type CreateManualPaymentResult =
@@ -95,7 +108,11 @@ export type CreateManualPaymentResult =
   | Readonly<{ status: "not_found" }>
   | Readonly<{ status: "invalid_input"; fieldErrors: Readonly<Record<string, string>> }>
   | Readonly<{ status: "invalid_structure" }>
-  | Readonly<{ status: "idempotency_conflict" }>;
+  | Readonly<{ status: "idempotency_conflict" }>
+  | Readonly<{ status: "reservation_paid_in_full" }>
+  | Readonly<{ status: "amount_exceeds_reportable_balance" }>
+  | Readonly<{ status: "amount_exceeds_confirmable_balance" }>
+  | Readonly<{ status: "historical_overpayment" }>;
 
 export class ManualPaymentError extends Error {
   readonly name = "ManualPaymentError";
@@ -206,13 +223,6 @@ function samePayment(row: ManualPaymentStoredRow, candidate: ManualPaymentInsert
     && storedPaidAt === candidate.paidAt;
 }
 
-function isUniqueViolation(error: unknown) {
-  return typeof error === "object"
-    && error !== null
-    && "code" in error
-    && (error as { code?: unknown }).code === "23505";
-}
-
 function accessStatus(access: AdminAgencyAccess): Exclude<CreateManualPaymentResult,
   Readonly<{ status: "created"; payment: ManualPaymentReceipt }>
   | Readonly<{ status: "already_exists"; payment: ManualPaymentReceipt }>
@@ -220,6 +230,10 @@ function accessStatus(access: AdminAgencyAccess): Exclude<CreateManualPaymentRes
   | Readonly<{ status: "not_found" }>
   | Readonly<{ status: "invalid_structure" }>
   | Readonly<{ status: "idempotency_conflict" }>
+  | Readonly<{ status: "reservation_paid_in_full" }>
+  | Readonly<{ status: "amount_exceeds_reportable_balance" }>
+  | Readonly<{ status: "amount_exceeds_confirmable_balance" }>
+  | Readonly<{ status: "historical_overpayment" }>
 > | null {
   if (access.status === "unauthenticated") return { status: "unauthenticated" };
   if (access.status === "selection_required") return { status: "selection_required" };
@@ -229,6 +243,15 @@ function accessStatus(access: AdminAgencyAccess): Exclude<CreateManualPaymentRes
 
 function invalid(fieldErrors: Record<string, string>): CreateManualPaymentResult {
   return { status: "invalid_input", fieldErrors };
+}
+
+function contractualTotalCents(snapshot: ReservationSnapshotProjectionSource, currency: Currency): number | null {
+  const total = projectReservationSnapshotOperational(snapshot).amounts.total;
+  if (total === null || !Number.isFinite(total)) return null;
+  try {
+    const cents = toMinorUnits(total, currency);
+    return cents > 0 ? cents : null;
+  } catch { return null; }
 }
 
 /** Server command core: all untrusted fields are validated after admin authorization. */
@@ -286,6 +309,8 @@ export function createManualReservationPaymentService(dependencies: Readonly<{
         if (!reservation) return { status: "not_found" };
         const currency = projectReservationSnapshotOperational(reservation).amounts.currency;
         if (!isCurrency(currency)) return { status: "invalid_structure" };
+        const contractTotalCents = contractualTotalCents(reservation, currency);
+        if (contractTotalCents === null) return { status: "invalid_structure" };
 
         const candidate: ManualPaymentInsert = {
           reservationId,
@@ -327,28 +352,18 @@ export function createManualReservationPaymentService(dependencies: Readonly<{
             : { status: "already_exists", payment: receipt };
         }
 
-        try {
-          const created = await repository.insert(candidate);
-          const receipt = receiptFromStored(created);
-          if (!receipt) return { status: "invalid_structure" };
-          const documentStatus = await attachDocumentStatus(created, receipt);
-          return documentStatus
-            ? { status: "created", payment: receipt, documentStatus }
-            : { status: "created", payment: receipt };
-        } catch (error) {
-          if (!isUniqueViolation(error)) throw error;
-          const concurrent = await repository.findByIdempotencyKey({
-            agencyId: access.agency.agencyId,
-            idempotencyKey,
-          });
-          if (!concurrent) throw error;
-          const receipt = receiptFromStored(concurrent);
-          if (!receipt || !samePayment(concurrent, candidate)) return { status: "idempotency_conflict" };
-          const documentStatus = await attachDocumentStatus(concurrent, receipt);
-          return documentStatus
-            ? { status: "already_exists", payment: receipt, documentStatus }
-            : { status: "already_exists", payment: receipt };
+        const atomic = await repository.createAtomic({ contractTotalCents, payment: candidate });
+        if (atomic.status === "reservation_paid_in_full" || atomic.status === "amount_exceeds_reportable_balance"
+          || atomic.status === "amount_exceeds_confirmable_balance" || atomic.status === "historical_overpayment"
+          || atomic.status === "idempotency_conflict" || atomic.status === "invalid_structure" || atomic.status === "not_found") {
+          return atomic;
         }
+        const receipt = receiptFromStored(atomic.payment);
+        if (!receipt || !samePayment(atomic.payment, candidate)) return { status: "invalid_structure" };
+        const documentStatus = await attachDocumentStatus(atomic.payment, receipt);
+        return atomic.status === "created"
+          ? documentStatus ? { status: "created", payment: receipt, documentStatus } : { status: "created", payment: receipt }
+          : documentStatus ? { status: "already_exists", payment: receipt, documentStatus } : { status: "already_exists", payment: receipt };
       } catch {
         throw new ManualPaymentError();
       }

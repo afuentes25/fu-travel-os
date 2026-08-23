@@ -58,6 +58,8 @@ export async function changeManualPaymentStatusAction(
   }
   if (result.status === "conflict") return { error: "El estado del pago cambió. Recarga la reservación antes de intentarlo nuevamente." };
   if (result.status === "evidence_required") return { error: "No puedes confirmar un pago reportado por cliente sin comprobante disponible." };
+  if (result.status === "payment_exceeds_remaining_balance") return { error: "El importe de este pago supera el saldo pendiente y no puede confirmarse." };
+  if (result.status === "invalid_structure") return { error: "No fue posible confirmar este pago debido a información financiera inconsistente." };
   if (result.status === "invalid_transition") return { error: "Esta transición de estado no está permitida." };
   if (result.status === "not_found") return { error: "El pago no está disponible para esta agencia." };
   if (result.status === "forbidden") return { error: "No tienes permiso para actualizar este pago." };

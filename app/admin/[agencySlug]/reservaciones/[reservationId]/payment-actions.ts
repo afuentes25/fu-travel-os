@@ -75,6 +75,18 @@ export async function registerManualPaymentAction(
       idempotencyKey,
     };
   }
+  if (result.status === "reservation_paid_in_full") {
+    return { error: "Reservación pagada. Los pagos confirmados ya cubren el total contratado.", values, idempotencyKey };
+  }
+  if (result.status === "historical_overpayment") {
+    return { error: "La reservación ya registra un sobrepago histórico. No se pueden registrar pagos normales adicionales.", values, idempotencyKey };
+  }
+  if (result.status === "amount_exceeds_reportable_balance") {
+    return { fieldErrors: { amount: "El importe supera la capacidad disponible para pagos en validación." }, values, idempotencyKey };
+  }
+  if (result.status === "amount_exceeds_confirmable_balance") {
+    return { fieldErrors: { amount: "El importe supera el saldo pendiente de la reservación." }, values, idempotencyKey };
+  }
   if (result.status === "invalid_input") {
     return { fieldErrors: result.fieldErrors, values, idempotencyKey };
   }

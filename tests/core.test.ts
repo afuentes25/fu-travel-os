@@ -2377,16 +2377,16 @@ function manualPaymentFixture(input: Readonly<{
         const row = byIdempotency.get(`${agencyId}:${idempotencyKey}`);
         return row ?? null;
       },
-      async insert(payment) {
+      async createAtomic({ payment }) {
         const key = `${payment.agencyId}:${payment.idempotencyKey}`;
         if (byIdempotency.has(key)) {
-          throw Object.assign(new Error("duplicate key"), { code: "23505" });
+          return { status: "existing" as const, payment: byIdempotency.get(key) as ManualPaymentStoredRow };
         }
         const row = manualPaymentStored(payment);
         writes.push(payment);
         rows.push(row);
         byIdempotency.set(key, row);
-        return row;
+        return { status: "created" as const, payment: row };
       },
     },
     afterConfirmedPayment: input.afterConfirmedPayment,
@@ -2415,7 +2415,7 @@ test("pago manual autoriza a administradores antes de consultar o escribir", asy
     repository: {
       async findReservation() { queried = true; return null; },
       async findByIdempotencyKey() { queried = true; return null; },
-      async insert() { queried = true; throw new Error("No debe escribir"); },
+      async createAtomic() { queried = true; throw new Error("No debe escribir"); },
     },
   });
   assert.deepEqual(await unauthenticated.create(manualPaymentInput()), { status: "unauthenticated" });
@@ -2548,8 +2548,116 @@ test("pago manual es idempotente ante reintentos, conflicto y concurrencia", asy
   const repository = readFileSync("lib/payments/manual-payment-repository.ts", "utf8");
   assert.match(repository, /\.eq\("id", reservationId\)[\s\S]*\.eq\("agency_id", agencyId\)/);
   assert.match(repository, /\.eq\("agency_id", agencyId\)[\s\S]*\.eq\("idempotency_key", idempotencyKey\)/);
-  assert.match(repository, /created_by_user_id: payment\.createdByUserId/);
-  assert.match(repository, /source: payment\.source/);
+  assert.match(repository, /\.rpc\("create_manual_reservation_payment_atomic"/);
+  assert.match(repository, /target_created_by_user_id: payment\.createdByUserId/);
+  assert.match(repository, /target_status: payment\.status/);
+});
+
+test("capacidad atómica administrativa limita pending y confirmed sin alterar pagos históricos", async () => {
+  const access = adminAccessFixture({ memberships: [adminMembership()] });
+  const ledger: Array<{ amount: number; currency: string; status: "pending" | "confirmed" | "cancelled" }> = [];
+  const existing = new Map<string, ManualPaymentStoredRow>();
+  let sequence = 0;
+  const service = createManualReservationPaymentService({
+    resolveAccess: access.resolver.resolve,
+    now: () => new Date(TEST_NOW),
+    repository: {
+      async findReservation() { return financialReservationRow({ total: 10000 }); },
+      async findByIdempotencyKey({ agencyId, idempotencyKey }) { return existing.get(`${agencyId}:${idempotencyKey}`) ?? null; },
+      async createAtomic({ contractTotalCents, payment }) {
+        const key = `${payment.agencyId}:${payment.idempotencyKey}`;
+        const prior = existing.get(key);
+        if (prior) return { status: "existing" as const, payment: prior };
+        const confirmed = ledger.filter((row) => row.status === "confirmed").reduce((sum, row) => sum + Math.round(row.amount * 100), 0);
+        const pending = ledger.filter((row) => row.status === "pending").reduce((sum, row) => sum + Math.round(row.amount * 100), 0);
+        if (ledger.some((row) => row.currency !== payment.currency)) return { status: "invalid_structure" as const };
+        if (confirmed > contractTotalCents) return { status: "historical_overpayment" as const };
+        if (confirmed >= contractTotalCents) return { status: "reservation_paid_in_full" as const };
+        const amountCents = Math.round(payment.amount * 100);
+        if (payment.status === "pending" && amountCents > Math.max(contractTotalCents - confirmed - pending, 0)) return { status: "amount_exceeds_reportable_balance" as const };
+        if (payment.status === "confirmed" && amountCents > Math.max(contractTotalCents - confirmed, 0)) return { status: "amount_exceeds_confirmable_balance" as const };
+        const row = { ...manualPaymentStored(payment), id: `manual-${++sequence}` };
+        existing.set(key, row);
+        ledger.push({ amount: payment.amount, currency: payment.currency, status: payment.status });
+        return { status: "created" as const, payment: row };
+      },
+    },
+  });
+  ledger.push({ amount: 4000, currency: "MXN", status: "confirmed" }, { amount: 4000, currency: "MXN", status: "pending" });
+  assert.equal((await service.create(manualPaymentInput({ initialStatus: "pending", amount: "2000.00", idempotencyKey: "48d8cc3a-a91b-491d-b209-02df25bb4f6a" }))).status, "created");
+  assert.deepEqual(await service.create(manualPaymentInput({ initialStatus: "pending", amount: "0.01", idempotencyKey: "49d8cc3a-a91b-491d-b209-02df25bb4f6a" })), { status: "amount_exceeds_reportable_balance" });
+  // Pending rows do not block a real confirmed payment; only confirmed does.
+  assert.equal((await service.create(manualPaymentInput({ initialStatus: "confirmed", amount: "6000.00", idempotencyKey: "50d8cc3a-a91b-491d-b209-02df25bb4f6a" }))).status, "created");
+  assert.deepEqual(await service.create(manualPaymentInput({ initialStatus: "confirmed", amount: "0.01", idempotencyKey: "51d8cc3a-a91b-491d-b209-02df25bb4f6a" })), { status: "reservation_paid_in_full" });
+  assert.equal(ledger.filter((row) => row.status === "confirmed").reduce((sum, row) => sum + row.amount, 0), 10000);
+  assert.equal(ledger.filter((row) => row.status === "pending").reduce((sum, row) => sum + row.amount, 0), 6000);
+});
+
+test("confirmación atómica conserva pending que excede capacidad y nunca genera documentos al bloquearse", async () => {
+  const access = adminAccessFixture({ memberships: [adminMembership()] });
+  const rows = new Map<string, { id: string; status: ManualPaymentStatus; source: string; amount: number }>([
+    ["1c8f51f4-bacd-457c-8267-b173a2994f57", { id: "1c8f51f4-bacd-457c-8267-b173a2994f57", status: "pending", source: "manual", amount: 200000 }],
+    ["2c8f51f4-bacd-457c-8267-b173a2994f57", { id: "2c8f51f4-bacd-457c-8267-b173a2994f57", status: "pending", source: "manual", amount: 200000 }],
+  ]);
+  let confirmed = 800000;
+  let previous = Promise.resolve();
+  let documentCalls = 0;
+  const service = createAdminPaymentStatusService({
+    resolveAccess: access.resolver.resolve,
+    now: () => new Date(TEST_NOW),
+    repository: {
+      async findReservation() { return financialReservationRow({ total: 10000 }); },
+      async findPayment({ paymentId }) { const row = rows.get(paymentId); return row ? { id: row.id, status: row.status, source: row.source } : null; },
+      async hasEvidence() { return false; },
+      async updateStatus({ paymentId, nextStatus }) { const row = rows.get(paymentId); if (!row || row.status !== "pending") return false; row.status = nextStatus; return true; },
+      async confirmAtomic({ paymentId, contractTotalCents }) {
+        const before = previous;
+        let release: () => void = () => undefined;
+        previous = new Promise<void>((resolve) => { release = resolve; });
+        await before;
+        try {
+          const row = rows.get(paymentId);
+          if (!row || row.status !== "pending") return "conflict" as const;
+          if (row.amount > contractTotalCents - confirmed) return "payment_exceeds_remaining_balance" as const;
+          confirmed += row.amount;
+          row.status = "confirmed";
+          return "updated" as const;
+        } finally { release(); }
+      },
+    },
+    async afterStatusChanged() { documentCalls += 1; return "ready"; },
+  });
+  const [first, second] = await Promise.all([
+    service.change({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId, paymentId: "1c8f51f4-bacd-457c-8267-b173a2994f57", nextStatus: "confirmed" }),
+    service.change({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId, paymentId: "2c8f51f4-bacd-457c-8267-b173a2994f57", nextStatus: "confirmed" }),
+  ]);
+  assert.deepEqual([first.status, second.status].sort(), ["payment_exceeds_remaining_balance", "updated"]);
+  assert.equal(confirmed, 1000000);
+  assert.equal([...rows.values()].filter((row) => row.status === "pending").length, 1);
+  assert.equal(documentCalls, 1);
+  assert.equal((await service.change({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId, paymentId: "2c8f51f4-bacd-457c-8267-b173a2994f57", nextStatus: "cancelled" })).status, "updated");
+});
+
+test("migración de capacidad administrativa bloquea por reservación y la UI conserva pagos pending revisables", () => {
+  const migration = readFileSync("supabase/migrations/20260801200000_atomic_admin_payment_capacity.sql", "utf8");
+  const createRepository = readFileSync("lib/payments/manual-payment-repository.ts", "utf8");
+  const statusRepository = readFileSync("lib/payments/admin-payment-status-repository.ts", "utf8");
+  const page = readFileSync("app/admin/[agencySlug]/reservaciones/[reservationId]/page.tsx", "utf8");
+  const actions = readFileSync("app/admin/[agencySlug]/reservaciones/[reservationId]/payment-status-actions.ts", "utf8");
+  assert.match(migration, /create_manual_reservation_payment_atomic/);
+  assert.match(migration, /confirm_reservation_payment_atomic/);
+  assert.match(migration, /for update/i);
+  assert.match(migration, /security definer/gi);
+  assert.match(migration, /set search_path = public, pg_temp/gi);
+  assert.match(migration, /amount_exceeds_reportable_balance/);
+  assert.match(migration, /amount_exceeds_confirmable_balance/);
+  assert.match(migration, /payment_exceeds_remaining_balance/);
+  assert.match(migration, /historical_overpayment/);
+  assert.match(migration, /grant execute[\s\S]*service_role/i);
+  assert.match(createRepository, /\.rpc\("create_manual_reservation_payment_atomic"/);
+  assert.match(statusRepository, /\.rpc\("confirm_reservation_payment_atomic"/);
+  assert.match(page, /reservationPaidInFull/);
+  assert.match(actions, /supera el saldo pendiente y no puede confirmarse/);
 });
 
 test("formulario administrativo convierte fecha local a ISO inequívoco y crea UUIDs no predecibles", () => {
@@ -2673,7 +2781,7 @@ function adminPaymentStatusFixture(input: Readonly<{
     repository: {
       async findReservation({ agencyId, reservationId }) {
         requests.push(`reservation:${agencyId}:${reservationId}`);
-        return input.reservationExists !== false;
+        return input.reservationExists === false ? null : financialReservationRow();
       },
       async findPayment({ agencyId, reservationId, paymentId }) {
         requests.push(`payment:${agencyId}:${reservationId}:${paymentId}`);
@@ -2688,6 +2796,12 @@ function adminPaymentStatusFixture(input: Readonly<{
         if (input.conflict || update.expectedStatus !== row.status) return false;
         row.status = update.nextStatus;
         return true;
+      },
+      async confirmAtomic(update) {
+        writes.push(update);
+        if (input.conflict || row.status !== "pending") return "conflict" as const;
+        row.status = "confirmed";
+        return "updated" as const;
       },
     },
     afterStatusChanged: input.afterStatusChanged,

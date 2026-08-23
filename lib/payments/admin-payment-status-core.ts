@@ -1,5 +1,8 @@
 import type { AdminAgencyAccess } from "@/lib/agencies/admin-access-core";
+import { toMinorUnits } from "@/lib/fx";
 import { isAdminReservationUuid } from "@/lib/reservations/admin-detail";
+import { projectReservationSnapshotOperational, type ReservationSnapshotProjectionSource } from "@/lib/reservations/snapshot-projection";
+import type { Currency } from "@/types";
 import type { PaymentReceiptLifecycleStatus } from "@/lib/documents/payment-receipt-lifecycle-core";
 
 export type ManualPaymentStatus = "pending" | "confirmed" | "cancelled";
@@ -20,6 +23,8 @@ export type ChangeManualPaymentStatusResult =
   | Readonly<{ status: "invalid_input" }>
   | Readonly<{ status: "invalid_transition" }>
   | Readonly<{ status: "evidence_required" }>
+  | Readonly<{ status: "payment_exceeds_remaining_balance" }>
+  | Readonly<{ status: "invalid_structure" }>
   | Readonly<{ status: "conflict" }>;
 
 export type StoredPaymentStatusRow = Readonly<{
@@ -29,7 +34,7 @@ export type StoredPaymentStatusRow = Readonly<{
 }>;
 
 export interface AdminPaymentStatusRepositoryClient {
-  findReservation(input: Readonly<{ agencyId: string; reservationId: string }>): Promise<boolean>;
+  findReservation(input: Readonly<{ agencyId: string; reservationId: string }>): Promise<ReservationSnapshotProjectionSource | null>;
   findPayment(input: Readonly<{ agencyId: string; reservationId: string; paymentId: string }>): Promise<StoredPaymentStatusRow | null>;
   hasEvidence(input: Readonly<{ agencyId: string; reservationId: string; paymentId: string }>): Promise<boolean>;
   updateStatus(input: Readonly<{
@@ -41,6 +46,14 @@ export interface AdminPaymentStatusRepositoryClient {
     actorUserId: string;
     changedAt: string;
   }>): Promise<boolean>;
+  confirmAtomic(input: Readonly<{
+    agencyId: string;
+    reservationId: string;
+    paymentId: string;
+    contractTotalCents: number;
+    actorUserId: string;
+    changedAt: string;
+  }>): Promise<"updated" | "not_found" | "evidence_required" | "payment_exceeds_remaining_balance" | "invalid_structure" | "conflict">;
 }
 
 export class AdminPaymentStatusError extends Error {
@@ -79,12 +92,24 @@ function accessStatus(access: AdminAgencyAccess): Exclude<ChangeManualPaymentSta
   | Readonly<{ status: "invalid_input" }>
   | Readonly<{ status: "invalid_transition" }>
   | Readonly<{ status: "evidence_required" }>
+  | Readonly<{ status: "payment_exceeds_remaining_balance" }>
+  | Readonly<{ status: "invalid_structure" }>
   | Readonly<{ status: "conflict" }>
 > | null {
   if (access.status === "unauthenticated") return { status: "unauthenticated" };
   if (access.status === "selection_required") return { status: "selection_required" };
   if (access.status === "forbidden") return { status: "forbidden" };
   return null;
+}
+
+function contractualTotalCents(snapshot: ReservationSnapshotProjectionSource): number | null {
+  const projected = projectReservationSnapshotOperational(snapshot);
+  const currency = projected.amounts.currency;
+  if ((currency !== "MXN" && currency !== "USD") || projected.amounts.total === null) return null;
+  try {
+    const cents = toMinorUnits(projected.amounts.total, currency as Currency);
+    return cents > 0 ? cents : null;
+  } catch { return null; }
 }
 
 /** Status changes use a conditional update so another admin cannot be overwritten silently. */
@@ -142,16 +167,31 @@ export function createAdminPaymentStatusService(dependencies: Readonly<{
           });
           if (!hasEvidence) return { status: "evidence_required" };
         }
-        const updated = await repository.updateStatus({
-          agencyId: access.agency.agencyId,
-          reservationId: input.reservationId,
-          paymentId: input.paymentId,
-          expectedStatus: payment.status,
-          nextStatus: input.nextStatus,
-          actorUserId: access.identity.userId,
-          changedAt: (dependencies.now ?? (() => new Date()))().toISOString(),
-        });
-        if (!updated) return { status: "conflict" };
+        const changedAt = (dependencies.now ?? (() => new Date()))().toISOString();
+        if (input.nextStatus === "confirmed") {
+          const contractTotalCents = contractualTotalCents(reservation);
+          if (contractTotalCents === null) return { status: "invalid_structure" };
+          const atomic = await repository.confirmAtomic({
+            agencyId: access.agency.agencyId,
+            reservationId: input.reservationId,
+            paymentId: input.paymentId,
+            contractTotalCents,
+            actorUserId: access.identity.userId,
+            changedAt,
+          });
+          if (atomic !== "updated") return { status: atomic };
+        } else {
+          const updated = await repository.updateStatus({
+            agencyId: access.agency.agencyId,
+            reservationId: input.reservationId,
+            paymentId: input.paymentId,
+            expectedStatus: payment.status,
+            nextStatus: input.nextStatus,
+            actorUserId: access.identity.userId,
+            changedAt,
+          });
+          if (!updated) return { status: "conflict" };
+        }
         if (!dependencies.afterStatusChanged) return { status: "updated", nextStatus: input.nextStatus };
         let documentStatus: PaymentReceiptLifecycleStatus;
         try {

@@ -3,6 +3,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { getSupabaseServerClient } from "@/lib/supabase/server";
+import type { ReservationSnapshotProjectionSource } from "@/lib/reservations/snapshot-projection";
 
 import type {
   AdminPaymentStatusRepositoryClient,
@@ -22,12 +23,12 @@ export function createSupabaseAdminPaymentStatusRepository(
     async findReservation({ agencyId, reservationId }) {
       const { data, error } = await supabase
         .from("reservation_snapshots")
-        .select("id")
+        .select("id, reservation_code, status, currency, created_at, snapshot")
         .eq("id", reservationId)
         .eq("agency_id", agencyId)
         .maybeSingle();
       if (error) throw databaseFailure();
-      return Boolean(data);
+      return data ? data as ReservationSnapshotProjectionSource : null;
     },
     async findPayment({ agencyId, reservationId, paymentId }) {
       const { data, error } = await supabase
@@ -67,6 +68,21 @@ export function createSupabaseAdminPaymentStatusRepository(
         .maybeSingle();
       if (error) throw databaseFailure();
       return Boolean(data);
+    },
+    async confirmAtomic({ agencyId, reservationId, paymentId, contractTotalCents, actorUserId, changedAt }) {
+      const { data, error } = await supabase.rpc("confirm_reservation_payment_atomic", {
+        target_agency_id: agencyId,
+        target_reservation_id: reservationId,
+        target_payment_id: paymentId,
+        target_contract_total_cents: contractTotalCents,
+        target_actor_user_id: actorUserId,
+        target_changed_at: changedAt,
+      });
+      if (error) throw databaseFailure();
+      const status = (Array.isArray(data) ? data[0]?.result_status : (data as { result_status?: unknown } | null)?.result_status);
+      if (status === "updated" || status === "not_found" || status === "evidence_required"
+        || status === "payment_exceeds_remaining_balance" || status === "invalid_structure" || status === "conflict") return status;
+      throw databaseFailure();
     },
   };
 }
