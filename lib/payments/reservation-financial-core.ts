@@ -34,6 +34,20 @@ export type ReservationFinancialSummary = Readonly<{
   }>;
 }>;
 
+/**
+ * Customer reports reserve pending ledger movements without changing the
+ * financial balance. All pending payments for the reservation qualify,
+ * regardless of source, because each may later become confirmed.
+ */
+export type CustomerTransferReportability = Readonly<{
+  currency: Currency;
+  contractTotalCents: number;
+  confirmedPaymentCents: number;
+  relevantPendingPaymentCents: number;
+  remainingBalanceCents: number;
+  reportableRemainingCents: number;
+}>;
+
 export type GetReservationFinancialSummaryInput = Readonly<{
   requestedAgencySlug?: string;
   reservationId: string;
@@ -140,6 +154,37 @@ export function calculateReservationFinancialSummary(input: Readonly<{
       depositCovered: depositRequiredMinor === null ? null : totals.confirmed >= depositRequiredMinor,
       fullyPaid: totals.confirmed >= contractTotalMinor,
     },
+  };
+}
+
+/**
+ * Keeps the contractual financial balance separate from the capacity for a
+ * new customer transfer report. Pending payments never reduce `remaining`,
+ * but they reserve that amount for future reports so two pending reports do
+ * not intentionally cover the same contractual balance.
+ */
+export function calculateCustomerTransferReportability(input: Readonly<{
+  snapshot: ReservationSnapshotProjectionSource;
+  payments: readonly ReservationPaymentFinancialRow[];
+}>): CustomerTransferReportability | null {
+  const summary = calculateReservationFinancialSummary(input);
+  if (!summary) return null;
+
+  const contractTotalCents = toMinorUnits(summary.contract.total, summary.currency);
+  const confirmedPaymentCents = toMinorUnits(summary.payments.confirmedTotal, summary.currency);
+  const relevantPendingPaymentCents = toMinorUnits(summary.payments.pendingTotal, summary.currency);
+  const remainingBalanceCents = Math.max(contractTotalCents - confirmedPaymentCents, 0);
+
+  return {
+    currency: summary.currency,
+    contractTotalCents,
+    confirmedPaymentCents,
+    relevantPendingPaymentCents,
+    remainingBalanceCents,
+    reportableRemainingCents: Math.max(
+      contractTotalCents - confirmedPaymentCents - relevantPendingPaymentCents,
+      0,
+    ),
   };
 }
 

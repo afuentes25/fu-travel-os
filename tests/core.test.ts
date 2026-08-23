@@ -98,6 +98,7 @@ import {
   type ReservationTravelerDataRow,
 } from "../lib/travelers/traveler-data-core";
 import {
+  calculateCustomerTransferReportability,
   calculateReservationFinancialSummary,
   createReservationFinancialSummaryService,
   ReservationFinancialError,
@@ -2217,6 +2218,24 @@ test("resumen financiero conserva históricos y rechaza moneda o contrato incomp
   assert.equal(JSON.stringify(base.snapshot), immutable);
 });
 
+test("saldo reportable para transferencias reserva pending sin alterar el saldo financiero", () => {
+  const snapshot = financialReservationRow({ total: 10000, depositPercent: 20, depositRequired: 2000 });
+  const partial = calculateCustomerTransferReportability({ snapshot, payments: [
+    { amount: 4000, currency: "MXN", status: "confirmed" },
+    { amount: 2000, currency: "MXN", status: "pending" },
+    { amount: 1000, currency: "MXN", status: "cancelled" },
+  ] });
+  assert.deepEqual(partial, { currency: "MXN", contractTotalCents: 1000000, confirmedPaymentCents: 400000, relevantPendingPaymentCents: 200000, remainingBalanceCents: 600000, reportableRemainingCents: 400000 });
+  const pendingCoversRest = calculateCustomerTransferReportability({ snapshot, payments: [
+    { amount: 7000, currency: "MXN", status: "confirmed" },
+    { amount: 3000, currency: "MXN", status: "pending" },
+  ] });
+  assert.equal(pendingCoversRest?.remainingBalanceCents, 300000);
+  assert.equal(pendingCoversRest?.reportableRemainingCents, 0);
+  const paid = calculateCustomerTransferReportability({ snapshot, payments: [{ amount: 11000, currency: "MXN", status: "confirmed" }] });
+  assert.equal(paid?.reportableRemainingCents, 0);
+});
+
 test("resumen financiero autoriza antes de consultar pagos y mantiene aislamiento de cliente", async () => {
   let repositoryCreated = false;
   const unauthenticated = createReservationFinancialSummaryService({
@@ -3230,6 +3249,7 @@ test("transferencia staged firma después de autorizar, valida bytes y crea paym
       async findAuthorizedReservation({ agencyId, reservationId }) {
         return agencyId === "agency-furiver" && reservationId === customerDetailReservationId ? financialReservationRow() : null;
       },
+      async listReservationPayments() { return [...payments.values()].map(({ amount, currency, status }) => ({ amount, currency, status })); },
       async findByIdempotencyKey({ agencyId, idempotencyKey }) { return payments.get(keyFor(agencyId, idempotencyKey)) ?? null; },
       async insertPayment(insert) {
         const key = keyFor(insert.agencyId, insert.idempotencyKey);
@@ -3267,6 +3287,60 @@ test("transferencia staged firma después de autorizar, valida bytes y crea paym
   assert.deepEqual(await service.finalize({ ...input, idempotencyKey: invalidKey }), { status: "invalid_file" });
   assert.equal(objects.has(invalidPrepared.upload.path), false);
   assert.equal(payments.size, 1);
+});
+
+test("reporte de transferencia limita nuevos pending por saldo reportable en prepare y finalize", async () => {
+  const access = customerAccessFixture({ accounts: [customerAccount()] });
+  const payments = new Map<string, CustomerTransferPaymentRow>();
+  const objects = new Map<string, Uint8Array>();
+  const removals: string[] = [];
+  const keyFor = (key: string) => `agency-furiver:${key}`;
+  const basePayments: ReservationPaymentFinancialRow[] = [
+    { amount: 4000, currency: "MXN", status: "confirmed" },
+    { amount: 2000, currency: "MXN", status: "pending" },
+    { amount: 1000, currency: "MXN", status: "cancelled" },
+  ];
+  const service = createCustomerTransferUploadService({
+    resolveAccess: access.resolver.resolve,
+    now: () => new Date(TEST_NOW),
+    repository: {
+      async findAuthorizedReservation() { return financialReservationRow({ total: 10000, depositPercent: 20, depositRequired: 2000 }); },
+      async listReservationPayments() { return [...basePayments, ...payments.values()].map(({ amount, currency, status }) => ({ amount, currency, status })); },
+      async findByIdempotencyKey({ idempotencyKey }) { return payments.get(keyFor(idempotencyKey)) ?? null; },
+      async insertPayment(insert) { const key = keyFor(insert.idempotencyKey); if (payments.has(key)) throw Object.assign(new Error("duplicate"), { code: "23505" }); const payment = customerTransferStored(insert); payments.set(key, payment); return payment; },
+      async hasEvidence() { return false; },
+      async insertEvidence() {},
+    },
+    storage: {
+      async createSignedUpload({ path }) { return { path, token: "temporary" }; },
+      async download(path) { const bytes = objects.get(path); if (!bytes) throw new Error("missing"); return bytes; },
+      async move({ fromPath, toPath }) { const bytes = objects.get(fromPath); if (!bytes) throw new Error("missing"); objects.delete(fromPath); objects.set(toPath, bytes); },
+      async remove(path) { removals.push(path); objects.delete(path); },
+    },
+  });
+  const firstKey = "0dce1e1a-5d14-4cff-b2ea-d506aa4c7eb3";
+  const secondKey = "1dce1e1a-5d14-4cff-b2ea-d506aa4c7eb3";
+  const tooLarge = await service.prepare({ ...customerTransferInput({ amount: "4000.01", idempotencyKey: firstKey }), fileSize: 8 });
+  assert.deepEqual(tooLarge, { status: "amount_exceeds_reportable_balance" });
+  const first = await service.prepare({ ...customerTransferInput({ amount: "4000.00", idempotencyKey: firstKey }), fileSize: 8 });
+  const second = await service.prepare({ ...customerTransferInput({ amount: "4000.00", idempotencyKey: secondKey }), fileSize: 8 });
+  assert.equal(first.status, "ready");
+  assert.equal(second.status, "ready");
+  if (first.status !== "ready" || second.status !== "ready") return;
+  objects.set(first.upload.path, new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d]));
+  objects.set(second.upload.path, new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d]));
+  assert.equal((await service.finalize(customerTransferInput({ amount: "4000.00", idempotencyKey: firstKey }))).status, "submitted");
+  assert.deepEqual(await service.finalize(customerTransferInput({ amount: "4000.00", idempotencyKey: secondKey })), { status: "pending_payments_cover_remaining" });
+  assert.equal(payments.size, 1);
+  assert.equal(objects.has(second.upload.path), false);
+  assert.ok(removals.includes(second.upload.path));
+
+  const full = createCustomerTransferUploadService({
+    resolveAccess: access.resolver.resolve,
+    repository: { async findAuthorizedReservation() { return financialReservationRow({ total: 10000 }); }, async listReservationPayments() { return [{ amount: 10000, currency: "MXN", status: "confirmed" }]; }, async findByIdempotencyKey() { return null; }, async insertPayment() { throw new Error("must not insert"); }, async hasEvidence() { return false; }, async insertEvidence() {} },
+    storage: { async createSignedUpload() { throw new Error("must not sign"); }, async download() { throw new Error("must not download"); }, async move() {}, async remove() {} },
+  });
+  assert.deepEqual(await full.prepare({ ...customerTransferInput({ amount: "1.00" }), fileSize: 8 }), { status: "reservation_paid_in_full" });
 });
 
 test("formulario cliente usa URL firmada, conserva UTC e idempotencia sin enviar File a Vercel", () => {
@@ -6930,6 +7004,34 @@ test("instancia contractual congela perfil y plantilla activa, es idempotente y 
   const second = await service.prepare(input); assert.equal(second.status, "existing"); if (second.status === "existing") { assert.equal(second.contract.templateVersion, 2); assert.equal(JSON.stringify(second.contract).includes("legal"), false); }
   assert.equal((state.current?.content as { title: string }).title, "Contrato v2");
   assert.equal((await service.prepare({ ...input, requestedAgencySlug: "crisenix" })).status, "forbidden");
+});
+
+test("preparación y PDF contractual no dependen del saldo ni de la elegibilidad de viaje", async () => {
+  const access = adminAccessFixture({ memberships: [adminMembership()] });
+  const prepared = new Set<string>();
+  const repository = {
+    async findReservation() { return true; },
+    async findCurrent({ reservationId }: { reservationId: string }) { return prepared.has(reservationId) ? { status: "prepared" as const, templateVersion: 1, preparedAt: TEST_NOW } : null; },
+    async findLegalProfile() { return { legalName: "Agencia Legal", taxId: null, legalAddress: null, supportEmail: null, supportPhone: null, jurisdiction: null }; },
+    async findActiveTemplate() { return { id: "d2175825-1085-4854-a4b5-cd2d4e521f5c", version: 1, status: "active", title: "Contrato", introductoryText: null, termsText: "Términos", paymentPolicyText: null, cancellationPolicyText: null, travelerResponsibilityText: null, jurisdictionText: null, effectiveFrom: null }; },
+    async insert({ reservationId }: { reservationId: string }) { prepared.add(reservationId); return { status: "prepared" as const, templateVersion: 1, preparedAt: TEST_NOW }; },
+  };
+  const service = createReservationContractService({ resolveAccess: access.resolver.resolve, repository });
+  const ids = ["a9ce1e1a-5d14-4cff-b2ea-d506aa4c7eb3", "b9ce1e1a-5d14-4cff-b2ea-d506aa4c7eb3", "c9ce1e1a-5d14-4cff-b2ea-d506aa4c7eb3"];
+  for (const reservationId of ids) assert.equal((await service.prepare({ requestedAgencySlug: "furiver", reservationId })).status, "prepared");
+  const withoutLegal = createReservationContractService({ resolveAccess: access.resolver.resolve, repository: { ...repository, async findLegalProfile() { return null; } } });
+  assert.deepEqual(await withoutLegal.inspect({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId }), { status: "legal_profile_required" });
+  const withoutActive = createReservationContractService({ resolveAccess: access.resolver.resolve, repository: { ...repository, async findActiveTemplate() { return null; } } });
+  assert.deepEqual(await withoutActive.inspect({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId }), { status: "active_template_required" });
+  const contractCore = readFileSync("lib/contracts/reservation-contract-core.ts", "utf8");
+  const pdfCore = readFileSync("lib/documents/reservation-contract-document-core.ts", "utf8");
+  const control = readFileSync("app/admin/[agencySlug]/reservaciones/[reservationId]/contract-preparation-control.tsx", "utf8");
+  assert.equal(contractCore.includes("confirmedPayment"), false);
+  assert.equal(contractCore.includes("remainingBalance"), false);
+  assert.equal(pdfCore.includes("calculateReservationFinancialSummary"), false);
+  assert.match(control, /Completa los datos legales de la agencia antes de preparar el contrato\./);
+  assert.match(control, /Activa una plantilla contractual antes de preparar el contrato\./);
+  assert.match(control, /Configurar contratos/);
 });
 
 test("migración de instancia contractual aplica FKs, inmutabilidad y RLS sin tocar documentos", () => {

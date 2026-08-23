@@ -33,10 +33,12 @@ export function CustomerTransferForm({
   requestedAgencySlug,
   reservationId,
   currency,
+  reportableRemaining,
 }: Readonly<{
   requestedAgencySlug: string;
   reservationId: string;
   currency: string;
+  reportableRemaining: number;
 }>) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const formRef = useRef<HTMLFormElement>(null);
@@ -86,6 +88,18 @@ export function CustomerTransferForm({
     }
     if (result.status === "invalid_file") {
       setFieldErrors({ file: "El comprobante debe ser PDF, JPG, PNG o WebP y no superar 10 MB." });
+      return;
+    }
+    if (result.status === "reservation_paid_in_full") {
+      setClientError("Tu reservación ya está cubierta al 100%. No es necesario reportar más pagos.");
+      return;
+    }
+    if (result.status === "pending_payments_cover_remaining") {
+      setClientError("Los pagos en validación cubren actualmente el saldo pendiente. Intenta nuevamente si alguno es rechazado o cancelado.");
+      return;
+    }
+    if (result.status === "amount_exceeds_reportable_balance") {
+      setFieldErrors({ amount: "El importe supera el saldo disponible para nuevos pagos." });
       return;
     }
     if (result.status === "forbidden" || result.status === "not_found") {
@@ -201,7 +215,8 @@ export function CustomerTransferForm({
           <input type="hidden" name="reservationId" value={reservationId} />
           <input type="hidden" name="idempotencyKey" value={idempotencyKey ?? ""} />
           <label>Importe transferido <small>{currency}</small>
-            <input name="amount" inputMode="decimal" placeholder="1000.00" required aria-invalid={Boolean(fieldErrors.amount)} />
+            <input name="amount" inputMode="decimal" min="0.01" max={reportableRemaining.toFixed(2)} placeholder="1000.00" required aria-invalid={Boolean(fieldErrors.amount)} />
+            <small>Máximo disponible para reportar: {new Intl.NumberFormat("es-MX", { style: "currency", currency, minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(reportableRemaining)} {currency}</small>
             {fieldErrors.amount && <span role="alert">{fieldErrors.amount}</span>}
           </label>
           <label>Fecha y hora de la transferencia

@@ -4,6 +4,7 @@ import { resolveCustomerAgencyAccess } from "@/lib/customers/customer-access";
 
 import {
   createCustomerTransferUploadService,
+  type CustomerTransferCapacityResult,
   type FinalizeCustomerTransferUploadInput,
   type FinalizeCustomerTransferUploadResult,
   type PrepareCustomerTransferUploadInput,
@@ -18,6 +19,7 @@ export {
   CUSTOMER_TRANSFER_MAX_FILE_BYTES,
   detectCustomerTransferBytes,
   type FinalizeCustomerTransferUploadResult,
+  type CustomerTransferCapacityResult,
   type PrepareCustomerTransferUploadResult,
 } from "./customer-transfer-core";
 
@@ -41,4 +43,12 @@ export async function finalizeCustomerTransferUpload(
   input: FinalizeCustomerTransferUploadInput,
 ): Promise<FinalizeCustomerTransferUploadResult> {
   return service().finalize(input);
+}
+
+/** Customer-safe, ledger-derived capacity for a new transfer report. */
+export async function getCustomerTransferReportability(input: Readonly<{
+  requestedAgencySlug: unknown;
+  reservationId: unknown;
+}>): Promise<CustomerTransferCapacityResult> {
+  return service().reportability(input);
 }

@@ -11,6 +11,7 @@ import type {
   CustomerTransferPaymentRow,
   CustomerTransferRepositoryClient,
 } from "./customer-transfer-core";
+import type { ReservationPaymentFinancialRow } from "./reservation-financial-core";
 
 type LinkedReservationRow = Readonly<{
   reservation_snapshots: ReservationSnapshotProjectionSource | ReservationSnapshotProjectionSource[] | null;
@@ -89,6 +90,15 @@ export function createSupabaseCustomerTransferRepository(
         .maybeSingle();
       if (error) throw databaseFailure(error);
       return data ? paymentFromRow(data as SupabaseCustomerTransferPaymentRow) : null;
+    },
+    async listReservationPayments({ agencyId, reservationId }) {
+      const { data, error } = await supabase
+        .from("reservation_payments")
+        .select("amount, currency, status")
+        .eq("agency_id", agencyId)
+        .eq("reservation_id", reservationId);
+      if (error) throw databaseFailure(error);
+      return (data ?? []) as ReservationPaymentFinancialRow[];
     },
     async insertPayment(payment: CustomerTransferPaymentInsert) {
       const { data, error } = await supabase

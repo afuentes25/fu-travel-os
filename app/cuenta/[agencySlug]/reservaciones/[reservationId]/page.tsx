@@ -9,6 +9,7 @@ import {
 import { ensureReservationTravelerSlots } from "@/lib/travelers/traveler-slots";
 import { getReservationTravelerData } from "@/lib/travelers/traveler-data";
 import { getReservationFinancialSummary } from "@/lib/payments/reservation-financial";
+import { getCustomerTransferReportability } from "@/lib/payments/customer-transfer";
 import { listCustomerReservationPayments } from "@/lib/payments/customer-payment-list";
 import { listCustomerReservationDocuments } from "@/lib/documents/customer-document-list";
 import { createSupabaseCustomerContractAcceptanceRepository } from "@/lib/contracts/customer-contract-acceptance-repository";
@@ -148,6 +149,30 @@ export default async function CustomerReservationDetailPage({
     );
   }
 
+  let transferCapacity: Awaited<ReturnType<typeof getCustomerTransferReportability>>;
+  try {
+    transferCapacity = await getCustomerTransferReportability({
+      requestedAgencySlug: agencySlug,
+      reservationId,
+    });
+  } catch {
+    transferCapacity = { status: "invalid_structure" };
+  }
+  if (transferCapacity.status === "unauthenticated") {
+    redirect(`/cuenta/login?next=${encodeURIComponent(`/cuenta/${agencySlug}/reservaciones/${reservationId}`)}`);
+  }
+  if (transferCapacity.status === "selection_required") redirect("/cuenta");
+  if (transferCapacity.status === "forbidden" || transferCapacity.status === "not_found") {
+    return (
+      <CustomerShell>
+        <section className={styles.stateCard}>
+          <h1>Reservación no disponible</h1>
+          <p>No encontramos una reservación disponible para tu cuenta.</p>
+        </section>
+      </CustomerShell>
+    );
+  }
+
   let paymentHistory: Awaited<ReturnType<typeof listCustomerReservationPayments>>;
   try {
     paymentHistory = await listCustomerReservationPayments({
@@ -256,7 +281,6 @@ export default async function CustomerReservationDetailPage({
   );
   const travelerDataComplete = slots.length > 0 && slots.every((slot) => slot.status === "complete");
   const depositCovered = financialSummary?.balance.depositCovered === true;
-  const balancePaid = financialSummary?.balance.fullyPaid === true;
   return (
     <CustomerShell account={detail.account}>
       <section className={`${styles.content} ${styles.customerReservationDetail}`} aria-labelledby="customer-reservation-title">
@@ -308,7 +332,7 @@ export default async function CustomerReservationDetailPage({
         <section className={styles.customerSection} aria-labelledby="customer-payments-title">
           <div className={styles.sectionHeading}><div><span className={styles.sectionEyebrow}>Finanzas</span><h2 id="customer-payments-title">Pagos</h2></div></div>
           {financialSummary ? <><div className={styles.financialOverview}><div><span>Total del Tour</span><strong>{financialMoney(financialSummary.contract.total, financialSummary.currency)}</strong></div><div><span>Pagos confirmados</span><strong>{financialMoney(financialSummary.payments.confirmedTotal, financialSummary.currency)}</strong></div><div><span>Saldo pendiente</span><strong className={styles.financialRemaining}>{financialMoney(financialSummary.balance.remaining, financialSummary.currency)}</strong></div><div><span>Anticipo requerido</span><strong>{financialMoney(financialSummary.contract.depositRequired, financialSummary.currency)}{financialSummary.contract.depositPercent === null ? "" : ` · ${financialSummary.contract.depositPercent}%`}</strong></div>{financialSummary.payments.pendingTotal > 0 && <div><span>Pagos en validación</span><strong>{financialMoney(financialSummary.payments.pendingTotal, financialSummary.currency)}</strong></div>}</div><p className={styles.financialMessage} role="status">{financialSummary.balance.fullyPaid ? "Tu reservación está pagada." : financialSummary.balance.depositCovered === true ? `Tu anticipo está cubierto. Saldo pendiente: ${financialMoney(financialSummary.balance.remaining, financialSummary.currency)}.` : financialSummary.balance.depositCovered === false ? `Tu anticipo requerido es de ${financialMoney(financialSummary.contract.depositRequired, financialSummary.currency)}.` : "Consulta con la agencia las condiciones de pago de tu reservación."}</p></> : <p className={styles.travelerNotice} role="alert">No fue posible calcular el estado financiero de esta reservación. Contacta a la agencia para recibir asistencia.</p>}
-          {financialSummary && <div className={styles.paymentActionPanel}><div><h3>¿Ya realizaste una transferencia?</h3><p>{balancePaid ? "Puedes reportar un movimiento adicional si corresponde a esta reservación." : "Envíanos los datos y el comprobante para que la agencia pueda validarlo."}</p></div><CustomerTransferForm requestedAgencySlug={detail.account.agencySlug} reservationId={reservationId} currency={financialSummary.currency} /></div>}
+          {financialSummary && <div className={styles.paymentActionPanel}>{transferCapacity.status === "available" ? <><div><h3>¿Ya realizaste una transferencia?</h3><p>Envíanos los datos y el comprobante para que la agencia pueda validarlo.</p><strong>Máximo disponible para reportar: {financialMoney(transferCapacity.reportability.reportableRemainingCents / 100, transferCapacity.reportability.currency)}</strong></div><CustomerTransferForm requestedAgencySlug={detail.account.agencySlug} reservationId={reservationId} currency={financialSummary.currency} reportableRemaining={transferCapacity.reportability.reportableRemainingCents / 100} /></> : transferCapacity.status === "reservation_paid_in_full" ? <div className={styles.paymentActionStatus}><h3>Reservación pagada</h3><p>Tu reservación está cubierta al 100%. No es necesario reportar más pagos.</p></div> : transferCapacity.status === "pending_payments_cover_remaining" ? <div className={styles.paymentActionStatus}><h3>Pago en validación</h3><p>Los pagos que están en validación cubren actualmente el saldo pendiente. Podrás reportar otro pago si alguno es rechazado o cancelado.</p></div> : <div className={styles.paymentActionStatus}><h3>Reporte de transferencia no disponible</h3><p>No fue posible calcular el saldo disponible para nuevos pagos. Contacta a la agencia para recibir asistencia.</p></div>}</div>}
           <div className={styles.subsectionHeading}><h3>Historial de pagos</h3><p>{payments.length === 0 ? "Sin movimientos registrados" : `${payments.length} ${payments.length === 1 ? "movimiento" : "movimientos"}`}</p></div>
           {payments.length === 0 ? <div className={styles.paymentEmpty}><p>No hay pagos registrados todavía.</p><span>Cuando la agencia confirme un pago, aparecerá aquí.</span></div> : <div className={styles.customerPaymentList}>{payments.map((payment, index) => <article className={`${styles.customerPaymentItem} ${payment.status === "cancelled" ? styles.customerPaymentCancelled : ""}`} key={`${payment.createdAt}-${index}`}>
             <div className={styles.customerPaymentHeading}><strong>{financialMoney(payment.amount, payment.currency)}</strong><span className={styles.customerPaymentMethod}>{customerPaymentMethodLabels[payment.method]}</span><span className={`${styles.customerPaymentStatus} ${styles[`customerPayment${payment.status}`]}`}>{customerPaymentStatusLabels[payment.status]}</span></div>

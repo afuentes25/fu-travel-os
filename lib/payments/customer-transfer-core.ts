@@ -2,6 +2,11 @@ import { fromMinorUnits } from "@/lib/fx";
 import type { CustomerAgencyAccess } from "@/lib/customers/customer-access-core";
 import { isCustomerReservationUuid } from "@/lib/customers/customer-reservation-detail-core";
 import { projectReservationSnapshotOperational, type ReservationSnapshotProjectionSource } from "@/lib/reservations/snapshot-projection";
+import {
+  calculateCustomerTransferReportability,
+  type CustomerTransferReportability,
+  type ReservationPaymentFinancialRow,
+} from "@/lib/payments/reservation-financial-core";
 import type { Currency } from "@/types";
 
 export const CUSTOMER_TRANSFER_MAX_FILE_BYTES = 10 * 1024 * 1024;
@@ -47,18 +52,30 @@ type TransferBaseResult =
   | Readonly<{ status: "invalid_input"; fieldErrors: Readonly<Record<string, string>> }>
   | Readonly<{ status: "invalid_structure" }>
   | Readonly<{ status: "idempotency_conflict" }>;
+export type CustomerTransferCapacityResult =
+  | Readonly<{ status: "available"; reportability: CustomerTransferReportability }>
+  | Readonly<{ status: "reservation_paid_in_full"; reportability: CustomerTransferReportability }>
+  | Readonly<{ status: "pending_payments_cover_remaining"; reportability: CustomerTransferReportability }>
+  | Exclude<TransferBaseResult, Readonly<{ status: "idempotency_conflict" }>>;
 export type PrepareCustomerTransferUploadResult = TransferBaseResult
   | Readonly<{ status: "ready"; upload: Readonly<{ path: string; token: string }> }>
   | Readonly<{ status: "already_submitted"; payment: CustomerTransferReceipt }>
+  | Readonly<{ status: "reservation_paid_in_full" }>
+  | Readonly<{ status: "pending_payments_cover_remaining" }>
+  | Readonly<{ status: "amount_exceeds_reportable_balance" }>
   | Readonly<{ status: "storage_error" }>;
 export type FinalizeCustomerTransferUploadResult = TransferBaseResult
   | Readonly<{ status: "submitted"; payment: CustomerTransferReceipt }>
   | Readonly<{ status: "already_submitted"; payment: CustomerTransferReceipt }>
+  | Readonly<{ status: "reservation_paid_in_full" }>
+  | Readonly<{ status: "pending_payments_cover_remaining" }>
+  | Readonly<{ status: "amount_exceeds_reportable_balance" }>
   | Readonly<{ status: "invalid_file" }>
   | Readonly<{ status: "storage_error" }>;
 
 export interface CustomerTransferRepositoryClient {
   findAuthorizedReservation(input: Readonly<{ customerAccountId: string; agencyId: string; reservationId: string }>): Promise<ReservationSnapshotProjectionSource | null>;
+  listReservationPayments(input: Readonly<{ agencyId: string; reservationId: string }>): Promise<readonly ReservationPaymentFinancialRow[]>;
   findByIdempotencyKey(input: Readonly<{ agencyId: string; idempotencyKey: string }>): Promise<CustomerTransferPaymentRow | null>;
   insertPayment(input: CustomerTransferPaymentInsert): Promise<CustomerTransferPaymentRow>;
   hasEvidence(input: Readonly<{ paymentId: string; reservationId: string; agencyId: string }>): Promise<boolean>;
@@ -137,7 +154,7 @@ function samePayment(payment: CustomerTransferPaymentRow, candidate: CustomerTra
     && payment.submittedByCustomerAccountId === candidate.submittedByCustomerAccountId;
 }
 function isUniqueViolation(error: unknown) { return typeof error === "object" && error !== null && "code" in error && (error as { code?: unknown }).code === "23505"; }
-function denied(access: CustomerAgencyAccess): TransferBaseResult | null {
+function denied(access: CustomerAgencyAccess): CustomerTransferAuthorizationResult | null {
   if (access.status === "unauthenticated") return { status: "unauthenticated" };
   if (access.status === "selection_required") return { status: "selection_required" };
   if (access.status === "forbidden") return { status: "forbidden" };
@@ -154,7 +171,28 @@ function metadataErrors(input: CustomerTransferMetadataInput, now: Date) {
   if (!isUuid(input.idempotencyKey)) fieldErrors.idempotencyKey = "La solicitud no es válida.";
   return { fieldErrors, amountMinor, reference, paidAt };
 }
-type ValidatedCandidate = Readonly<{ reservationId: string; stagingPath: string; candidate: CustomerTransferPaymentInsert }>;
+type AuthorizedReservation = Readonly<{
+  agencyId: string;
+  customerAccountId: string;
+  reservationId: string;
+  snapshot: ReservationSnapshotProjectionSource;
+}>;
+type CustomerTransferAuthorizationResult = Exclude<
+  TransferBaseResult,
+  Readonly<{ status: "idempotency_conflict" }>
+>;
+type CapacityEvaluation =
+  | Readonly<{ status: "available"; reportability: CustomerTransferReportability }>
+  | Readonly<{ status: "reservation_paid_in_full"; reportability: CustomerTransferReportability }>
+  | Readonly<{ status: "pending_payments_cover_remaining"; reportability: CustomerTransferReportability }>
+  | Readonly<{ status: "invalid_structure" }>;
+
+type ValidatedCandidate = Readonly<{
+  reservationId: string;
+  stagingPath: string;
+  snapshot: ReservationSnapshotProjectionSource;
+  candidate: CustomerTransferPaymentInsert;
+}>;
 
 /** Payment is intentionally created only after private staging bytes validate. */
 export function createCustomerTransferUploadService(dependencies: Readonly<{
@@ -165,23 +203,88 @@ export function createCustomerTransferUploadService(dependencies: Readonly<{
 }>) {
   const repository = () => typeof dependencies.repository === "function" ? dependencies.repository() : dependencies.repository;
   const storage = () => typeof dependencies.storage === "function" ? dependencies.storage() : dependencies.storage;
-  async function resolveCandidate(input: CustomerTransferMetadataInput): Promise<Readonly<{ candidate: ValidatedCandidate }> | Readonly<{ result: TransferBaseResult }>> {
+  async function resolveAuthorizedReservation(input: Readonly<{
+    requestedAgencySlug: unknown;
+    reservationId: unknown;
+  }>): Promise<Readonly<{ reservation: AuthorizedReservation }> | Readonly<{ result: CustomerTransferAuthorizationResult }>> {
     let access: CustomerAgencyAccess;
-    try { access = await dependencies.resolveAccess({ requestedAgencySlug: typeof input.requestedAgencySlug === "string" ? input.requestedAgencySlug : undefined }); }
-    catch { throw new CustomerTransferError(); }
-    const accessDenied = denied(access); if (accessDenied) return { result: accessDenied };
+    try {
+      access = await dependencies.resolveAccess({
+        requestedAgencySlug: typeof input.requestedAgencySlug === "string"
+          ? input.requestedAgencySlug
+          : undefined,
+      });
+    } catch {
+      throw new CustomerTransferError();
+    }
+    const accessDenied = denied(access);
+    if (accessDenied) return { result: accessDenied };
     if (access.status !== "authorized") return { result: { status: "forbidden" } };
+    if (!isUuid(input.reservationId)) return { result: { status: "not_found" } };
+
+    const snapshot = await repository().findAuthorizedReservation({
+      customerAccountId: access.account.customerAccountId,
+      agencyId: access.account.agencyId,
+      reservationId: input.reservationId,
+    });
+    if (!snapshot) return { result: { status: "not_found" } };
+
+    return {
+      reservation: {
+        agencyId: access.account.agencyId,
+        customerAccountId: access.account.customerAccountId,
+        reservationId: input.reservationId,
+        snapshot,
+      },
+    };
+  }
+
+  async function capacityFor(reservation: AuthorizedReservation): Promise<CapacityEvaluation> {
+    const payments = await repository().listReservationPayments({
+      agencyId: reservation.agencyId,
+      reservationId: reservation.reservationId,
+    });
+    const reportability = calculateCustomerTransferReportability({
+      snapshot: reservation.snapshot,
+      payments,
+    });
+    if (!reportability) return { status: "invalid_structure" };
+    if (reportability.confirmedPaymentCents >= reportability.contractTotalCents) {
+      return { status: "reservation_paid_in_full", reportability };
+    }
+    if (reportability.reportableRemainingCents === 0) {
+      return { status: "pending_payments_cover_remaining", reportability };
+    }
+    return { status: "available", reportability };
+  }
+
+  function amountCapacityResult(
+    capacity: CustomerTransferCapacityResult,
+    amountMinor: number,
+  ): Readonly<{ status: "reservation_paid_in_full" }> | Readonly<{ status: "pending_payments_cover_remaining" }> | Readonly<{ status: "amount_exceeds_reportable_balance" }> | Readonly<{ status: "invalid_structure" }> | null {
+    if (capacity.status === "reservation_paid_in_full") return { status: "reservation_paid_in_full" };
+    if (capacity.status === "pending_payments_cover_remaining") return { status: "pending_payments_cover_remaining" };
+    if (capacity.status !== "available") return { status: "invalid_structure" };
+    if (amountMinor > capacity.reportability.reportableRemainingCents) {
+      return { status: "amount_exceeds_reportable_balance" };
+    }
+    return null;
+  }
+
+  async function resolveCandidate(input: CustomerTransferMetadataInput): Promise<Readonly<{ candidate: ValidatedCandidate }> | Readonly<{ result: TransferBaseResult }>> {
     const parsed = metadataErrors(input, (dependencies.now ?? (() => new Date()))());
     if (Object.keys(parsed.fieldErrors).length) return { result: { status: "invalid_input", fieldErrors: parsed.fieldErrors } };
-    const reservationId = input.reservationId as string; const idempotencyKey = input.idempotencyKey as string;
-    const reservation = await repository().findAuthorizedReservation({ customerAccountId: access.account.customerAccountId, agencyId: access.account.agencyId, reservationId });
-    if (!reservation) return { result: { status: "not_found" } };
-    const currency = projectReservationSnapshotOperational(reservation).amounts.currency;
+    const authorized = await resolveAuthorizedReservation(input);
+    if ("result" in authorized) return authorized;
+    const { reservation } = authorized;
+    const reservationId = reservation.reservationId;
+    const idempotencyKey = input.idempotencyKey as string;
+    const currency = projectReservationSnapshotOperational(reservation.snapshot).amounts.currency;
     if (!isCurrency(currency)) return { result: { status: "invalid_structure" } };
-    return { candidate: { reservationId, stagingPath: stagingPath({ agencyId: access.account.agencyId, reservationId, idempotencyKey }), candidate: {
-      reservationId, agencyId: access.account.agencyId, amount: fromMinorUnits(parsed.amountMinor as number, currency), currency,
+    return { candidate: { reservationId, snapshot: reservation.snapshot, stagingPath: stagingPath({ agencyId: reservation.agencyId, reservationId, idempotencyKey }), candidate: {
+      reservationId, agencyId: reservation.agencyId, amount: fromMinorUnits(parsed.amountMinor as number, currency), currency,
       status: "pending", method: "transfer", source: "customer", reference: parsed.reference as string | null,
-      paidAt: parsed.paidAt as string, submittedByCustomerAccountId: access.account.customerAccountId, idempotencyKey,
+      paidAt: parsed.paidAt as string, submittedByCustomerAccountId: reservation.customerAccountId, idempotencyKey,
     } } };
   }
   async function reconcileExisting(candidate: CustomerTransferPaymentInsert, reservationId: string) {
@@ -193,6 +296,16 @@ export function createCustomerTransferUploadService(dependencies: Readonly<{
     return { kind: "pending", payment } as const;
   }
   return {
+    async reportability(input: Readonly<{ requestedAgencySlug: unknown; reservationId: unknown }>): Promise<CustomerTransferCapacityResult> {
+      try {
+        const authorized = await resolveAuthorizedReservation(input);
+        if ("result" in authorized) return authorized.result;
+        return await capacityFor(authorized.reservation);
+      } catch (error) {
+        if (error instanceof CustomerTransferError) throw error;
+        throw new CustomerTransferError();
+      }
+    },
     async prepare(input: PrepareCustomerTransferUploadInput): Promise<PrepareCustomerTransferUploadResult> {
       if (parseFileSize(input.fileSize) === null) return { status: "invalid_input", fieldErrors: { file: "Selecciona un comprobante de máximo 10 MB." } };
       try {
@@ -201,6 +314,16 @@ export function createCustomerTransferUploadService(dependencies: Readonly<{
         if (existing.kind === "conflict") return { status: "idempotency_conflict" };
         if (existing.kind === "invalid") return { status: "invalid_structure" };
         if (existing.kind === "complete") return { status: "already_submitted", payment: existing.receipt };
+        if (!existing.payment) {
+          const capacity = await capacityFor({
+            agencyId: resolved.candidate.candidate.agencyId,
+            customerAccountId: resolved.candidate.candidate.submittedByCustomerAccountId,
+            reservationId: resolved.candidate.reservationId,
+            snapshot: resolved.candidate.snapshot,
+          });
+          const capacityResult = amountCapacityResult(capacity, parseAmountMinor(resolved.candidate.candidate.amount) as number);
+          if (capacityResult) return capacityResult;
+        }
         return { status: "ready", upload: await storage().createSignedUpload({ path: resolved.candidate.stagingPath }) };
       } catch (error) { if (error instanceof CustomerTransferError) throw error; return { status: "storage_error" }; }
     },
@@ -217,6 +340,17 @@ export function createCustomerTransferUploadService(dependencies: Readonly<{
         if (!detected) { try { await storage().remove(staged); } catch { /* best effort invalid-file cleanup */ } return { status: "invalid_file" }; }
         let payment = existing.payment;
         if (!payment) {
+          const capacity = await capacityFor({
+            agencyId: candidate.agencyId,
+            customerAccountId: candidate.submittedByCustomerAccountId,
+            reservationId,
+            snapshot: resolved.candidate.snapshot,
+          });
+          const capacityResult = amountCapacityResult(capacity, parseAmountMinor(candidate.amount) as number);
+          if (capacityResult) {
+            try { await storage().remove(staged); } catch { /* best effort invalidated-staging cleanup */ }
+            return capacityResult;
+          }
           try { payment = await repository().insertPayment(candidate); }
           catch (error) {
             if (!isUniqueViolation(error)) throw error;
@@ -274,7 +408,7 @@ export async function detectCustomerTransferFile(file: unknown): Promise<Detecte
 /** @deprecated Test-only adapter retained to exercise file-signature logic without remote Storage. */
 export function createCustomerTransferEvidenceService(dependencies: Readonly<{
   resolveAccess: (input: Readonly<{ requestedAgencySlug?: string }>) => Promise<CustomerAgencyAccess>;
-  repository: CustomerTransferRepositoryClient;
+  repository: Omit<CustomerTransferRepositoryClient, "listReservationPayments">;
   storage: LegacyStorageClient;
   now?: () => Date;
 }>) {
