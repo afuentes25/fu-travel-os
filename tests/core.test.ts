@@ -184,6 +184,10 @@ import {
   boardingQrPayload,
   hashBoardingToken,
 } from "../lib/documents/ticket-boarding-credential-core";
+import {
+  createBoardingScanService,
+  extractBoardingRawToken,
+} from "../lib/boarding/boarding-scan-core";
 import { createReservationDocumentEligibilityService, DEFAULT_TICKET_PAYMENT_THRESHOLD_BPS } from "../lib/travel-documents/document-eligibility-core";
 import {
   createReservationVoucherDocumentService,
@@ -7755,6 +7759,78 @@ test("payload de abordaje genera PNG QR sin incorporar identificadores internos"
   assert.match(dataUrl, /^data:image\/png;base64,/);
   assert.equal(boardingQrPayload(rawToken).includes("agency-furiver"), false);
   assert.equal(boardingQrPayload(rawToken).includes(customerDetailReservationId), false);
+});
+
+test("scanner administrativo valida QR opaco y las transiciones de abordaje son explícitas e idempotentes", async () => {
+  const access = adminAccessFixture({ memberships: [adminMembership()] });
+  const rawToken = "A".repeat(43);
+  const travelerId = "74cf2e61-23bd-4d4a-85ca-e1d7a36fc183";
+  const ticketId = "84cf2e61-23bd-4d4a-85ca-e1d7a36fc183";
+  let credentialStatus = "active";
+  let ticketStatus = "available";
+  let boarding = { status: "pending", checkedInAt: null as string | null, boardedAt: null as string | null };
+  const events: string[] = [];
+  const repository = {
+    async findCredential({ agencyId, tokenSha256 }: { agencyId: string; tokenSha256: string }) { return agencyId === "agency-furiver" && tokenSha256 === hashBoardingToken(rawToken) ? { id: "94cf2e61-23bd-4d4a-85ca-e1d7a36fc183", reservationId: customerDetailReservationId, travelerId, ticketDocumentId: ticketId, status: credentialStatus } : null; },
+    async findTicket() { return { id: ticketId, documentType: "ticket", status: ticketStatus, reservationId: customerDetailReservationId, travelerId }; },
+    async findTraveler() { return { id: travelerId, reservationId: customerDetailReservationId, position: 1, travelerType: "adult", status: "complete", firstName: "María", lastName: "Pérez" }; },
+    async findReservation() { return financialReservationRow(); },
+    async findBoardingState() { return boarding; },
+    async checkIn() {
+      if (boarding.status === "boarded") return { status: "already_boarded" as const, checkedInAt: boarding.checkedInAt, boardedAt: boarding.boardedAt };
+      if (boarding.status === "checked_in") return { status: "already_checked_in" as const, checkedInAt: boarding.checkedInAt, boardedAt: null };
+      boarding = { status: "checked_in", checkedInAt: TEST_NOW, boardedAt: null }; events.push("checked_in");
+      return { status: "checked_in" as const, checkedInAt: TEST_NOW, boardedAt: null };
+    },
+    async board() {
+      if (boarding.status === "pending") return { status: "check_in_required" as const, checkedInAt: null, boardedAt: null };
+      if (boarding.status === "boarded") return { status: "already_boarded" as const, checkedInAt: boarding.checkedInAt, boardedAt: boarding.boardedAt };
+      boarding = { status: "boarded", checkedInAt: TEST_NOW, boardedAt: TEST_NOW }; events.push("boarded");
+      return { status: "boarded" as const, checkedInAt: TEST_NOW, boardedAt: TEST_NOW };
+    },
+    async listBoardingStates() { return [boarding]; },
+  };
+  const service = createBoardingScanService({ resolveAccess: access.resolver.resolve, repository });
+  assert.equal(extractBoardingRawToken(`FUTRAVEL:BOARDING:1:${rawToken}`), rawToken);
+  assert.equal(extractBoardingRawToken(`FUTRAVEL:BOARDING:2:${rawToken}`), null);
+  assert.equal(extractBoardingRawToken("https://example.com/scan"), null);
+  const scan = await service.resolve({ requestedAgencySlug: "furiver", rawToken });
+  assert.deepEqual(scan.status === "valid" ? scan.preview.traveler : null, { position: 1, name: "María Pérez", travelerType: "adult" });
+  assert.equal(events.length, 0);
+  assert.equal(JSON.stringify(scan).includes(rawToken), false);
+  assert.equal((await service.board({ requestedAgencySlug: "furiver", rawToken })).status, "check_in_required");
+  assert.equal((await service.checkIn({ requestedAgencySlug: "furiver", rawToken })).status, "checked_in");
+  assert.equal((await service.checkIn({ requestedAgencySlug: "furiver", rawToken })).status, "already_checked_in");
+  assert.equal(events.filter((event) => event === "checked_in").length, 1);
+  assert.equal((await service.board({ requestedAgencySlug: "furiver", rawToken })).status, "boarded");
+  assert.equal((await service.board({ requestedAgencySlug: "furiver", rawToken })).status, "already_boarded");
+  assert.deepEqual(events, ["checked_in", "boarded"]);
+  assert.equal((await service.resolve({ requestedAgencySlug: "furiver", rawToken })).status, "valid");
+  assert.equal((await service.resolve({ requestedAgencySlug: "furiver", rawToken: "B".repeat(43) })).status, "invalid");
+  credentialStatus = "revoked";
+  assert.equal((await service.resolve({ requestedAgencySlug: "furiver", rawToken })).status, "credential_unavailable");
+  credentialStatus = "active";
+  ticketStatus = "revoked";
+  assert.equal((await service.resolve({ requestedAgencySlug: "furiver", rawToken })).status, "credential_unavailable");
+  ticketStatus = "available";
+  assert.deepEqual(await service.summary({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId, travelerCount: 1 }), { status: "authorized", checkedIn: 1, boarded: 1, travelerCount: 1 });
+  assert.equal((await service.resolve({ requestedAgencySlug: "crisenix", rawToken })).status, "forbidden");
+  assert.equal((await service.resolve({ requestedAgencySlug: "furiver", rawToken: "not-a-token" })).status, "invalid");
+  const migration = readFileSync("supabase/migrations/20260801230000_atomic_boarding_transitions.sql", "utf8");
+  const repositorySource = readFileSync("lib/boarding/boarding-scan-repository.ts", "utf8");
+  const control = readFileSync("app/admin/[agencySlug]/abordaje/boarding-control.tsx", "utf8");
+  assert.match(migration, /traveler_boarding_events_one_transition_per_traveler_unique/);
+  assert.match(migration, /check_in_traveler_atomic[\s\S]*for update[\s\S]*insert into public\.traveler_boarding_events/i);
+  assert.match(migration, /board_traveler_atomic[\s\S]*check_in_required[\s\S]*insert into public\.traveler_boarding_events/i);
+  assert.match(migration, /revoke all on function public\.check_in_traveler_atomic[\s\S]*from public, anon, authenticated/i);
+  assert.match(migration, /grant execute on function public\.board_traveler_atomic[\s\S]*to service_role/i);
+  assert.match(repositorySource, /check_in_traveler_atomic/);
+  assert.match(repositorySource, /board_traveler_atomic/);
+  assert.doesNotMatch(repositorySource, /\.download\(/);
+  assert.doesNotMatch(control, /localStorage|sessionStorage|rawToken.*value=/i);
+  assert.match(control, /BrowserQRCodeReader/);
+  assert.match(control, /Escanear siguiente/);
+  assert.match(readFileSync("app/admin/[agencySlug]/reservaciones/[reservationId]/page.tsx", "utf8"), /Abrir control de abordaje/);
 });
 
 test("contexto cliente y cambios de nombre distinguen tickets sin exponer IDs ni revocar otros viajeros", async () => {

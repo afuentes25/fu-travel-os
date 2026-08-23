@@ -26,6 +26,7 @@ import { createSupabaseReservationVoucherRepository } from "@/lib/documents/rese
 import { createSupabaseReservationTicketRepository } from "@/lib/documents/reservation-ticket-document-repository";
 import { reconcileReservationVoucherLifecycle } from "@/lib/travel-documents/voucher-lifecycle";
 import { reconcileReservationTicketLifecycle } from "@/lib/travel-documents/ticket-lifecycle";
+import { getAdminReservationBoardingSummary } from "@/lib/boarding/boarding-scan";
 import type { ReservationContractDocumentRow, ReservationContractInstanceRow } from "@/lib/documents/reservation-contract-document-core";
 import styles from "../../../admin.module.css";
 import detailStyles from "./admin-detail.module.css";
@@ -214,6 +215,11 @@ export default async function AdminReservationDetailPage({
   const completedTravelers = reservation.travelers.filter((traveler) => traveler.status === "complete").length;
   const availableTicketCount = [...ticketsByTraveler.values()].filter((ticket) => ticket.status === "available").length;
   const contractSummary = !contractInstance ? "Sin preparar" : contractInstance.status === "accepted" ? "Aceptado" : "Pendiente de aceptación";
+  let boardingSummary: { checkedIn: number; boarded: number; travelerCount: number } | null = null;
+  try {
+    const value = await getAdminReservationBoardingSummary({ requestedAgencySlug: access.agency.agencySlug, reservationId: reservation.id, travelerCount: reservation.travelers.length });
+    if (value.status === "authorized") boardingSummary = value;
+  } catch { boardingSummary = null; }
 
   return (
     <AdminShell agency={access.agency} memberships={access.memberships}>
@@ -265,6 +271,8 @@ export default async function AdminReservationDetailPage({
             <div><span>Contrato</span><strong>{contractSummary}</strong></div>
             <div><span>Voucher</span><strong>{voucherAvailable ? "Disponible" : "Pendiente"}</strong></div>
             <div><span>Boletos</span><strong>{availableTicketCount} / {ticketTravelers.length}</strong></div>
+            {boardingSummary && <><div><span>Check-in</span><strong>{boardingSummary.checkedIn} / {boardingSummary.travelerCount}</strong></div><div><span>Abordaje</span><strong>{boardingSummary.boarded} / {boardingSummary.travelerCount}</strong></div></>}
+            <Link className={detailStyles.boardingLink} href={`/admin/${encodeURIComponent(access.agency.agencySlug)}/abordaje`}>Abrir control de abordaje</Link>
           </aside>
         </div>
       </section>
