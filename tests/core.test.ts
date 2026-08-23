@@ -1324,10 +1324,18 @@ function adminReservationDetailRow(
   };
 }
 
+function adminReservationTravelerRows() {
+  return [
+    { position: 1, traveler_type: "adult", status: "complete", first_name: "Juan", last_name: "Pérez" },
+    { position: 2, traveler_type: "adult", status: "pending", first_name: null, last_name: null },
+    { position: 3, traveler_type: "minor", status: "pending", first_name: null, last_name: null },
+  ] as const;
+}
+
 test("detalle administrativo valida UUID antes de consultar y exige agencia autorizada", async () => {
   let calls = 0;
   const detail = createAdminReservationDetail({
-    reservationClient: { async find() { calls += 1; return null; } },
+    reservationClient: { async find() { calls += 1; return null; }, async listTravelers() { return []; } },
   });
   await assert.rejects(
     detail.find({ agencyId: "agency-furiver", reservationId: "no-es-uuid" }),
@@ -1337,40 +1345,89 @@ test("detalle administrativo valida UUID antes de consultar y exige agencia auto
 
   const requests: Array<{ agencyId: string; reservationId: string }> = [];
   const authorized = createAdminReservationDetail({
-    reservationClient: { async find(input) { requests.push(input); return adminReservationDetailRow(); } },
+    reservationClient: { async find(input) { requests.push(input); return adminReservationDetailRow(); }, async listTravelers(input) { requests.push(input); return adminReservationTravelerRows(); } },
   });
   await authorized.find({ agencyId: "agency-furiver", reservationId: adminDetailReservationId });
-  assert.deepEqual(requests, [{ agencyId: "agency-furiver", reservationId: adminDetailReservationId }]);
+  assert.deepEqual(requests, [{ agencyId: "agency-furiver", reservationId: adminDetailReservationId }, { agencyId: "agency-furiver", reservationId: adminDetailReservationId }]);
 });
 
 test("detalle administrativo proyecta snapshots modernos e históricos de forma segura", async () => {
   const modern = adminReservationDetailRow();
   const modernSnapshot = modern.snapshot as ReservationSnapshot;
-  const detail = createAdminReservationDetail({ reservationClient: { async find() { return modern; } } });
+  const detail = createAdminReservationDetail({ reservationClient: { async find() { return modern; }, async listTravelers() { return adminReservationTravelerRows(); } } });
   const result = await detail.find({ agencyId: "agency-furiver", reservationId: adminDetailReservationId });
   assert.deepEqual(result.occupancy, { rooms: modernSnapshot.rooms, adults: 2, minors: 1, totalTravelers: 3 });
   assert.equal(result.primaryContact, null);
   assert.equal(result.travelerDataStatus, "pending");
+  assert.deepEqual(result.travelers[0], { position: 1, travelerType: "adult", firstName: "Juan", lastName: "Pérez", status: "complete" });
   assert.equal("snapshot" in result, false);
   assert.equal("idempotencyKey" in result, false);
   assert.equal("agencyId" in result, false);
 
   const { rooms: _rooms, occupancy: _occupancy, ...historical } = modernSnapshot;
   const historicalDetail = createAdminReservationDetail({
-    reservationClient: { async find() { return adminReservationDetailRow(historical); } },
+    reservationClient: { async find() { return adminReservationDetailRow(historical); }, async listTravelers() { return adminReservationTravelerRows(); } },
   });
   const recovered = await historicalDetail.find({ agencyId: "agency-furiver", reservationId: adminDetailReservationId });
   assert.deepEqual(recovered.occupancy, { rooms: null, adults: 2, minors: 1, totalTravelers: 3 });
-  assert.equal(recovered.travelers.length, 1);
+  assert.equal(recovered.travelers.length, 3);
+});
+
+test("detalle administrativo usa reservation_travelers como fuente canónica y conserva slots pendientes", async () => {
+  const snapshot = {
+    ...adminReservationDetailRow().snapshot as ReservationSnapshot,
+    travelers: {
+      adults: 2,
+      minors: 1,
+      status: "pending",
+      drafts: [{ category: "adult", fullName: "Nombre del snapshot", completionStatus: "complete" }],
+    },
+  };
+  const rows = [
+    { position: 2, traveler_type: "adult", status: "pending", first_name: null, last_name: null },
+    { position: 3, traveler_type: "minor", status: "pending", first_name: null, last_name: null },
+    { position: 1, traveler_type: "adult", status: "complete", first_name: "Juan Carlos", last_name: "Pérez" },
+  ] as const;
+  const snapshotBeforeRead = JSON.stringify(snapshot);
+  const detail = createAdminReservationDetail({
+    reservationClient: {
+      async find() { return adminReservationDetailRow(snapshot); },
+      async listTravelers() { return rows; },
+    },
+  });
+  const result = await detail.find({ agencyId: "agency-furiver", reservationId: adminDetailReservationId });
+  assert.deepEqual(result.travelers, [
+    { position: 1, travelerType: "adult", firstName: "Juan Carlos", lastName: "Pérez", status: "complete" },
+    { position: 2, travelerType: "adult", firstName: null, lastName: null, status: "pending" },
+    { position: 3, travelerType: "minor", firstName: null, lastName: null, status: "pending" },
+  ]);
+  assert.equal(JSON.stringify(result.travelers).includes("Nombre del snapshot"), false);
+  assert.equal(result.travelerDataStatus, "pending");
+  assert.equal(JSON.stringify(snapshot), snapshotBeforeRead);
+
+  const malformed = createAdminReservationDetail({
+    reservationClient: {
+      async find() { return adminReservationDetailRow(snapshot); },
+      async listTravelers() { return rows.slice(0, 2); },
+    },
+  });
+  assert.equal((await malformed.find({ agencyId: "agency-furiver", reservationId: adminDetailReservationId })).travelerDataStatus, "invalid_structure");
+
+  const action = readFileSync("app/cuenta/[agencySlug]/reservaciones/[reservationId]/traveler-actions.ts", "utf8");
+  const adminPage = readFileSync("app/admin/[agencySlug]/reservaciones/[reservationId]/page.tsx", "utf8");
+  assert.match(action, /revalidatePath\(\s*`\/cuenta\/\$\{encodeURIComponent\(requestedAgencySlug\)\}\/reservaciones\/\$\{reservationId\}`/);
+  assert.match(action, /revalidatePath\(\s*`\/admin\/\$\{encodeURIComponent\(requestedAgencySlug\)\}\/reservaciones\/\$\{reservationId\}`/);
+  assert.match(adminPage, /Viajero \$\{traveler\.position\}/);
+  assert.match(adminPage, /traveler\.firstName, traveler\.lastName/);
 });
 
 test("detalle administrativo mantiene aislamiento y sanea errores internos", async () => {
-  const isolated = createAdminReservationDetail({ reservationClient: { async find() { return null; } } });
+  const isolated = createAdminReservationDetail({ reservationClient: { async find() { return null; }, async listTravelers() { return []; } } });
   await assert.rejects(
     isolated.find({ agencyId: "agency-crisenix", reservationId: adminDetailReservationId }),
     (error: unknown) => error instanceof AdminReservationDetailError && error.kind === "not_found",
   );
-  const failing = createAdminReservationDetail({ reservationClient: { async find() { throw new Error("SQL secret details"); } } });
+  const failing = createAdminReservationDetail({ reservationClient: { async find() { throw new Error("SQL secret details"); }, async listTravelers() { return []; } } });
   await assert.rejects(
     failing.find({ agencyId: "agency-furiver", reservationId: adminDetailReservationId }),
     (error: unknown) => error instanceof AdminReservationDetailError && error.kind === "internal" && !error.message.includes("SQL"),
@@ -1383,6 +1440,7 @@ test("página de detalle autoriza antes de consultar y repositorio filtra por ag
   assert.equal(page.includes("error.message"), false);
   const repository = readFileSync("lib/reservations/admin-detail-repository.ts", "utf8");
   assert.match(repository, /\.eq\("id", reservationId\)[\s\S]*\.eq\("agency_id", agencyId\)/);
+  assert.match(repository, /from\("reservation_travelers"\)[\s\S]*\.eq\("reservation_id", reservationId\)[\s\S]*\.eq\("agency_id", agencyId\)[\s\S]*\.order\("position", \{ ascending: true \}\)/);
 });
 
 function customerReservationListingFixture(input: Readonly<{
@@ -7451,6 +7509,33 @@ test("migración de tickets exige traveler tenant-safe y conserva voucher/docume
   assert.match(migration, /reservation_documents_ticket_traveler_version_unique/);
   assert.equal(migration.includes("create policy"), false);
   assert.equal(migration.includes("update public.reservation_snapshots"), false);
+});
+
+test("fundación de abordaje conserva credenciales hash, estado operacional y eventos tenant-safe sin QR", () => {
+  const migration = readFileSync("supabase/migrations/20260801210000_boarding_foundation.sql", "utf8");
+  assert.match(migration, /create table public\.traveler_boarding_credentials/i);
+  assert.match(migration, /token_sha256 text not null/i);
+  assert.match(migration, /token_sha256 ~ '\^\[0-9a-f\]\{64\}\$'/i);
+  assert.match(migration, /unique \(token_sha256\)/i);
+  assert.doesNotMatch(migration, /\braw_token\b|\btoken\s+text\b/i);
+  assert.match(migration, /status in \('active', 'revoked'\)/i);
+  assert.match(migration, /foreign key \(reservation_traveler_id, reservation_id, agency_id\)[\s\S]*references public\.reservation_travelers \(id, reservation_id, agency_id\)[\s\S]*on delete restrict/i);
+  assert.match(migration, /foreign key \(ticket_document_id, reservation_traveler_id, reservation_id, agency_id\)[\s\S]*references public\.reservation_documents \(id, reservation_traveler_id, reservation_id, agency_id\)[\s\S]*on delete restrict/i);
+  assert.match(migration, /traveler_boarding_credentials_one_active_traveler_unique[\s\S]*where status = 'active'/i);
+  assert.match(migration, /create table public\.traveler_boarding_state/i);
+  assert.match(migration, /status = 'pending' and checked_in_at is null and boarded_at is null/i);
+  assert.match(migration, /status = 'checked_in' and checked_in_at is not null and boarded_at is null/i);
+  assert.match(migration, /status = 'boarded' and checked_in_at is not null and boarded_at is not null/i);
+  assert.match(migration, /create table public\.traveler_boarding_events/i);
+  assert.match(migration, /event_type in \('checked_in', 'boarded'\)/i);
+  assert.match(migration, /traveler_boarding_events_credential_fk[\s\S]*on delete restrict/i);
+  assert.match(migration, /enable row level security/gi);
+  assert.match(migration, /has_agency_role\(agency_id, array\['owner', 'admin', 'staff'\]/i);
+  assert.match(migration, /revoke all on table public\.traveler_boarding_credentials from public, anon, authenticated/i);
+  assert.match(migration, /revoke all on table public\.traveler_boarding_state from public, anon, authenticated/i);
+  assert.match(migration, /revoke all on table public\.traveler_boarding_events from public, anon, authenticated/i);
+  assert.doesNotMatch(migration, /create (table|function|index) [^;]*\bqr\b/i);
+  assert.doesNotMatch(migration, /insert into public\.(traveler_boarding_credentials|traveler_boarding_state|traveler_boarding_events)/i);
 });
 
 test("Voucher reutiliza la elegibilidad, genera V1 privada con SHA y reemite V2 sin datos sensibles", async () => {
