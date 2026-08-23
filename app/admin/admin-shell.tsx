@@ -28,6 +28,7 @@ export function AdminShell({
           </div>
         )}
         <div className={styles.adminTopbarActions}>
+          {agency && <Link href={`/admin/${encodeURIComponent(agency.agencySlug)}/salidas`}>Salidas</Link>}
           {memberships && memberships.length > 1 && <Link href="/admin">Cambiar agencia</Link>}
           <form action={logoutAdminAction}>
             <button type="submit">Cerrar sesión</button>

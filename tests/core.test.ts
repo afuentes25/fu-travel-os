@@ -188,6 +188,10 @@ import {
   createBoardingScanService,
   extractBoardingRawToken,
 } from "../lib/boarding/boarding-scan-core";
+import {
+  createAdminDepartureManifestService,
+  departureKeyForIdentity,
+} from "../lib/departures/admin-departure-manifest-core";
 import { createReservationDocumentEligibilityService, DEFAULT_TICKET_PAYMENT_THRESHOLD_BPS } from "../lib/travel-documents/document-eligibility-core";
 import {
   createReservationVoucherDocumentService,
@@ -7874,4 +7878,92 @@ test("guardar viajero revoca sólo su Ticket cuando cambia nombre o apellido, no
   assert.deepEqual(revocations, [1]);
   assert.equal((await service.save({ ...base, firstName: "María", lastName: "Pérez", birthDate: "1990-01-02" })).status, "saved");
   assert.deepEqual(revocations, [1]);
+});
+
+test("manifiesto de salidas usa la identidad canónica congelada y compone estados operativos en bulk", async () => {
+  const access = adminAccessFixture({ memberships: [adminMembership()] });
+  const departureSnapshot = (id: string, reservationCode: string, boardingPoint: string) => ({
+    id,
+    reservation_code: reservationCode,
+    status: "confirmed",
+    currency: "MXN" as const,
+    created_at: TEST_NOW,
+    snapshot: {
+      tour: { id: "tour-cancun", code: "CUN", title: "Cancún · Hotel Xcaret" },
+      departure: { id: "departure-2026-08-28", startDate: "2026-08-28T06:00:00.000Z" },
+      boarding: { pointName: boardingPoint },
+      occupancy: { adults: 1, minors: 1, totalTravelers: 2 },
+      total: 10000,
+      depositPercent: 20,
+      depositAmount: 2000,
+    },
+  });
+  const firstId = customerDetailReservationId;
+  const secondId = "15cf2e61-23bd-4d4a-85ca-e1d7a36fc183";
+  const snapshots = [departureSnapshot(firstId, "FT-001", "Terminal Norte"), departureSnapshot(secondId, "FT-002", "Hotel Centro")];
+  const service = createAdminDepartureManifestService({
+    resolveAccess: access.resolver.resolve,
+    now: () => new Date("2026-08-20T00:00:00.000Z"),
+    repository: {
+      async listRecentSnapshots() { return snapshots; },
+      async listDepartureSnapshots({ identity }) { return identity.tourId === "tour-cancun" && identity.departureId === "departure-2026-08-28" ? snapshots : []; },
+      async listTravelers() { return [
+        { id: "traveler-a", reservationId: firstId, position: 1, travelerType: "adult", firstName: "María", lastName: "Pérez" },
+        { id: "traveler-b", reservationId: firstId, position: 2, travelerType: "minor", firstName: "Juan", lastName: "Pérez" },
+        { id: "traveler-c", reservationId: secondId, position: 1, travelerType: "adult", firstName: "Ana", lastName: "López" },
+      ]; },
+      async listTickets() { return [
+        { id: "ticket-a", reservationId: firstId, travelerId: "traveler-a", status: "available" },
+        { id: "ticket-b", reservationId: firstId, travelerId: "traveler-b", status: "revoked" },
+      ]; },
+      async listCredentials() { return [
+        { reservationId: firstId, travelerId: "traveler-a", ticketDocumentId: "ticket-a", status: "active" },
+        { reservationId: firstId, travelerId: "traveler-b", ticketDocumentId: "ticket-b", status: "revoked" },
+      ]; },
+      async listBoardingStates() { return [
+        { reservationId: firstId, travelerId: "traveler-a", status: "checked_in", checkedInAt: TEST_NOW, boardedAt: null },
+        { reservationId: firstId, travelerId: "traveler-b", status: "boarded", checkedInAt: TEST_NOW, boardedAt: TEST_NOW },
+      ]; },
+    },
+  });
+  const listed = await service.list({ requestedAgencySlug: "furiver" });
+  assert.equal(listed.status, "authorized");
+  if (listed.status !== "authorized") return;
+  assert.equal(listed.departures.length, 1);
+  assert.deepEqual(listed.departures[0]?.summary, { reservations: 2, travelers: 3, pending: 1, checkInCompleted: 2, boarded: 1 });
+  const key = listed.departures[0]!.key;
+  assert.equal(key, departureKeyForIdentity({ tourId: "tour-cancun", departureId: "departure-2026-08-28" }));
+  assert.match(key, /^[0-9a-f]{64}$/);
+  assert.equal(key.includes("tour-cancun"), false);
+  const manifest = await service.get({ requestedAgencySlug: "furiver", departureKey: key });
+  assert.equal(manifest.status, "authorized");
+  if (manifest.status !== "authorized") return;
+  assert.deepEqual(manifest.manifest.travelers.map((traveler) => traveler.name), ["Ana López", "María Pérez", "Juan Pérez"]);
+  assert.equal(manifest.manifest.travelers[1]?.ticketStatus, "available");
+  assert.equal(manifest.manifest.travelers[1]?.credentialStatus, "active");
+  assert.equal(manifest.manifest.travelers[2]?.ticketStatus, "unavailable");
+  assert.equal(manifest.manifest.travelers[0]?.boardingStatus, "pending");
+  assert.equal(JSON.stringify(manifest).includes(firstId), false);
+  assert.equal(JSON.stringify(manifest).includes("ticket-a"), false);
+  const searched = await service.get({ requestedAgencySlug: "furiver", departureKey: key, search: "María" });
+  assert.deepEqual(searched.status === "authorized" ? searched.visibleTravelers.map((traveler) => traveler.name) : [], ["María Pérez"]);
+  const pending = await service.get({ requestedAgencySlug: "furiver", departureKey: key, filter: "pending" });
+  assert.deepEqual(pending.status === "authorized" ? pending.visibleTravelers.map((traveler) => traveler.name) : [], ["Ana López"]);
+  assert.equal((await service.get({ requestedAgencySlug: "crisenix", departureKey: key })).status, "forbidden");
+  assert.equal((await service.get({ requestedAgencySlug: "furiver", departureKey: "not-a-departure" })).status, "not_found");
+  const unauthenticated = createAdminDepartureManifestService({
+    resolveAccess: async () => ({ status: "unauthenticated" }),
+    repository: { async listRecentSnapshots() { throw new Error("must not read"); }, async listDepartureSnapshots() { throw new Error("must not read"); }, async listTravelers() { throw new Error("must not read"); }, async listTickets() { throw new Error("must not read"); }, async listCredentials() { throw new Error("must not read"); }, async listBoardingStates() { throw new Error("must not read"); } },
+  });
+  assert.equal((await unauthenticated.list({ requestedAgencySlug: "furiver" })).status, "unauthenticated");
+  const repository = readFileSync("lib/departures/admin-departure-manifest-repository.ts", "utf8");
+  const core = readFileSync("lib/departures/admin-departure-manifest-core.ts", "utf8");
+  const detailPage = readFileSync("app/admin/[agencySlug]/salidas/[departureKey]/page.tsx", "utf8");
+  assert.match(repository, /snapshot->tour->>id/);
+  assert.match(repository, /snapshot->departure->>id/);
+  assert.match(repository, /\.in\("reservation_id"/);
+  assert.doesNotMatch(repository, /traveler_boarding_events/);
+  assert.doesNotMatch(core, /travelers\.drafts/);
+  assert.match(detailPage, /Abrir control de abordaje/);
+  assert.doesNotMatch(detailPage, /rawToken|tokenSha256|credentialId/);
 });
