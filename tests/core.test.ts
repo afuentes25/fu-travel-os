@@ -163,6 +163,7 @@ import {
   createAdminContractActivationService,
 } from "../lib/contracts/admin-contract-activation-core";
 import { createReservationContractService } from "../lib/contracts/reservation-contract-core";
+import { createCustomerContractAcceptanceService, CONTRACT_ACCEPTANCE_STATEMENT, CONTRACT_ACCEPTANCE_STATEMENT_VERSION } from "../lib/contracts/customer-contract-acceptance-core";
 import {
   createReservationContractDocumentService,
   calculateContractDocumentSha256,
@@ -6991,4 +6992,13 @@ test("migración de integridad conserva documentos históricos y restringe SHA-2
   assert.match(migration, /content_sha256 is null[\s\S]*\^\[0-9a-f\]\{64\}\$/i);
   assert.equal(migration.includes("update public.reservation_documents"), false);
   assert.equal(customerDocuments.includes("contentSha256"), false);
+});
+
+test("aceptación contractual exige cuenta primary, verifica bytes privados y guarda declaración de servidor", async () => {
+  const access = customerAccessFixture({ accounts: [customerAccount()] }); const calls: string[] = [];
+  const service = createCustomerContractAcceptanceService({ resolveAccess: access.resolver.resolve, repository: { async findPrimaryLink() { calls.push("primary"); return true; }, async findInstance() { return { id: contractInstanceId, status: "prepared" }; }, async findDocument() { return { id: contractInstanceDocumentId, status: "available", version: 1, storagePath: "private.pdf", contentSha256: calculateContractDocumentSha256(new TextEncoder().encode("%PDF contract")) }; }, async updateDocumentHash() { calls.push("hash"); }, async accept(input) { calls.push(input.statementVersion); assert.equal(input.statement, CONTRACT_ACCEPTANCE_STATEMENT); return { status: "accepted", acceptedAt: TEST_NOW }; } }, storage: { async upload() {}, async download() { return new TextEncoder().encode("%PDF contract"); }, async remove() {} } });
+  const result = await service.accept({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId }); assert.equal(result.status, "accepted"); assert.ok(calls.includes(CONTRACT_ACCEPTANCE_STATEMENT_VERSION));
+  const mismatch = createCustomerContractAcceptanceService({ resolveAccess: access.resolver.resolve, repository: { async findPrimaryLink(){return true;},async findInstance(){return{id:contractInstanceId,status:"prepared"};},async findDocument(){return{id:contractInstanceDocumentId,status:"available",version:1,storagePath:"x",contentSha256:"a".repeat(64)};},async updateDocumentHash(){},async accept(){throw new Error("must not accept");} }, storage:{async upload(){},async download(){return new TextEncoder().encode("%PDF changed");},async remove(){}} });
+  assert.deepEqual(await mismatch.accept({requestedAgencySlug:"furiver",reservationId:customerDetailReservationId}),{status:"document_integrity_error"});
+  const migration=readFileSync("supabase/migrations/20260801160000_contract_acceptance.sql","utf8"); assert.match(migration,/for update/i);assert.match(migration,/unique \(contract_instance_id\)/i);assert.match(migration,/to service_role/i); assert.equal(readFileSync("app/cuenta/[agencySlug]/reservaciones/[reservationId]/contract-acceptance-actions.ts","utf8").includes("export const"),false);
 });

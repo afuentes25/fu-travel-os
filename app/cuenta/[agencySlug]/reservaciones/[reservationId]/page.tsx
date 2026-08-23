@@ -11,11 +11,13 @@ import { getReservationTravelerData } from "@/lib/travelers/traveler-data";
 import { getReservationFinancialSummary } from "@/lib/payments/reservation-financial";
 import { listCustomerReservationPayments } from "@/lib/payments/customer-payment-list";
 import { listCustomerReservationDocuments } from "@/lib/documents/customer-document-list";
+import { createSupabaseCustomerContractAcceptanceRepository } from "@/lib/contracts/customer-contract-acceptance-repository";
 
 import { CustomerShell } from "../../../customer-shell";
 import { TravelerDataForm } from "./traveler-data-form";
 import { CustomerTransferForm } from "./customer-transfer-form";
 import { DocumentOpenButton } from "./document-open-button";
+import { ContractAcceptanceForm } from "./contract-acceptance-form";
 import {
   customerReservationDetailNextStep,
   customerReservationStatusLabel,
@@ -212,6 +214,10 @@ export default async function CustomerReservationDetailPage({
   const financialSummary = financial.status === "authorized" ? financial.summary : null;
   const payments = paymentHistory.payments;
   const documents = documentList.documents;
+  const contractDocument = documents.find((document) => document.documentType === "contract") ?? null;
+  let contractAccepted = false;
+  let contractPrimary = false;
+  if (contractDocument) try { const acceptanceRepository = createSupabaseCustomerContractAcceptanceRepository(); contractPrimary = await acceptanceRepository.findPrimaryLink({ customerAccountId: detail.account.customerAccountId, agencyId: detail.account.agencyId, reservationId }); const instance = await acceptanceRepository.findInstance({ agencyId: detail.account.agencyId, reservationId }); contractAccepted = instance?.status === "accepted"; } catch { contractPrimary = false; }
   const slots = travelerSlots.status === "ready" ? travelerSlots.slots : [];
   let travelerData: Awaited<ReturnType<typeof getReservationTravelerData>> | null = null;
   if (travelerSlots.status === "ready") {
@@ -287,6 +293,8 @@ export default async function CustomerReservationDetailPage({
             <DocumentOpenButton requestedAgencySlug={detail.account.agencySlug} reservationId={reservationId} documentKey={document.documentKey} />
           </article>)}</div>}
         </section>
+
+        {contractDocument && <section className={styles.detailCard} aria-labelledby="customer-contract-acceptance-title"><h2 id="customer-contract-acceptance-title">{contractAccepted ? "Contrato aceptado" : "Contrato pendiente de aceptación"}</h2>{contractAccepted ? <p role="status">Contrato aceptado.</p> : contractPrimary ? <ContractAcceptanceForm agencySlug={detail.account.agencySlug} reservationId={reservationId} /> : <p>La aceptación contractual debe realizarla la cuenta principal vinculada a esta reservación.</p>}</section>}
 
         <section className={styles.detailCard} aria-labelledby="customer-travelers-title">
           <div className={styles.detailCardHeader}><h2 id="customer-travelers-title">Viajeros</h2>{travelerSlots.status === "ready" && <p role="status">{travelerDataComplete ? "Datos de viajeros completos" : "Datos de viajeros pendientes de completar"}</p>}</div>
