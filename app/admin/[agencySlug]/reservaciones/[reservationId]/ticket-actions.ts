@@ -21,5 +21,6 @@ export async function generateReservationTravelerTicketAction(_previous: TicketF
   if (result.status !== "generated" && result.status !== "existing") return { error: "No fue posible generar el boleto. Inténtalo nuevamente." };
   revalidatePath(`/admin/${encodeURIComponent(requestedAgencySlug)}/reservaciones/${reservationId}`);
   revalidatePath(`/cuenta/${encodeURIComponent(requestedAgencySlug)}/reservaciones/${reservationId}`);
+  revalidatePath(`/admin/${encodeURIComponent(requestedAgencySlug)}/salidas`, "layout");
   return { success: result.status === "generated" ? `Boleto V${result.ticket.version} generado.` : `El boleto V${result.ticket.version} ya estaba disponible.` };
 }

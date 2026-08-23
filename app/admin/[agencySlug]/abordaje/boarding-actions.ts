@@ -23,6 +23,7 @@ export async function checkInBoardingTravelerAction(input: Readonly<{ agencySlug
   if (transition.status === "checked_in" || transition.status === "already_checked_in" || transition.status === "already_boarded") {
     revalidatePath(`/admin/${encodeURIComponent(input.agencySlug)}/abordaje`);
     revalidatePath(`/admin/${encodeURIComponent(input.agencySlug)}/reservaciones`, "layout");
+    revalidatePath(`/admin/${encodeURIComponent(input.agencySlug)}/salidas`, "layout");
     return { transition, scan: await resolveBoardingScan({ requestedAgencySlug: input.agencySlug, rawToken: input.rawToken }) };
   }
   return { transition };
@@ -35,6 +36,7 @@ export async function boardBoardingTravelerAction(input: Readonly<{ agencySlug: 
   if (transition.status === "boarded" || transition.status === "already_boarded") {
     revalidatePath(`/admin/${encodeURIComponent(input.agencySlug)}/abordaje`);
     revalidatePath(`/admin/${encodeURIComponent(input.agencySlug)}/reservaciones`, "layout");
+    revalidatePath(`/admin/${encodeURIComponent(input.agencySlug)}/salidas`, "layout");
     return { transition, scan: await resolveBoardingScan({ requestedAgencySlug: input.agencySlug, rawToken: input.rawToken }) };
   }
   return { transition };

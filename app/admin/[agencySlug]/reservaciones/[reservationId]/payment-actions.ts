@@ -101,6 +101,7 @@ export async function registerManualPaymentAction(
 
   revalidatePath(detailPath(requestedAgencySlug, reservationId));
   revalidatePath(`/cuenta/${encodeURIComponent(requestedAgencySlug)}/reservaciones/${reservationId}`);
+  revalidatePath(`/admin/${encodeURIComponent(requestedAgencySlug)}/salidas`, "layout");
   return result.status === "created"
     ? { outcome: "created", success: `Pago registrado correctamente.${paymentDocumentMessage(result.documentStatus)}`, idempotencyKey }
     : { outcome: "already_exists", success: `El pago ya había sido registrado.${paymentDocumentMessage(result.documentStatus)}`, idempotencyKey };

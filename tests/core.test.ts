@@ -7967,3 +7967,16 @@ test("manifiesto de salidas usa la identidad canónica congelada y compone estad
   assert.match(detailPage, /Abrir control de abordaje/);
   assert.doesNotMatch(detailPage, /rawToken|tokenSha256|credentialId/);
 });
+
+test("acciones que cambian viajeros, Ticket, pagos o boarding invalidan el manifiesto operativo", () => {
+  const travelerAction = readFileSync("app/cuenta/[agencySlug]/reservaciones/[reservationId]/traveler-actions.ts", "utf8");
+  const ticketAction = readFileSync("app/admin/[agencySlug]/reservaciones/[reservationId]/ticket-actions.ts", "utf8");
+  const paymentAction = readFileSync("app/admin/[agencySlug]/reservaciones/[reservationId]/payment-actions.ts", "utf8");
+  const paymentStatusAction = readFileSync("app/admin/[agencySlug]/reservaciones/[reservationId]/payment-status-actions.ts", "utf8");
+  const boardingAction = readFileSync("app/admin/[agencySlug]/abordaje/boarding-actions.ts", "utf8");
+  for (const source of [travelerAction, ticketAction, paymentAction, paymentStatusAction, boardingAction]) {
+    assert.match(source, /revalidatePath\(`\/admin\/\$\{encodeURIComponent\([^)]*\)\}\/salidas`, "layout"\)/);
+  }
+  assert.match(boardingAction, /resolveBoardingScan/);
+  assert.doesNotMatch(boardingAction, /reservation_documents.*download|\.download\(/);
+});

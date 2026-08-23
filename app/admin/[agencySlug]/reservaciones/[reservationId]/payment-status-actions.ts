@@ -39,6 +39,7 @@ export async function changeManualPaymentStatusAction(
   if (result.status === "updated") {
     revalidatePath(detailPath(requestedAgencySlug, reservationId));
     revalidatePath(`/cuenta/${encodeURIComponent(requestedAgencySlug)}/reservaciones/${reservationId}`);
+    revalidatePath(`/admin/${encodeURIComponent(requestedAgencySlug)}/salidas`, "layout");
     if (result.nextStatus === "confirmed") {
       return {
         success: result.documentStatus === "document_error"

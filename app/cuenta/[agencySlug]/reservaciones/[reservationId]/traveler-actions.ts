@@ -60,6 +60,7 @@ export async function saveTravelerDataAction(
     revalidatePath(
       `/admin/${encodeURIComponent(requestedAgencySlug)}/reservaciones/${reservationId}`,
     );
+    revalidatePath(`/admin/${encodeURIComponent(requestedAgencySlug)}/salidas`, "layout");
     return { success: "Datos guardados correctamente." };
   } catch {
     return { error: "No fue posible guardar los datos. Inténtalo nuevamente.", values };
