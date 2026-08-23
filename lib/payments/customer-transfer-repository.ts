@@ -2,10 +2,13 @@ import "server-only";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+import { toMinorUnits } from "@/lib/fx";
 import type { ReservationSnapshotProjectionSource } from "@/lib/reservations/snapshot-projection";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 
 import type {
+  CustomerTransferAtomicFinalizeInput,
+  CustomerTransferAtomicFinalizeResult,
   CustomerTransferEvidenceInsert,
   CustomerTransferPaymentInsert,
   CustomerTransferPaymentRow,
@@ -60,6 +63,19 @@ function paymentFromRow(row: SupabaseCustomerTransferPaymentRow): CustomerTransf
 
 const PAYMENT_FIELDS = "id, reservation_id, agency_id, amount, currency, status, method, source, reference, paid_at, submitted_by_customer_account_id, created_at";
 
+function atomicResult(value: unknown): CustomerTransferAtomicFinalizeResult {
+  const status = Array.isArray(value)
+    ? value[0]?.result_status
+    : (value as { result_status?: unknown } | null)?.result_status;
+  if (
+    status === "created" || status === "existing" || status === "reservation_paid_in_full"
+    || status === "pending_covers_balance" || status === "amount_exceeds_reportable_balance"
+    || status === "idempotency_conflict" || status === "invalid_structure"
+    || status === "not_found" || status === "forbidden"
+  ) return { status };
+  throw databaseFailure(null);
+}
+
 /** Service-role adapter, called only after verified customer-account authorization. */
 export function createSupabaseCustomerTransferRepository(
   supabase: SupabaseClient = getSupabaseServerClient(),
@@ -99,6 +115,26 @@ export function createSupabaseCustomerTransferRepository(
         .eq("reservation_id", reservationId);
       if (error) throw databaseFailure(error);
       return (data ?? []) as ReservationPaymentFinancialRow[];
+    },
+    async finalizePaymentAndEvidence(input: CustomerTransferAtomicFinalizeInput) {
+      const { payment, evidence } = input;
+      const { data, error } = await supabase.rpc("finalize_customer_transfer_payment_atomic", {
+        target_agency_id: payment.agencyId,
+        target_reservation_id: payment.reservationId,
+        target_customer_account_id: payment.submittedByCustomerAccountId,
+        target_payment_id: input.paymentId,
+        target_contract_total_cents: input.contractTotalCents,
+        target_amount_cents: toMinorUnits(payment.amount, payment.currency),
+        target_currency: payment.currency,
+        target_reference: payment.reference,
+        target_paid_at: payment.paidAt,
+        target_idempotency_key: payment.idempotencyKey,
+        target_storage_path: evidence.storagePath,
+        target_mime_type: evidence.mimeType,
+        target_file_size_bytes: evidence.fileSizeBytes,
+      });
+      if (error) throw databaseFailure(error);
+      return atomicResult(data);
     },
     async insertPayment(payment: CustomerTransferPaymentInsert) {
       const { data, error } = await supabase

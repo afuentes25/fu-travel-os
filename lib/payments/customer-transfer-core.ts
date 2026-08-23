@@ -1,4 +1,5 @@
-import { fromMinorUnits } from "@/lib/fx";
+import { fromMinorUnits, toMinorUnits } from "@/lib/fx";
+import { randomUUID } from "node:crypto";
 import type { CustomerAgencyAccess } from "@/lib/customers/customer-access-core";
 import { isCustomerReservationUuid } from "@/lib/customers/customer-reservation-detail-core";
 import { projectReservationSnapshotOperational, type ReservationSnapshotProjectionSource } from "@/lib/reservations/snapshot-projection";
@@ -31,6 +32,24 @@ export type CustomerTransferPaymentInsert = Readonly<{
 export type CustomerTransferEvidenceInsert = Readonly<{
   paymentId: string; reservationId: string; agencyId: string; storagePath: string;
   mimeType: DetectedCustomerTransferFile["mimeType"]; fileSizeBytes: number;
+}>;
+export type CustomerTransferAtomicFinalizeInput = Readonly<{
+  paymentId: string;
+  contractTotalCents: number;
+  payment: CustomerTransferPaymentInsert;
+  evidence: CustomerTransferEvidenceInsert;
+}>;
+export type CustomerTransferAtomicFinalizeResult = Readonly<{
+  status:
+    | "created"
+    | "existing"
+    | "reservation_paid_in_full"
+    | "pending_covers_balance"
+    | "amount_exceeds_reportable_balance"
+    | "idempotency_conflict"
+    | "invalid_structure"
+    | "not_found"
+    | "forbidden";
 }>;
 export type CustomerTransferReceipt = Readonly<{
   amount: number; currency: Currency; status: "pending"; method: "transfer"; paidAt: string;
@@ -71,12 +90,19 @@ export type FinalizeCustomerTransferUploadResult = TransferBaseResult
   | Readonly<{ status: "pending_payments_cover_remaining" }>
   | Readonly<{ status: "amount_exceeds_reportable_balance" }>
   | Readonly<{ status: "invalid_file" }>
-  | Readonly<{ status: "storage_error" }>;
+  | Readonly<{ status: "storage_error" }>
+  | Readonly<{ status: "finalize_error" }>;
 
 export interface CustomerTransferRepositoryClient {
   findAuthorizedReservation(input: Readonly<{ customerAccountId: string; agencyId: string; reservationId: string }>): Promise<ReservationSnapshotProjectionSource | null>;
   listReservationPayments(input: Readonly<{ agencyId: string; reservationId: string }>): Promise<readonly ReservationPaymentFinancialRow[]>;
   findByIdempotencyKey(input: Readonly<{ agencyId: string; idempotencyKey: string }>): Promise<CustomerTransferPaymentRow | null>;
+  /**
+   * The final capacity decision and the payment/evidence insert are one
+   * reservation-scoped PostgreSQL transaction. It is the authoritative
+   * barrier for concurrent finalizations from distinct server instances.
+   */
+  finalizePaymentAndEvidence(input: CustomerTransferAtomicFinalizeInput): Promise<CustomerTransferAtomicFinalizeResult>;
   insertPayment(input: CustomerTransferPaymentInsert): Promise<CustomerTransferPaymentRow>;
   hasEvidence(input: Readonly<{ paymentId: string; reservationId: string; agencyId: string }>): Promise<boolean>;
   insertEvidence(input: CustomerTransferEvidenceInsert): Promise<void>;
@@ -162,6 +188,23 @@ function denied(access: CustomerAgencyAccess): CustomerTransferAuthorizationResu
 }
 function stagingPath(input: Readonly<{ agencyId: string; reservationId: string; idempotencyKey: string }>) { return `${input.agencyId}/${input.reservationId}/staging/${input.idempotencyKey}`; }
 function finalStoragePath(input: Readonly<{ agencyId: string; reservationId: string; paymentId: string; extension: string }>) { return `${input.agencyId}/${input.reservationId}/${input.paymentId}/evidence.${input.extension}`; }
+function contractualTotalCents(snapshot: ReservationSnapshotProjectionSource, currency: Currency): number | null {
+  const total = projectReservationSnapshotOperational(snapshot).amounts.total;
+  if (total === null || !Number.isFinite(total)) return null;
+  try {
+    const cents = toMinorUnits(total, currency);
+    return cents > 0 ? cents : null;
+  } catch { return null; }
+}
+function receiptFromCandidate(candidate: CustomerTransferPaymentInsert): CustomerTransferReceipt {
+  return {
+    amount: candidate.amount,
+    currency: candidate.currency,
+    status: "pending",
+    method: "transfer",
+    paidAt: candidate.paidAt,
+  };
+}
 function metadataErrors(input: CustomerTransferMetadataInput, now: Date) {
   const fieldErrors: Record<string, string> = {};
   if (!isUuid(input.reservationId)) fieldErrors.reservationId = "La reservación no es válida.";
@@ -338,40 +381,70 @@ export function createCustomerTransferUploadService(dependencies: Readonly<{
         let bytes: Uint8Array; try { bytes = await storage().download(staged); } catch { return { status: "storage_error" }; }
         const detected = detectCustomerTransferBytes(bytes);
         if (!detected) { try { await storage().remove(staged); } catch { /* best effort invalid-file cleanup */ } return { status: "invalid_file" }; }
-        let payment = existing.payment;
-        if (!payment) {
-          const capacity = await capacityFor({
-            agencyId: candidate.agencyId,
-            customerAccountId: candidate.submittedByCustomerAccountId,
-            reservationId,
-            snapshot: resolved.candidate.snapshot,
-          });
-          const capacityResult = amountCapacityResult(capacity, parseAmountMinor(candidate.amount) as number);
-          if (capacityResult) {
-            try { await storage().remove(staged); } catch { /* best effort invalidated-staging cleanup */ }
-            return capacityResult;
-          }
-          try { payment = await repository().insertPayment(candidate); }
-          catch (error) {
-            if (!isUniqueViolation(error)) throw error;
-            payment = await repository().findByIdempotencyKey({ agencyId: candidate.agencyId, idempotencyKey: candidate.idempotencyKey });
-            if (!payment) throw error;
-            if (!samePayment(payment, candidate)) return { status: "idempotency_conflict" };
-          }
-        }
-        const receipt = receiptFromPayment(payment); if (!receipt) return { status: "invalid_structure" };
-        if (await repository().hasEvidence({ paymentId: payment.id, reservationId, agencyId: candidate.agencyId })) return { status: "already_submitted", payment: receipt };
-        const finalPath = finalStoragePath({ agencyId: candidate.agencyId, reservationId, paymentId: payment.id, extension: detected.extension });
+        const paymentId = existing.payment?.id ?? randomUUID();
+        const finalPath = finalStoragePath({ agencyId: candidate.agencyId, reservationId, paymentId, extension: detected.extension });
+        const evidence: CustomerTransferEvidenceInsert = {
+          paymentId,
+          reservationId,
+          agencyId: candidate.agencyId,
+          storagePath: finalPath,
+          mimeType: detected.mimeType,
+          fileSizeBytes: detected.bytes.length,
+        };
+
         try { await storage().move({ fromPath: staged, toPath: finalPath }); }
-        catch { if (await repository().hasEvidence({ paymentId: payment.id, reservationId, agencyId: candidate.agencyId })) return { status: "already_submitted", payment: receipt }; return { status: "storage_error" }; }
-        try { await repository().insertEvidence({ paymentId: payment.id, reservationId, agencyId: candidate.agencyId, storagePath: finalPath, mimeType: detected.mimeType, fileSizeBytes: detected.bytes.length }); }
-        catch (error) {
-          if (isUniqueViolation(error) && await repository().hasEvidence({ paymentId: payment.id, reservationId, agencyId: candidate.agencyId })) return { status: "already_submitted", payment: receipt };
-          try { await storage().remove(finalPath); } catch { /* retry with same key can upload again */ }
-          throw error;
+        catch {
+          if (existing.payment && await repository().hasEvidence({ paymentId: existing.payment.id, reservationId, agencyId: candidate.agencyId })) {
+            const receipt = receiptFromPayment(existing.payment);
+            return receipt ? { status: "already_submitted", payment: receipt } : { status: "invalid_structure" };
+          }
+          return { status: "storage_error" };
         }
-        return { status: "submitted", payment: receipt };
-      } catch (error) { if (error instanceof CustomerTransferError) throw error; throw new CustomerTransferError(); }
+
+        let finalized: CustomerTransferAtomicFinalizeResult;
+        try {
+          const contractTotalCents = contractualTotalCents(resolved.candidate.snapshot, candidate.currency);
+          if (contractTotalCents === null) {
+            try { await storage().remove(finalPath); } catch { /* best effort final-object cleanup */ }
+            return { status: "invalid_structure" };
+          }
+          finalized = await repository().finalizePaymentAndEvidence({
+            paymentId,
+            contractTotalCents,
+            payment: candidate,
+            evidence,
+          });
+        } catch {
+          try { await storage().remove(finalPath); } catch { /* best effort final-object cleanup */ }
+          return { status: "finalize_error" };
+        }
+
+        if (finalized.status === "created") return { status: "submitted", payment: receiptFromCandidate(candidate) };
+        if (finalized.status === "existing") {
+          const payment = existing.payment ?? await repository().findByIdempotencyKey({ agencyId: candidate.agencyId, idempotencyKey: candidate.idempotencyKey });
+          if (!payment || !samePayment(payment, candidate)) {
+            try { await storage().remove(finalPath); } catch { /* best effort duplicate-object cleanup */ }
+            return { status: "invalid_structure" };
+          }
+          const receipt = receiptFromPayment(payment);
+          if (!receipt) return { status: "invalid_structure" };
+          if (payment.id !== paymentId) {
+            try { await storage().remove(finalPath); } catch { /* this concurrent retry owns only its generated path */ }
+          }
+          return { status: "already_submitted", payment: receipt };
+        }
+
+        // The final object belongs only to this attempt until the transaction
+        // commits; capacity rejections must not leave it behind in Storage.
+        try { await storage().remove(finalPath); } catch { /* best effort final-object cleanup */ }
+        if (finalized.status === "reservation_paid_in_full") return { status: "reservation_paid_in_full" };
+        if (finalized.status === "pending_covers_balance") return { status: "pending_payments_cover_remaining" };
+        if (finalized.status === "amount_exceeds_reportable_balance") return { status: "amount_exceeds_reportable_balance" };
+        if (finalized.status === "idempotency_conflict") return { status: "idempotency_conflict" };
+        if (finalized.status === "not_found") return { status: "not_found" };
+        if (finalized.status === "forbidden") return { status: "forbidden" };
+        return { status: "invalid_structure" };
+      } catch (error) { if (error instanceof CustomerTransferError) throw error; return { status: "finalize_error" }; }
     },
   };
 }
@@ -408,7 +481,7 @@ export async function detectCustomerTransferFile(file: unknown): Promise<Detecte
 /** @deprecated Test-only adapter retained to exercise file-signature logic without remote Storage. */
 export function createCustomerTransferEvidenceService(dependencies: Readonly<{
   resolveAccess: (input: Readonly<{ requestedAgencySlug?: string }>) => Promise<CustomerAgencyAccess>;
-  repository: Omit<CustomerTransferRepositoryClient, "listReservationPayments">;
+  repository: Omit<CustomerTransferRepositoryClient, "listReservationPayments" | "finalizePaymentAndEvidence">;
   storage: LegacyStorageClient;
   now?: () => Date;
 }>) {

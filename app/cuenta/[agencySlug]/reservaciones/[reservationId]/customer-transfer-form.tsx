@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useRouter } from "next/navigation";
 
 import { getSupabaseBrowserClient } from "@/lib/supabase/browser-client";
 
@@ -41,6 +42,7 @@ export function CustomerTransferForm({
   reportableRemaining: number;
 }>) {
   const dialogRef = useRef<HTMLDialogElement>(null);
+  const router = useRouter();
   const formRef = useRef<HTMLFormElement>(null);
   const localDateRef = useRef<HTMLInputElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -81,7 +83,7 @@ export function CustomerTransferForm({
     }
   }
 
-  function showResult(result: Awaited<ReturnType<typeof finalizeCustomerTransferUploadAction>>) {
+  function showResult(result: Awaited<ReturnType<typeof finalizeCustomerTransferUploadAction>>, refresh = false) {
     if (result.status === "invalid_input") {
       setFieldErrors(result.fieldErrors);
       return;
@@ -91,15 +93,18 @@ export function CustomerTransferForm({
       return;
     }
     if (result.status === "reservation_paid_in_full") {
-      setClientError("Tu reservación ya está cubierta al 100%. No es necesario reportar más pagos.");
+      setClientError(refresh ? "Tu saldo disponible cambió mientras procesábamos el reporte. No se registró un pago adicional." : "Tu reservación ya está cubierta al 100%. No es necesario reportar más pagos.");
+      if (refresh) router.refresh();
       return;
     }
     if (result.status === "pending_payments_cover_remaining") {
-      setClientError("Los pagos en validación cubren actualmente el saldo pendiente. Intenta nuevamente si alguno es rechazado o cancelado.");
+      setClientError(refresh ? "Tu saldo disponible cambió mientras procesábamos el reporte. No se registró un pago adicional." : "Los pagos en validación cubren actualmente el saldo pendiente. Intenta nuevamente si alguno es rechazado o cancelado.");
+      if (refresh) router.refresh();
       return;
     }
     if (result.status === "amount_exceeds_reportable_balance") {
-      setFieldErrors({ amount: "El importe supera el saldo disponible para nuevos pagos." });
+      setFieldErrors({ amount: refresh ? "Tu saldo disponible cambió mientras procesábamos el reporte. No se registró un pago adicional." : "El importe supera el saldo disponible para nuevos pagos." });
+      if (refresh) router.refresh();
       return;
     }
     if (result.status === "forbidden" || result.status === "not_found") {
@@ -117,6 +122,10 @@ export function CustomerTransferForm({
     }
     if (result.status === "storage_error") {
       setClientError("No pudimos subir el comprobante. Intenta nuevamente.");
+      return;
+    }
+    if (result.status === "finalize_error") {
+      setClientError("No pudimos completar la carga del comprobante. Intenta nuevamente.");
     }
   }
 
@@ -194,7 +203,7 @@ export function CustomerTransferForm({
       setIsOpen(false);
       return;
     }
-    showResult(finalized);
+    showResult(finalized, true);
     setPhase("idle");
   }
 

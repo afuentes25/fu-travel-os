@@ -46,7 +46,13 @@ export async function finalizeCustomerTransferUploadAction(formData: FormData) {
   const input = metadata(formData);
   const result = await finalizeCustomerTransferUpload(input);
   redirectForCustomerAccess(result.status, input.requestedAgencySlug, input.reservationId);
-  if (result.status === "submitted" || result.status === "already_submitted") {
+  if (
+    result.status === "submitted"
+    || result.status === "already_submitted"
+    || result.status === "reservation_paid_in_full"
+    || result.status === "pending_payments_cover_remaining"
+    || result.status === "amount_exceeds_reportable_balance"
+  ) {
     revalidatePath(customerDetailPath(input.requestedAgencySlug, input.reservationId));
     revalidatePath(`/admin/${encodeURIComponent(input.requestedAgencySlug)}/reservaciones/${input.reservationId}`);
   }

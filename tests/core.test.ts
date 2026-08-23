@@ -3251,6 +3251,13 @@ test("transferencia staged firma después de autorizar, valida bytes y crea paym
       },
       async listReservationPayments() { return [...payments.values()].map(({ amount, currency, status }) => ({ amount, currency, status })); },
       async findByIdempotencyKey({ agencyId, idempotencyKey }) { return payments.get(keyFor(agencyId, idempotencyKey)) ?? null; },
+      async finalizePaymentAndEvidence({ paymentId, payment, evidence: evidenceInput }) {
+        const key = keyFor(payment.agencyId, payment.idempotencyKey);
+        if (payments.has(key)) return { status: "existing" as const };
+        payments.set(key, { ...customerTransferStored(payment), id: paymentId });
+        evidence.add(`${evidenceInput.paymentId}:${evidenceInput.reservationId}:${evidenceInput.agencyId}`);
+        return { status: "created" as const };
+      },
       async insertPayment(insert) {
         const key = keyFor(insert.agencyId, insert.idempotencyKey);
         if (payments.has(key)) throw Object.assign(new Error("duplicate"), { code: "23505" });
@@ -3307,6 +3314,20 @@ test("reporte de transferencia limita nuevos pending por saldo reportable en pre
       async findAuthorizedReservation() { return financialReservationRow({ total: 10000, depositPercent: 20, depositRequired: 2000 }); },
       async listReservationPayments() { return [...basePayments, ...payments.values()].map(({ amount, currency, status }) => ({ amount, currency, status })); },
       async findByIdempotencyKey({ idempotencyKey }) { return payments.get(keyFor(idempotencyKey)) ?? null; },
+      async finalizePaymentAndEvidence({ paymentId, payment, evidence: evidenceInput, contractTotalCents }) {
+        const key = keyFor(payment.idempotencyKey);
+        if (payments.has(key)) return { status: "existing" as const };
+        const financialRows = [...basePayments, ...payments.values()];
+        const confirmed = financialRows.filter((row) => row.status === "confirmed").reduce((sum, row) => sum + Math.round(row.amount * 100), 0);
+        const pending = financialRows.filter((row) => row.status === "pending").reduce((sum, row) => sum + Math.round(row.amount * 100), 0);
+        if (confirmed >= contractTotalCents) return { status: "reservation_paid_in_full" as const };
+        const remaining = Math.max(contractTotalCents - confirmed - pending, 0);
+        if (remaining === 0) return { status: "pending_covers_balance" as const };
+        if (Math.round(payment.amount * 100) > remaining) return { status: "amount_exceeds_reportable_balance" as const };
+        payments.set(key, { ...customerTransferStored(payment), id: paymentId });
+        void evidenceInput;
+        return { status: "created" as const };
+      },
       async insertPayment(insert) { const key = keyFor(insert.idempotencyKey); if (payments.has(key)) throw Object.assign(new Error("duplicate"), { code: "23505" }); const payment = customerTransferStored(insert); payments.set(key, payment); return payment; },
       async hasEvidence() { return false; },
       async insertEvidence() {},
@@ -3333,14 +3354,98 @@ test("reporte de transferencia limita nuevos pending por saldo reportable en pre
   assert.deepEqual(await service.finalize(customerTransferInput({ amount: "4000.00", idempotencyKey: secondKey })), { status: "pending_payments_cover_remaining" });
   assert.equal(payments.size, 1);
   assert.equal(objects.has(second.upload.path), false);
-  assert.ok(removals.includes(second.upload.path));
+  assert.ok(removals.some((path) => /\/evidence\.pdf$/.test(path)));
 
   const full = createCustomerTransferUploadService({
     resolveAccess: access.resolver.resolve,
-    repository: { async findAuthorizedReservation() { return financialReservationRow({ total: 10000 }); }, async listReservationPayments() { return [{ amount: 10000, currency: "MXN", status: "confirmed" }]; }, async findByIdempotencyKey() { return null; }, async insertPayment() { throw new Error("must not insert"); }, async hasEvidence() { return false; }, async insertEvidence() {} },
+    repository: { async findAuthorizedReservation() { return financialReservationRow({ total: 10000 }); }, async listReservationPayments() { return [{ amount: 10000, currency: "MXN", status: "confirmed" }]; }, async findByIdempotencyKey() { return null; }, async finalizePaymentAndEvidence() { throw new Error("must not finalize"); }, async insertPayment() { throw new Error("must not insert"); }, async hasEvidence() { return false; }, async insertEvidence() {} },
     storage: { async createSignedUpload() { throw new Error("must not sign"); }, async download() { throw new Error("must not download"); }, async move() {}, async remove() {} },
   });
   assert.deepEqual(await full.prepare({ ...customerTransferInput({ amount: "1.00" }), fileSize: 8 }), { status: "reservation_paid_in_full" });
+});
+
+test("finalización atómica serializa una reservación y no sobre-reserva con idempotency keys distintas", async () => {
+  const access = customerAccessFixture({ accounts: [customerAccount()] });
+  const payments = new Map<string, CustomerTransferPaymentRow>();
+  const evidence = new Set<string>();
+  const objects = new Map<string, Uint8Array>();
+  const base: ReservationPaymentFinancialRow[] = [{ amount: 7000, currency: "MXN", status: "confirmed" }];
+  const keyFor = (key: string) => `agency-furiver:${key}`;
+  let previous = Promise.resolve();
+  const service = createCustomerTransferUploadService({
+    resolveAccess: access.resolver.resolve,
+    now: () => new Date(TEST_NOW),
+    repository: {
+      async findAuthorizedReservation() { return financialReservationRow({ total: 10000 }); },
+      async listReservationPayments() { return [...base, ...payments.values()].map(({ amount, currency, status }) => ({ amount, currency, status })); },
+      async findByIdempotencyKey({ idempotencyKey }) { return payments.get(keyFor(idempotencyKey)) ?? null; },
+      async finalizePaymentAndEvidence({ paymentId, payment, evidence: evidenceInput, contractTotalCents }) {
+        const before = previous;
+        let release: () => void = () => undefined;
+        previous = new Promise<void>((resolve) => { release = resolve; });
+        await before;
+        try {
+          const key = keyFor(payment.idempotencyKey);
+          if (payments.has(key)) return { status: "existing" as const };
+          const rows = [...base, ...payments.values()];
+          const confirmed = rows.filter((row) => row.status === "confirmed").reduce((sum, row) => sum + Math.round(row.amount * 100), 0);
+          const pending = rows.filter((row) => row.status === "pending").reduce((sum, row) => sum + Math.round(row.amount * 100), 0);
+          if (confirmed >= contractTotalCents) return { status: "reservation_paid_in_full" as const };
+          const reportable = Math.max(contractTotalCents - confirmed - pending, 0);
+          if (reportable === 0) return { status: "pending_covers_balance" as const };
+          if (Math.round(payment.amount * 100) > reportable) return { status: "amount_exceeds_reportable_balance" as const };
+          payments.set(key, { ...customerTransferStored(payment), id: paymentId });
+          evidence.add(`${evidenceInput.paymentId}:${evidenceInput.reservationId}:${evidenceInput.agencyId}`);
+          return { status: "created" as const };
+        } finally { release(); }
+      },
+      async insertPayment() { throw new Error("atomic RPC must be the payment barrier"); },
+      async hasEvidence({ paymentId, reservationId, agencyId }) { return evidence.has(`${paymentId}:${reservationId}:${agencyId}`); },
+      async insertEvidence() { throw new Error("atomic RPC must create evidence"); },
+    },
+    storage: {
+      async createSignedUpload({ path }) { return { path, token: "temporary" }; },
+      async download(path) { const bytes = objects.get(path); if (!bytes) throw new Error("missing"); return bytes; },
+      async move({ fromPath, toPath }) { const bytes = objects.get(fromPath); if (!bytes) throw new Error("missing"); objects.delete(fromPath); objects.set(toPath, bytes); },
+      async remove(path) { objects.delete(path); },
+    },
+  });
+  const keyA = "1dce1e1a-5d14-4cff-b2ea-d506aa4c7eb3";
+  const keyB = "2dce1e1a-5d14-4cff-b2ea-d506aa4c7eb3";
+  const [preparedA, preparedB] = await Promise.all([
+    service.prepare({ ...customerTransferInput({ amount: "3000.00", idempotencyKey: keyA }), fileSize: 8 }),
+    service.prepare({ ...customerTransferInput({ amount: "3000.00", idempotencyKey: keyB }), fileSize: 8 }),
+  ]);
+  if (preparedA.status !== "ready" || preparedB.status !== "ready") throw new Error("both preflights should be ready");
+  const pdf = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d]);
+  objects.set(preparedA.upload.path, pdf);
+  objects.set(preparedB.upload.path, pdf);
+  const results = await Promise.all([
+    service.finalize(customerTransferInput({ amount: "3000.00", idempotencyKey: keyA })),
+    service.finalize(customerTransferInput({ amount: "3000.00", idempotencyKey: keyB })),
+  ]);
+  assert.deepEqual(results.map((result) => result.status).sort(), ["pending_payments_cover_remaining", "submitted"]);
+  assert.equal(payments.size, 1);
+  assert.equal(evidence.size, 1);
+  assert.equal([...payments.values()].reduce((sum, payment) => sum + payment.amount, 0), 3000);
+});
+
+test("RPC de finalize bloquea por reservación y conserva payment más evidencia en un solo límite server-only", () => {
+  const migration = readFileSync("supabase/migrations/20260801190000_atomic_customer_transfer_finalize.sql", "utf8");
+  const core = readFileSync("lib/payments/customer-transfer-core.ts", "utf8");
+  const repository = readFileSync("lib/payments/customer-transfer-repository.ts", "utf8");
+  assert.match(migration, /security definer/i);
+  assert.match(migration, /set search_path = public, pg_temp/i);
+  assert.match(migration, /reservation_snapshots[\s\S]*for update/i);
+  assert.match(migration, /Idempotency precedes capacity/i);
+  assert.match(migration, /reservation_payments[\s\S]*idempotency_key/i);
+  assert.match(migration, /pending_covers_balance/);
+  assert.match(migration, /insert into public\.reservation_payments[\s\S]*insert into public\.payment_evidence/i);
+  assert.match(migration, /revoke all on function[\s\S]*from public, anon, authenticated/i);
+  assert.match(migration, /grant execute on function[\s\S]*to service_role/i);
+  assert.match(repository, /\.rpc\("finalize_customer_transfer_payment_atomic"/);
+  assert.match(core, /finalizePaymentAndEvidence/);
+  assert.doesNotMatch(core.slice(core.indexOf("async finalize(input"), core.indexOf("// Kept as an in-memory")), /repository\(\)\.insertPayment/);
 });
 
 test("formulario cliente usa URL firmada, conserva UTC e idempotencia sin enviar File a Vercel", () => {
