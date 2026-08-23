@@ -19,7 +19,13 @@ function databaseFailure(error: unknown) {
 }
 
 function documentRow(row: Record<string, unknown>): ReservationContractDocumentRow {
-  return { status: String(row.status), version: Number(row.version), generatedAt: String(row.generated_at) };
+  return {
+    status: String(row.status),
+    version: Number(row.version),
+    generatedAt: String(row.generated_at),
+    storagePath: typeof row.storage_path === "string" ? row.storage_path : "",
+    contentSha256: typeof row.content_sha256 === "string" ? row.content_sha256 : null,
+  };
 }
 
 /** Service-role adapter, instantiated only after the domain command has authorized the admin. */
@@ -46,12 +52,20 @@ export function createSupabaseReservationContractDocumentRepository(
     },
     async findExistingDocument({ agencyId, reservationId, contractInstanceId }) {
       const { data, error } = await supabase.from("reservation_documents")
-        .select("status, version, generated_at")
+        .select("status, version, generated_at, storage_path, content_sha256")
         .eq("reservation_id", reservationId).eq("agency_id", agencyId)
         .eq("contract_instance_id", contractInstanceId).eq("document_type", "contract").eq("version", 1)
         .maybeSingle();
       if (error) throw databaseFailure(error);
       return data ? documentRow(data as Record<string, unknown>) : null;
+    },
+    async updateContentSha256({ agencyId, reservationId, contractInstanceId, contentSha256 }) {
+      const { error } = await supabase.from("reservation_documents")
+        .update({ content_sha256: contentSha256 })
+        .eq("reservation_id", reservationId).eq("agency_id", agencyId)
+        .eq("contract_instance_id", contractInstanceId).eq("document_type", "contract")
+        .eq("version", 1).is("content_sha256", null);
+      if (error) throw databaseFailure(error);
     },
     async insertDocument(document) {
       const { data, error } = await supabase.from("reservation_documents").insert({
@@ -65,9 +79,10 @@ export function createSupabaseReservationContractDocumentRepository(
         version: document.version,
         payment_id: document.paymentId,
         contract_instance_id: document.contractInstanceId,
+        content_sha256: document.contentSha256,
         generated_at: document.generatedAt,
         created_by_user_id: document.createdByUserId,
-      }).select("status, version, generated_at").single();
+      }).select("status, version, generated_at, storage_path, content_sha256").single();
       if (error) throw databaseFailure(error);
       return documentRow(data as Record<string, unknown>);
     },

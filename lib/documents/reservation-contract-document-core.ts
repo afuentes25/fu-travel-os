@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import type { AdminAgencyAccess } from "@/lib/agencies/admin-access-core";
 import { isAdminReservationUuid } from "@/lib/reservations/admin-detail";
 import {
@@ -5,8 +7,8 @@ import {
   type ReservationSnapshotProjectionSource,
 } from "@/lib/reservations/snapshot-projection";
 
-import type { PaymentReceiptStorageClient } from "./payment-receipt-core";
 import type { ReservationContractPdfData } from "./reservation-contract-document-pdf";
+import type { ReservationContractDocumentStorage } from "./reservation-contract-document-storage";
 
 export type EnsureReservationContractDocumentInput = Readonly<{
   requestedAgencySlug: unknown;
@@ -45,6 +47,8 @@ export type ReservationContractDocumentRow = Readonly<{
   status: string;
   version: number;
   generatedAt: string;
+  storagePath: string;
+  contentSha256: string | null;
 }>;
 
 export type ReservationContractDocumentInsert = Readonly<{
@@ -58,6 +62,7 @@ export type ReservationContractDocumentInsert = Readonly<{
   version: 1;
   paymentId: null;
   contractInstanceId: string;
+  contentSha256: string;
   generatedAt: string;
   createdByUserId: string;
 }>;
@@ -66,6 +71,7 @@ export interface ReservationContractDocumentRepository {
   findReservation(input: Readonly<{ agencyId: string; reservationId: string }>): Promise<ReservationSnapshotProjectionSource | null>;
   findLatestInstance(input: Readonly<{ agencyId: string; reservationId: string }>): Promise<ReservationContractInstanceRow | null>;
   findExistingDocument(input: Readonly<{ agencyId: string; reservationId: string; contractInstanceId: string }>): Promise<ReservationContractDocumentRow | null>;
+  updateContentSha256(input: Readonly<{ agencyId: string; reservationId: string; contractInstanceId: string; contentSha256: string }>): Promise<void>;
   insertDocument(input: ReservationContractDocumentInsert): Promise<ReservationContractDocumentRow>;
 }
 
@@ -154,12 +160,40 @@ function isPdf(bytes: Uint8Array) {
   return bytes.length > 4 && bytes[0] === 0x25 && bytes[1] === 0x50 && bytes[2] === 0x44 && bytes[3] === 0x46;
 }
 
+export function calculateContractDocumentSha256(bytes: Uint8Array): string {
+  return createHash("sha256").update(bytes).digest("hex");
+}
+
+function isSha256(value: string): boolean {
+  return /^[0-9a-f]{64}$/.test(value);
+}
+
+async function reconcileExistingContentHash(
+  repository: ReservationContractDocumentRepository,
+  storage: ReservationContractDocumentStorage,
+  row: ReservationContractDocumentRow,
+  scope: Readonly<{ agencyId: string; reservationId: string; contractInstanceId: string }>,
+): Promise<"ready" | "invalid_structure" | "document_storage_error"> {
+  if (!row.storagePath) return "invalid_structure";
+  if (row.contentSha256 !== null) return isSha256(row.contentSha256) ? "ready" : "invalid_structure";
+  let storedBytes: Uint8Array;
+  try { storedBytes = await storage.download(row.storagePath); }
+  catch { return "document_storage_error"; }
+  if (!isPdf(storedBytes)) return "invalid_structure";
+  try {
+    await repository.updateContentSha256({ ...scope, contentSha256: calculateContractDocumentSha256(storedBytes) });
+    return "ready";
+  } catch {
+    return "document_storage_error";
+  }
+}
+
 function publicDocument(row: ReservationContractDocumentRow, instance: ReservationContractInstanceRow): ReservationContractDocument | null {
   if (row.status !== "available" || row.version !== 1 || !row.generatedAt || (instance.status !== "prepared" && instance.status !== "accepted")) return null;
   return { documentType: "contract", documentVersion: 1, contractTemplateVersion: instance.contractTemplateVersion, contractStatus: instance.status, generatedAt: row.generatedAt };
 }
 
-async function bestEffortRemove(storage: PaymentReceiptStorageClient, path: string) {
+async function bestEffortRemove(storage: ReservationContractDocumentStorage, path: string) {
   try { await storage.remove(path); } catch { /* A retry uses a new document path. */ }
 }
 
@@ -167,7 +201,7 @@ async function bestEffortRemove(storage: PaymentReceiptStorageClient, path: stri
 export function createReservationContractDocumentService(dependencies: Readonly<{
   resolveAccess: (input: Readonly<{ requestedAgencySlug?: string }>) => Promise<AdminAgencyAccess>;
   repository: ReservationContractDocumentRepository | (() => ReservationContractDocumentRepository);
-  storage: PaymentReceiptStorageClient | (() => PaymentReceiptStorageClient);
+  storage: ReservationContractDocumentStorage | (() => ReservationContractDocumentStorage);
   renderPdf: ReservationContractPdfRenderer;
   now?: () => Date;
   createDocumentId?: () => string;
@@ -197,7 +231,9 @@ export function createReservationContractDocumentService(dependencies: Readonly<
         const existing = await data.findExistingDocument({ agencyId, reservationId, contractInstanceId: instance.id });
         if (existing) {
           const document = publicDocument(existing, instance);
-          return document ? { status: "existing", document } : { status: "invalid_structure" };
+          if (!document) return { status: "invalid_structure" };
+          const integrity = await reconcileExistingContentHash(data, storage(), existing, { agencyId, reservationId, contractInstanceId: instance.id });
+          return integrity === "ready" ? { status: "existing", document } : { status: integrity };
         }
         const legal = legalSnapshot(instance.legalProfileSnapshot);
         const content = contentSnapshot(instance.contractContentSnapshot, instance.contractTemplateVersion);
@@ -213,10 +249,11 @@ export function createReservationContractDocumentService(dependencies: Readonly<
           reservation: { code: projected.reservationCode, tripName: projected.trip.name, tripCode: projected.trip.code, departureDate: projected.trip.departureDate, boarding: projected.trip.boardingPointName, rooms: projected.occupancy.rooms, adults: projected.occupancy.adults, minors: projected.occupancy.minors, travelers: projected.occupancy.totalTravelers, currency: projected.amounts.currency, total: projected.amounts.total, depositAmount: projected.amounts.depositAmount, depositPercent: projected.amounts.depositPercent },
         });
         if (!isPdf(pdf)) return { status: "invalid_structure" };
+        const contentSha256 = calculateContractDocumentSha256(pdf);
         try { await storage().upload({ path, bytes: pdf, mimeType: "application/pdf" }); }
         catch { return { status: "document_storage_error" }; }
         try {
-          const row = await data.insertDocument({ reservationId, agencyId, documentType: "contract", status: "available", storagePath: path, mimeType: "application/pdf", fileSizeBytes: pdf.length, version: 1, paymentId: null, contractInstanceId: instance.id, generatedAt, createdByUserId: access.identity.userId });
+          const row = await data.insertDocument({ reservationId, agencyId, documentType: "contract", status: "available", storagePath: path, mimeType: "application/pdf", fileSizeBytes: pdf.length, version: 1, paymentId: null, contractInstanceId: instance.id, contentSha256, generatedAt, createdByUserId: access.identity.userId });
           const document = publicDocument(row, instance);
           if (!document) { await bestEffortRemove(storage(), path); return { status: "invalid_structure" }; }
           return { status: "generated", document };
@@ -225,7 +262,11 @@ export function createReservationContractDocumentService(dependencies: Readonly<
           if (isUniqueViolation(error)) {
             const concurrent = await data.findExistingDocument({ agencyId, reservationId, contractInstanceId: instance.id });
             const document = concurrent ? publicDocument(concurrent, instance) : null;
-            if (document) return { status: "existing", document };
+            if (document && concurrent) {
+              const integrity = await reconcileExistingContentHash(data, storage(), concurrent, { agencyId, reservationId, contractInstanceId: instance.id });
+              if (integrity === "ready") return { status: "existing", document };
+              return { status: integrity };
+            }
           }
           throw new ReservationContractDocumentError();
         }
