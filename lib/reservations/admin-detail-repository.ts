@@ -8,6 +8,7 @@ import {
   createAdminReservationDetail,
   type AdminReservationDetailRepositoryClient,
   type AdminReservationDetailRow,
+  type AdminReservationTravelerRow,
 } from "./admin-detail";
 
 export {
@@ -17,6 +18,7 @@ export {
   type AdminReservationDetailInput,
   type AdminReservationDetailRepositoryClient,
   type AdminReservationDetailRow,
+  type AdminReservationTravelerRow,
 } from "./admin-detail";
 
 /**
@@ -43,6 +45,16 @@ export function createSupabaseAdminReservationDetailClient(
         .maybeSingle();
       if (error) throw new Error("No fue posible consultar la reservación.");
       return data ? (data as AdminReservationDetailRow) : null;
+    },
+    async listTravelers({ agencyId, reservationId }) {
+      const { data, error } = await supabase
+        .from("reservation_travelers")
+        .select("position, traveler_type, status, first_name, last_name")
+        .eq("reservation_id", reservationId)
+        .eq("agency_id", agencyId)
+        .order("position", { ascending: true });
+      if (error) throw new Error("No fue posible consultar los viajeros.");
+      return (data ?? []) as AdminReservationTravelerRow[];
     },
   };
 }

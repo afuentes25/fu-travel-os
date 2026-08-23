@@ -1,4 +1,5 @@
 import type { Currency } from "@/types";
+import { deriveTravelerSlotStructure } from "@/lib/travelers/traveler-slots-core";
 
 export type AdminReservationDetailInput = Readonly<{
   agencyId: string;
@@ -45,16 +46,26 @@ export type AdminReservationDetail = Readonly<{
     phone: string | null;
   }> | null;
   travelers: readonly Readonly<{
-    category: string | null;
-    fullName: string | null;
-    age: number | null;
-    status: string | null;
+    position: number;
+    travelerType: "adult" | "minor";
+    firstName: string | null;
+    lastName: string | null;
+    status: "pending" | "complete";
   }>[];
-  travelerDataStatus: string | null;
+  travelerDataStatus: "pending" | "complete" | "invalid_structure" | null;
+}>;
+
+export type AdminReservationTravelerRow = Readonly<{
+  position: number;
+  traveler_type: string;
+  status: string;
+  first_name: string | null;
+  last_name: string | null;
 }>;
 
 export interface AdminReservationDetailRepositoryClient {
   find(input: AdminReservationDetailInput): Promise<AdminReservationDetailRow | null>;
+  listTravelers(input: AdminReservationDetailInput): Promise<readonly AdminReservationTravelerRow[]>;
 }
 
 export class AdminReservationDetailError extends Error {
@@ -107,24 +118,52 @@ function projectContact(snapshot: Record<string, unknown> | null) {
   return fullName || email || phone ? { fullName, email, phone } : null;
 }
 
-function projectTravelers(snapshot: Record<string, unknown> | null) {
-  const travelers = asRecord(snapshot?.travelers);
-  const drafts = Array.isArray(travelers?.drafts) ? travelers.drafts : [];
-  return drafts.flatMap((draft) => {
-    const value = asRecord(draft);
-    return value
-      ? [{
-          category: optionalText(value.category),
-          fullName: optionalText(value.fullName),
-          age: optionalCount(value.age),
-          status: optionalText(value.completionStatus),
-        }]
-      : [];
+function projectTraveler(row: AdminReservationTravelerRow) {
+  if (!Number.isInteger(row.position) || row.position <= 0) return null;
+  if (row.traveler_type !== "adult" && row.traveler_type !== "minor") return null;
+  if (row.status !== "pending" && row.status !== "complete") return null;
+  return {
+    position: row.position,
+    travelerType: row.traveler_type as "adult" | "minor",
+    firstName: optionalText(row.first_name),
+    lastName: optionalText(row.last_name),
+    status: row.status as "pending" | "complete",
+  };
+}
+
+function projectTravelers(
+  row: AdminReservationDetailRow,
+  rows: readonly AdminReservationTravelerRow[],
+) {
+  const travelers = rows
+    .map(projectTraveler)
+    .filter((traveler): traveler is NonNullable<ReturnType<typeof projectTraveler>> => traveler !== null)
+    .sort((left, right) => left.position - right.position);
+  const expected = deriveTravelerSlotStructure(row);
+  if (travelers.length !== rows.length) return { travelers, status: "invalid_structure" as const };
+  if (!expected) {
+    return {
+      travelers,
+      status: travelers.length
+        ? travelers.every((traveler) => traveler.status === "complete") ? "complete" as const : "pending" as const
+        : null,
+    };
+  }
+  const byPosition = new Map(travelers.map((traveler) => [traveler.position, traveler]));
+  const matchesExpected = travelers.length === expected.length && expected.every((slot) => {
+    const traveler = byPosition.get(slot.position);
+    return traveler?.travelerType === slot.travelerType;
   });
+  if (!matchesExpected) return { travelers, status: "invalid_structure" as const };
+  return {
+    travelers,
+    status: travelers.every((traveler) => traveler.status === "complete") ? "complete" as const : "pending" as const,
+  };
 }
 
 export function projectAdminReservationDetail(
   row: AdminReservationDetailRow,
+  travelerRows: readonly AdminReservationTravelerRow[] = [],
 ): AdminReservationDetail {
   const snapshot = asRecord(row.snapshot);
   const tour = asRecord(snapshot?.tour);
@@ -137,6 +176,7 @@ export function projectAdminReservationDetail(
   const totalTravelers =
     optionalCount(occupancy?.totalTravelers) ??
     (adults !== null && minors !== null ? adults + minors : null);
+  const projectedTravelers = projectTravelers(row, travelerRows);
 
   return {
     id: row.id,
@@ -163,8 +203,8 @@ export function projectAdminReservationDetail(
       remainingAmount: optionalAmount(snapshot?.remainingAmount),
     },
     primaryContact: projectContact(snapshot),
-    travelers: projectTravelers(snapshot),
-    travelerDataStatus: optionalText(travelers?.status),
+    travelers: projectedTravelers.travelers,
+    travelerDataStatus: projectedTravelers.status,
   };
 }
 
@@ -180,7 +220,8 @@ export function createAdminReservationDetail(dependencies: Readonly<{
       try {
         const row = await dependencies.reservationClient.find(input);
         if (!row) throw new AdminReservationDetailError("not_found");
-        return projectAdminReservationDetail(row);
+        const travelers = await dependencies.reservationClient.listTravelers(input);
+        return projectAdminReservationDetail(row, travelers);
       } catch (error) {
         if (error instanceof AdminReservationDetailError) throw error;
         throw new AdminReservationDetailError("internal");
