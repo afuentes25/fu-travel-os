@@ -217,6 +217,9 @@ export default async function CustomerReservationDetailPage({
   const payments = paymentHistory.payments;
   const documents = documentList.documents;
   const contractDocument = documents.find((document) => document.documentType === "contract") ?? null;
+  const acceptanceCertificate = documents.find((document) => document.documentType === "acceptance_certificate") ?? null;
+  const voucherDocument = documents.find((document) => document.documentType === "voucher") ?? null;
+  const ticketDocuments = documents.filter((document) => document.documentType === "ticket");
   let contractAccepted = false;
   let contractPrimary = false;
   if (contractDocument) try { const acceptanceRepository = createSupabaseCustomerContractAcceptanceRepository(); contractPrimary = await acceptanceRepository.findPrimaryLink({ customerAccountId: detail.account.customerAccountId, agencyId: detail.account.agencyId, reservationId }); const instance = await acceptanceRepository.findInstance({ agencyId: detail.account.agencyId, reservationId }); contractAccepted = instance?.status === "accepted"; } catch { contractPrimary = false; }
@@ -252,33 +255,61 @@ export default async function CustomerReservationDetailPage({
       : [],
   );
   const travelerDataComplete = slots.length > 0 && slots.every((slot) => slot.status === "complete");
+  const depositCovered = financialSummary?.balance.depositCovered === true;
+  const balancePaid = financialSummary?.balance.fullyPaid === true;
   return (
     <CustomerShell account={detail.account}>
-      <section className={styles.content} aria-labelledby="customer-reservation-title">
+      <section className={`${styles.content} ${styles.customerReservationDetail}`} aria-labelledby="customer-reservation-title">
         <Link className={styles.backLink} href={`/cuenta/${encodeURIComponent(detail.account.agencySlug)}/reservaciones`}>← Volver a Mis reservaciones</Link>
-        <header className={styles.detailHeading}>
-          <div>
-            <span className={styles.kicker}>Mi reservación</span>
-            <h1 id="customer-reservation-title">{reservation.reservationCode}</h1>
-            <span className={styles.status}>{customerReservationStatusLabel(reservation.status)}</span>
+        <header className={styles.customerReservationHero}>
+          <div className={styles.customerHeroCopy}>
+            <span className={styles.kicker}>Reservación</span>
+            <h1 id="customer-reservation-title">{valueOrUnavailable(reservation.trip.name)}</h1>
+            <p className={styles.customerReservationCode}>{reservation.reservationCode}</p>
           </div>
-          <p>Creada: {date(reservation.createdAt)}</p>
+          <div className={styles.customerHeroMeta}>
+            <span className={styles.status}>{customerReservationStatusLabel(reservation.status)}</span>
+            <p>Salida: {date(reservation.trip.departureDate)}</p>
+          </div>
         </header>
 
-        <aside className={styles.nextStep} aria-label="Próximo paso">
-          <strong>Próximo paso</strong>
-          <p>{customerReservationDetailNextStep(reservation.status)}</p>
-        </aside>
+        <section className={styles.customerSection} aria-labelledby="customer-trip-title">
+          <div className={styles.sectionHeading}><div><span className={styles.sectionEyebrow}>Tu viaje</span><h2 id="customer-trip-title">Resumen del viaje</h2></div><p>{reservation.trip.code ?? ""}</p></div>
+          <dl className={styles.travelFacts}>
+            <div><dt>Fecha de salida</dt><dd>{date(reservation.trip.departureDate)}</dd></div>
+            <div><dt>Viajeros</dt><dd>{valueOrUnavailable(reservation.occupancy.totalTravelers)}</dd></div>
+            <div><dt>Habitaciones</dt><dd>{valueOrUnavailable(reservation.occupancy.rooms)}</dd></div>
+            <div><dt>Punto de abordaje</dt><dd>{valueOrUnavailable(reservation.trip.boardingPointName)}</dd></div>
+          </dl>
+          {reservation.primaryContact && <div className={styles.contactStrip}><span>Contacto principal</span><p>{valueOrUnavailable(reservation.primaryContact.fullName)}{reservation.primaryContact.email ? ` · ${reservation.primaryContact.email}` : ""}{reservation.primaryContact.phone ? ` · ${reservation.primaryContact.phone}` : ""}</p></div>}
+        </section>
 
-        <div className={styles.detailGrid}>
-          <section className={styles.detailCard} aria-labelledby="customer-trip-title"><h2 id="customer-trip-title">Resumen del viaje</h2><dl><div><dt>Tour</dt><dd>{valueOrUnavailable(reservation.trip.name)}</dd></div><div><dt>Clave</dt><dd>{valueOrUnavailable(reservation.trip.code)}</dd></div><div><dt>Fecha de salida</dt><dd>{date(reservation.trip.departureDate)}</dd></div><div><dt>Punto de abordaje</dt><dd>{valueOrUnavailable(reservation.trip.boardingPointName)}</dd></div></dl></section>
-          <section className={styles.detailCard} aria-labelledby="customer-occupancy-title"><h2 id="customer-occupancy-title">Ocupación</h2><dl><div><dt>Habitaciones</dt><dd>{valueOrUnavailable(reservation.occupancy.rooms)}</dd></div><div><dt>Adultos</dt><dd>{valueOrUnavailable(reservation.occupancy.adults)}</dd></div><div><dt>Menores</dt><dd>{valueOrUnavailable(reservation.occupancy.minors)}</dd></div><div><dt>Total viajeros</dt><dd>{valueOrUnavailable(reservation.occupancy.totalTravelers)}</dd></div></dl></section>
-          <section className={styles.detailCard} aria-labelledby="customer-finance-title"><h2 id="customer-finance-title">Estado financiero</h2>{financialSummary ? <><dl><div><dt>Total del Tour</dt><dd>{financialMoney(financialSummary.contract.total, financialSummary.currency)}</dd></div><div><dt>Anticipo requerido</dt><dd>{financialMoney(financialSummary.contract.depositRequired, financialSummary.currency)}{financialSummary.contract.depositPercent === null ? "" : ` · ${financialSummary.contract.depositPercent}%`}</dd></div><div><dt>Pagos confirmados</dt><dd>{financialMoney(financialSummary.payments.confirmedTotal, financialSummary.currency)}</dd></div>{financialSummary.payments.pendingTotal > 0 && <div><dt>Pagos en validación</dt><dd>{financialMoney(financialSummary.payments.pendingTotal, financialSummary.currency)}</dd></div>}<div><dt>Saldo pendiente</dt><dd className={styles.financialRemaining}>{financialMoney(financialSummary.balance.remaining, financialSummary.currency)}</dd></div></dl><p className={styles.financialMessage} role="status">{financialSummary.balance.fullyPaid ? "Tu reservación está pagada." : financialSummary.balance.depositCovered === true ? `Tu anticipo está cubierto. Saldo pendiente: ${financialMoney(financialSummary.balance.remaining, financialSummary.currency)}.` : financialSummary.balance.depositCovered === false ? `Tu anticipo requerido es de ${financialMoney(financialSummary.contract.depositRequired, financialSummary.currency)}.` : "Consulta con la agencia las condiciones de pago de tu reservación."}</p><CustomerTransferForm requestedAgencySlug={detail.account.agencySlug} reservationId={reservationId} currency={financialSummary.currency} /></> : <p className={styles.travelerNotice} role="alert">No fue posible calcular el estado financiero de esta reservación. Contacta a la agencia para recibir asistencia.</p>}</section>
-          <section className={styles.detailCard} aria-labelledby="customer-contact-title"><h2 id="customer-contact-title">Contacto principal</h2>{reservation.primaryContact ? <dl><div><dt>Nombre</dt><dd>{valueOrUnavailable(reservation.primaryContact.fullName)}</dd></div><div><dt>Correo</dt><dd>{valueOrUnavailable(reservation.primaryContact.email)}</dd></div><div><dt>Teléfono</dt><dd>{valueOrUnavailable(reservation.primaryContact.phone)}</dd></div></dl> : <p className={styles.unavailable}>No disponible</p>}</section>
-        </div>
+        <section className={`${styles.customerSection} ${styles.customerNextSteps}`} aria-labelledby="customer-next-steps-title">
+          <div className={styles.sectionHeading}><div><span className={styles.sectionEyebrow}>Organiza tu viaje</span><h2 id="customer-next-steps-title">Estado y próximos pasos</h2></div><p>{customerReservationDetailNextStep(reservation.status)}</p></div>
+          <div className={styles.nextStepsGrid}>
+            <div className={`${styles.nextStepItem} ${travelerDataComplete ? styles.nextStepComplete : ""}`}><strong>{travelerDataComplete ? "Viajeros completos" : "Completar datos de viajeros"}</strong><span>{travelerDataComplete ? "La información de las personas que viajan está lista." : "Captura la información de cada persona que viajará."}</span></div>
+            <div className={`${styles.nextStepItem} ${depositCovered ? styles.nextStepComplete : ""}`}><strong>{depositCovered ? "Anticipo cubierto" : "Estado del anticipo"}</strong><span>{depositCovered ? "Tu anticipo requerido ya está cubierto." : "Consulta el resumen financiero para conocer el importe requerido."}</span></div>
+            {contractDocument && <div className={`${styles.nextStepItem} ${contractAccepted ? styles.nextStepComplete : ""}`}><strong>{contractAccepted ? "Contrato aceptado" : "Aceptar contrato"}</strong><span>{contractAccepted ? "El registro de aceptación está disponible para tu reservación." : "Consulta las condiciones antes de confirmar su aceptación."}</span></div>}
+            {voucherDocument && <div className={`${styles.nextStepItem} ${styles.nextStepComplete}`}><strong>Voucher disponible</strong><span>Encuéntralo junto con los demás documentos del viaje.</span></div>}
+            {ticketDocuments.length > 0 && <div className={`${styles.nextStepItem} ${styles.nextStepComplete}`}><strong>{ticketDocuments.length === 1 ? "Boleto disponible" : "Boletos disponibles"}</strong><span>{ticketDocuments.length === 1 ? "Tu boleto está disponible en Documentos." : "Los boletos individuales están disponibles en Documentos."}</span></div>}
+          </div>
+          {contractDocument && <div className={styles.contractJourney} aria-labelledby="customer-contract-acceptance-title">
+            <div><span className={styles.sectionEyebrow}>Contrato</span><h3 id="customer-contract-acceptance-title">{contractAccepted ? "Contrato aceptado" : "Contrato pendiente de aceptación"}</h3></div>
+            {contractAccepted ? <>{acceptanceCertificate ? <p role="status">Contrato aceptado. La constancia de aceptación está disponible en Documentos.</p> : <><p role="status">Contrato aceptado. La constancia de aceptación aún no está disponible.</p>{contractPrimary && <AcceptanceCertificateRetry agencySlug={detail.account.agencySlug} reservationId={reservationId} />}</>}</> : contractPrimary ? <ContractAcceptanceForm agencySlug={detail.account.agencySlug} reservationId={reservationId} /> : <p>La aceptación contractual debe realizarla la cuenta principal vinculada a esta reservación.</p>}
+          </div>}
+        </section>
 
-        <section className={styles.detailCard} aria-labelledby="customer-payments-title">
-          <h2 id="customer-payments-title">Pagos</h2>
+        <section className={styles.customerSection} aria-labelledby="customer-travelers-title">
+          <div className={styles.sectionHeading}><div><span className={styles.sectionEyebrow}>Pasajeros</span><h2 id="customer-travelers-title">Viajeros</h2></div>{travelerSlots.status === "ready" && <p className={travelerDataComplete ? styles.summaryComplete : styles.summaryPending} role="status">{travelerDataComplete ? "Datos de viajeros completos" : "Datos de viajeros pendientes de completar"}</p>}</div>
+          <p className={styles.travelerIntro}>Completa los datos de las personas que viajarán en esta reservación.</p>
+          {travelerSlots.status === "invalid_structure" || travelerData === null ? <p className={styles.travelerNotice} role="alert">No fue posible preparar los datos de viajeros de esta reservación. Contacta a la agencia para recibir asistencia.</p> : <div className={styles.travelerSlotGrid}>{slots.map((slot) => { const traveler = travelersByPosition.get(slot.position); return <article className={styles.travelerSlot} key={slot.id}><div className={styles.travelerSlotHeader}><strong>Viajero {slot.position}</strong><span className={styles.travelerType}>{slot.travelerType === "adult" ? "Adulto" : "Menor"}</span><span className={slot.status === "complete" ? styles.travelerComplete : styles.travelerPending}>{slot.status === "complete" ? "Datos completos" : "Datos pendientes"}</span></div>{traveler && <TravelerDataForm requestedAgencySlug={detail.account.agencySlug} reservationId={reservationId} position={traveler.position} firstName={traveler.firstName} lastName={traveler.lastName} birthDate={traveler.birthDate} complete={traveler.status === "complete"} />}</article>; })}</div>}
+        </section>
+
+        <section className={styles.customerSection} aria-labelledby="customer-payments-title">
+          <div className={styles.sectionHeading}><div><span className={styles.sectionEyebrow}>Finanzas</span><h2 id="customer-payments-title">Pagos</h2></div></div>
+          {financialSummary ? <><div className={styles.financialOverview}><div><span>Total del Tour</span><strong>{financialMoney(financialSummary.contract.total, financialSummary.currency)}</strong></div><div><span>Pagos confirmados</span><strong>{financialMoney(financialSummary.payments.confirmedTotal, financialSummary.currency)}</strong></div><div><span>Saldo pendiente</span><strong className={styles.financialRemaining}>{financialMoney(financialSummary.balance.remaining, financialSummary.currency)}</strong></div><div><span>Anticipo requerido</span><strong>{financialMoney(financialSummary.contract.depositRequired, financialSummary.currency)}{financialSummary.contract.depositPercent === null ? "" : ` · ${financialSummary.contract.depositPercent}%`}</strong></div>{financialSummary.payments.pendingTotal > 0 && <div><span>Pagos en validación</span><strong>{financialMoney(financialSummary.payments.pendingTotal, financialSummary.currency)}</strong></div>}</div><p className={styles.financialMessage} role="status">{financialSummary.balance.fullyPaid ? "Tu reservación está pagada." : financialSummary.balance.depositCovered === true ? `Tu anticipo está cubierto. Saldo pendiente: ${financialMoney(financialSummary.balance.remaining, financialSummary.currency)}.` : financialSummary.balance.depositCovered === false ? `Tu anticipo requerido es de ${financialMoney(financialSummary.contract.depositRequired, financialSummary.currency)}.` : "Consulta con la agencia las condiciones de pago de tu reservación."}</p></> : <p className={styles.travelerNotice} role="alert">No fue posible calcular el estado financiero de esta reservación. Contacta a la agencia para recibir asistencia.</p>}
+          {financialSummary && <div className={styles.paymentActionPanel}><div><h3>¿Ya realizaste una transferencia?</h3><p>{balancePaid ? "Puedes reportar un movimiento adicional si corresponde a esta reservación." : "Envíanos los datos y el comprobante para que la agencia pueda validarlo."}</p></div><CustomerTransferForm requestedAgencySlug={detail.account.agencySlug} reservationId={reservationId} currency={financialSummary.currency} /></div>}
+          <div className={styles.subsectionHeading}><h3>Historial de pagos</h3><p>{payments.length === 0 ? "Sin movimientos registrados" : `${payments.length} ${payments.length === 1 ? "movimiento" : "movimientos"}`}</p></div>
           {payments.length === 0 ? <div className={styles.paymentEmpty}><p>No hay pagos registrados todavía.</p><span>Cuando la agencia confirme un pago, aparecerá aquí.</span></div> : <div className={styles.customerPaymentList}>{payments.map((payment, index) => <article className={`${styles.customerPaymentItem} ${payment.status === "cancelled" ? styles.customerPaymentCancelled : ""}`} key={`${payment.createdAt}-${index}`}>
             <div className={styles.customerPaymentHeading}><strong>{financialMoney(payment.amount, payment.currency)}</strong><span className={styles.customerPaymentMethod}>{customerPaymentMethodLabels[payment.method]}</span><span className={`${styles.customerPaymentStatus} ${styles[`customerPayment${payment.status}`]}`}>{customerPaymentStatusLabels[payment.status]}</span></div>
             <p className={styles.customerPaymentDate}>{date(payment.paidAt ?? payment.createdAt)}</p>
@@ -286,24 +317,13 @@ export default async function CustomerReservationDetailPage({
           </article>)}</div>}
         </section>
 
-        <section className={styles.detailCard} aria-labelledby="customer-documents-title">
-          <h2 id="customer-documents-title">Documentos</h2>
-          {documents.length === 0 ? <div className={styles.paymentEmpty}><p>Aún no hay documentos disponibles.</p><span>Los documentos de tu viaje aparecerán aquí conforme estén disponibles.</span></div> : <div className={styles.customerPaymentList}>{documents.map((document) => <article className={styles.customerPaymentItem} key={document.documentKey}>
-            <div className={styles.customerPaymentHeading}><strong>{customerDocumentLabels[document.documentType]}</strong>{document.documentType === "payment_receipt" && <span className={styles.customerPaymentMethod}>Documento no fiscal</span>}</div>
-            {document.paymentContext && <p className={styles.customerPaymentMessage}>{financialMoney(document.paymentContext.amount, document.paymentContext.currency)} · {date(document.paymentContext.paidAt)}</p>}
-            {document.acceptanceContext && <p className={styles.customerPaymentMessage}>Aceptado el {date(document.acceptanceContext.acceptedAt)}</p>}
-            {document.travelerContext && <p className={styles.customerPaymentMessage}>{document.travelerContext.name} · {document.travelerContext.travelerType === "adult" ? "Adulto" : "Menor"}</p>}
-            {document.documentType !== "payment_receipt" && <p className={styles.customerPaymentDate}>{date(document.generatedAt)}</p>}
+        <section className={styles.customerSection} aria-labelledby="customer-documents-title">
+          <div className={styles.sectionHeading}><div><span className={styles.sectionEyebrow}>Tu archivo de viaje</span><h2 id="customer-documents-title">Documentos</h2></div></div>
+          {documents.length === 0 ? <div className={styles.paymentEmpty}><p>Aún no hay documentos disponibles.</p><span>Los documentos de tu viaje aparecerán aquí conforme estén disponibles.</span></div> : <div className={styles.documentList}>{documents.map((document) => <article className={styles.documentRow} key={document.documentKey}>
+            <div className={styles.documentIcon} aria-hidden="true">PDF</div>
+            <div className={styles.documentCopy}><strong>{customerDocumentLabels[document.documentType]}</strong>{document.documentType === "payment_receipt" && <span>Documento no fiscal</span>}{document.paymentContext && <p>{financialMoney(document.paymentContext.amount, document.paymentContext.currency)} · {date(document.paymentContext.paidAt)}</p>}{document.acceptanceContext && <p>Aceptado el {date(document.acceptanceContext.acceptedAt)}</p>}{document.travelerContext && <p>{document.travelerContext.name} · {document.travelerContext.travelerType === "adult" ? "Adulto" : "Menor"}</p>}{!document.paymentContext && !document.acceptanceContext && !document.travelerContext && <p>Emitido {date(document.generatedAt)}</p>}</div>
             <DocumentOpenButton requestedAgencySlug={detail.account.agencySlug} reservationId={reservationId} documentKey={document.documentKey} />
           </article>)}</div>}
-        </section>
-
-        {contractDocument && <section className={styles.detailCard} aria-labelledby="customer-contract-acceptance-title"><h2 id="customer-contract-acceptance-title">{contractAccepted ? "Contrato aceptado" : "Contrato pendiente de aceptación"}</h2>{contractAccepted ? <>{documents.some((document) => document.documentType === "acceptance_certificate") ? <p role="status">Contrato aceptado. La constancia de aceptación está disponible en Documentos.</p> : <><p role="status">Contrato aceptado. La constancia de aceptación aún no está disponible.</p>{contractPrimary && <AcceptanceCertificateRetry agencySlug={detail.account.agencySlug} reservationId={reservationId} />}</>}</> : contractPrimary ? <ContractAcceptanceForm agencySlug={detail.account.agencySlug} reservationId={reservationId} /> : <p>La aceptación contractual debe realizarla la cuenta principal vinculada a esta reservación.</p>}</section>}
-
-        <section className={styles.detailCard} aria-labelledby="customer-travelers-title">
-          <div className={styles.detailCardHeader}><h2 id="customer-travelers-title">Viajeros</h2>{travelerSlots.status === "ready" && <p role="status">{travelerDataComplete ? "Datos de viajeros completos" : "Datos de viajeros pendientes de completar"}</p>}</div>
-          <p className={styles.travelerIntro}>Completa los datos de las personas que viajarán en esta reservación.</p>
-          {travelerSlots.status === "invalid_structure" || travelerData === null ? <p className={styles.travelerNotice} role="alert">No fue posible preparar los datos de viajeros de esta reservación. Contacta a la agencia para recibir asistencia.</p> : <div className={styles.travelerSlotGrid}>{slots.map((slot) => { const traveler = travelersByPosition.get(slot.position); return <article className={styles.travelerSlot} key={slot.id}><div className={styles.travelerSlotHeader}><strong>Viajero {slot.position}</strong><span className={styles.travelerType}>{slot.travelerType === "adult" ? "Adulto" : "Menor"}</span><span className={slot.status === "complete" ? styles.travelerComplete : styles.travelerPending}>{slot.status === "complete" ? "Datos completos" : "Datos pendientes"}</span></div>{traveler && <TravelerDataForm requestedAgencySlug={detail.account.agencySlug} reservationId={reservationId} position={traveler.position} firstName={traveler.firstName} lastName={traveler.lastName} birthDate={traveler.birthDate} complete={traveler.status === "complete"} />}</article>; })}</div>}
         </section>
       </section>
     </CustomerShell>

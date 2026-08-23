@@ -39,3 +39,119 @@
 @media(max-width:760px){.customerTopbar{align-items:flex-start;flex-wrap:wrap}.customerAgencyContext{order:3;width:100%;border-left:0;border-top:1px solid #ffffff35;padding:10px 0 0}.customerTopbarActions{margin-left:0}.heading,.detailHeading{display:grid;align-items:start}.agencyGrid,.reservationGrid,.detailGrid{grid-template-columns:1fr}.reservationSummary{justify-content:flex-start}.filters{overflow-x:auto;flex-wrap:nowrap;padding-bottom:4px}.filters a{white-space:nowrap}.reservationDetails,.detailCard dl{grid-template-columns:1fr}.pagination{justify-content:space-between}.loginCard{box-shadow:none}.customerTransferDialog{width:calc(100vw - 20px);max-height:calc(100dvh - 20px)}.customerTransferDialogHeader{padding:18px}.customerTransferForm{max-height:calc(100dvh - 144px);padding:18px}.customerTransferActions{bottom:-18px;margin:0 -18px -18px;padding:13px 18px}.customerTransferActions button{flex:1}.customerTransferButton{width:100%}}
 @media(max-width:760px){.travelerSlotGrid{grid-template-columns:1fr}}
 @media(max-width:760px){.travelerForm{grid-template-columns:1fr}.travelerForm button{width:100%}}
+
+/* Reservation detail: local Lavella language for the authenticated customer portal. */
+.customerReservationDetail{
+  --lavella-orange:#ff7f00;
+  --lavella-ink:#3e4559;
+  --lavella-muted:#818693;
+  --lavella-line:#dedede;
+  --lavella-soft:#f7f7f6;
+  width:min(1160px,calc(100% - 48px));
+  display:grid;
+  gap:clamp(30px,4vw,52px);
+  padding:clamp(28px,5vw,70px) 0 82px;
+  color:var(--lavella-ink);
+}
+.customerReservationDetail .backLink{
+  min-height:44px;
+  display:inline-flex;
+  align-items:center;
+  padding:0;
+  border:0;
+  background:transparent;
+  color:var(--lavella-muted);
+  font-size:.78rem;
+  font-weight:800;
+  letter-spacing:.08em;
+  text-transform:uppercase;
+}
+.customerReservationDetail .backLink:hover{color:var(--lavella-orange)}
+.customerReservationHero{
+  display:flex;
+  align-items:end;
+  justify-content:space-between;
+  gap:28px;
+  padding:clamp(24px,4vw,44px);
+  border-top:2px solid var(--lavella-ink);
+  border-bottom:1px solid var(--lavella-line);
+  background:linear-gradient(112deg,#111a37 0%,#222941 62%,#3e4559 100%);
+  color:#fff;
+}
+.customerHeroCopy{min-width:0}
+.customerReservationHero .kicker,.sectionEyebrow{
+  display:block;
+  color:var(--lavella-orange);
+  font-size:.68rem;
+  font-weight:800;
+  letter-spacing:.15em;
+  text-transform:uppercase;
+}
+.customerReservationHero h1{
+  max-width:790px;
+  margin:10px 0 8px;
+  color:#fff;
+  font-size:clamp(2.15rem,5vw,4.4rem);
+  font-weight:900;
+  line-height:.96;
+  letter-spacing:-.045em;
+  overflow-wrap:anywhere;
+}
+.customerReservationCode{margin:0;color:rgba(255,255,255,.72);font-size:.92rem;font-weight:700;letter-spacing:.04em;overflow-wrap:anywhere}
+.customerHeroMeta{display:grid;justify-items:end;gap:14px;text-align:right}
+.customerReservationHero .status{
+  margin:0;
+  padding:7px 10px;
+  border:1px solid rgba(255,255,255,.38);
+  background:transparent;
+  color:#fff;
+  font-size:.68rem;
+  letter-spacing:.09em;
+  text-transform:uppercase;
+}
+.customerHeroMeta p{margin:0;color:rgba(255,255,255,.74);font-size:.9rem;line-height:1.4}
+.customerSection{display:grid;gap:20px;padding-top:2px;border-top:1px solid var(--lavella-line)}
+.sectionHeading{display:flex;align-items:end;justify-content:space-between;gap:24px;padding-top:20px}
+.sectionHeading h2{margin:6px 0 0;color:var(--lavella-ink);font-size:clamp(1.45rem,2.3vw,2rem);line-height:1.03;letter-spacing:-.025em}
+.sectionHeading>p{max-width:410px;margin:0;color:var(--lavella-muted);font-size:.88rem;line-height:1.45;text-align:right}
+.travelFacts,.financialOverview{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:1px;margin:0;background:var(--lavella-line);border:1px solid var(--lavella-line)}
+.travelFacts div,.financialOverview>div{display:grid;gap:7px;min-width:0;padding:18px;background:#fff}
+.travelFacts dt,.financialOverview span,.contactStrip>span,.subsectionHeading p{color:var(--lavella-muted);font-size:.66rem;font-weight:800;letter-spacing:.1em;text-transform:uppercase}
+.travelFacts dd{margin:0;color:var(--lavella-ink);font-size:.96rem;font-weight:700;line-height:1.35;overflow-wrap:anywhere}
+.contactStrip{display:flex;align-items:baseline;gap:14px;padding:0 2px;color:var(--lavella-muted)}
+.contactStrip p{margin:0;line-height:1.55;overflow-wrap:anywhere}
+.customerNextSteps{padding:clamp(20px,3vw,30px);border:1px solid var(--lavella-line);background:var(--lavella-soft)}
+.customerNextSteps .sectionHeading{padding-top:0}
+.nextStepsGrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:1px;background:var(--lavella-line);border:1px solid var(--lavella-line)}
+.nextStepItem{display:grid;gap:7px;min-height:118px;padding:18px;background:#fff;border-left:3px solid var(--lavella-orange)}
+.nextStepItem strong{color:var(--lavella-ink);font-size:.96rem}.nextStepItem span{color:var(--lavella-muted);font-size:.86rem;line-height:1.45}
+.nextStepComplete{border-left-color:#397053}.nextStepComplete strong::before{content:"✓ ";color:#397053}
+.contractJourney{display:grid;gap:14px;padding-top:22px;border-top:1px solid var(--lavella-line)}
+.contractJourney h3{margin:5px 0 0;color:var(--lavella-ink);font-size:1.12rem}.contractJourney>p,.contractJourney form>p{margin:0;color:var(--lavella-muted);line-height:1.55}
+.contractJourney form{display:grid;gap:13px;max-width:760px}.contractJourney form label{display:flex;align-items:flex-start;gap:10px;color:var(--lavella-ink);font-size:.92rem;line-height:1.5}.contractJourney form input[type=checkbox]{width:18px;height:18px;flex:0 0 auto;margin:2px 0 0;accent-color:var(--lavella-orange)}
+.contractJourney form button,.contractJourney form button:only-child{width:max-content;min-height:44px;padding:0 16px;border:1px solid var(--lavella-orange);background:var(--lavella-orange);color:#fff;font:inherit;font-size:.86rem;font-weight:800;cursor:pointer}
+.contractJourney form button:disabled{opacity:.6;cursor:wait}.contractJourney form [role=alert]{color:#9f2f22}.contractJourney form [role=status]{color:#286343}
+.summaryComplete,.summaryPending{width:max-content;margin:0;padding:6px 9px;font-size:.7rem;font-weight:800;letter-spacing:.07em;text-transform:uppercase}.summaryComplete{background:#edf6ef;color:#286343}.summaryPending{background:#fff2e4;color:#9a4e0d}
+.customerReservationDetail .travelerIntro{margin:0;color:var(--lavella-muted)}
+.customerReservationDetail .travelerSlotGrid{gap:0;border-top:1px solid var(--lavella-line)}
+.customerReservationDetail .travelerSlot{gap:16px;padding:20px 0;border:0;border-bottom:1px solid var(--lavella-line);background:transparent}
+.customerReservationDetail .travelerSlotHeader{padding:0}.customerReservationDetail .travelerType{background:#f1f2f3;color:#596174}.customerReservationDetail .travelerPending{background:#fff2e4;color:#9a4e0d}.customerReservationDetail .travelerComplete{background:#edf6ef;color:#286343}
+.customerReservationDetail .travelerForm{gap:14px;border-top-color:var(--lavella-line)}
+.customerReservationDetail .travelerForm input{border-color:var(--lavella-line);border-radius:0}.customerReservationDetail .travelerForm button{min-height:44px;background:var(--lavella-orange);border-radius:0}.customerReservationDetail .travelerForm input:focus-visible{outline:2px solid var(--lavella-orange);outline-offset:2px}
+.financialOverview{grid-template-columns:repeat(4,minmax(0,1fr))}.financialOverview strong{color:var(--lavella-ink);font-size:clamp(1rem,1.8vw,1.34rem);line-height:1.18;overflow-wrap:anywhere}.customerReservationDetail .financialRemaining{color:var(--lavella-ink)!important;font-size:clamp(1.08rem,2vw,1.5rem)!important}
+.paymentActionPanel{display:flex;align-items:center;justify-content:space-between;gap:24px;padding:20px 0;border-bottom:1px solid var(--lavella-line)}
+.paymentActionPanel h3,.subsectionHeading h3{margin:0;color:var(--lavella-ink);font-size:1rem}.paymentActionPanel p{max-width:600px;margin:6px 0 0;color:var(--lavella-muted);font-size:.9rem;line-height:1.5}
+.customerReservationDetail .customerTransferArea{justify-items:end;flex:0 0 auto}.customerReservationDetail .customerTransferButton{min-height:44px;border-radius:0;border-color:var(--lavella-orange);background:var(--lavella-orange)}
+.subsectionHeading{display:flex;align-items:baseline;justify-content:space-between;gap:16px}.subsectionHeading p{margin:0;text-align:right}
+.customerReservationDetail .customerPaymentList{gap:0;border-top:1px solid var(--lavella-line)}
+.customerReservationDetail .customerPaymentItem{grid-template-columns:minmax(0,1fr) auto;gap:7px;padding:18px 0;border:0;border-bottom:1px solid var(--lavella-line);background:transparent}
+.customerReservationDetail .customerPaymentHeading{grid-column:1;gap:10px}.customerReservationDetail .customerPaymentHeading strong{font-size:1.12rem;color:var(--lavella-ink)}
+.customerReservationDetail .customerPaymentDate,.customerReservationDetail .customerPaymentMessage{grid-column:1;margin:0}.customerReservationDetail .customerPaymentMessage{padding-left:10px;border-left-color:var(--lavella-orange)}
+.customerReservationDetail .customerPaymentCancelled{opacity:.68}.customerReservationDetail .customerPaymentStatus{border-radius:999px}.customerReservationDetail .paymentEmpty{padding:22px 0}
+.documentList{display:grid;border-top:1px solid var(--lavella-line)}
+.documentRow{display:grid;grid-template-columns:40px minmax(0,1fr) auto;align-items:center;gap:16px;padding:16px 0;border-bottom:1px solid var(--lavella-line)}
+.documentIcon{width:40px;height:40px;display:grid;place-items:center;border:1px solid var(--lavella-line);background:var(--lavella-soft);color:var(--lavella-orange);font-size:.62rem;font-weight:900;letter-spacing:.06em}
+.documentCopy{display:grid;gap:3px;min-width:0}.documentCopy strong{color:var(--lavella-ink);font-size:.98rem}.documentCopy span,.documentCopy p{margin:0;color:var(--lavella-muted);font-size:.86rem;line-height:1.42}.documentRow button{min-height:44px;padding:0 14px;border:1px solid var(--lavella-ink);border-radius:0;background:#fff;color:var(--lavella-ink);font:inherit;font-size:.82rem;font-weight:800;cursor:pointer}.documentRow button:hover{border-color:var(--lavella-orange);color:var(--lavella-orange)}
+.customerReservationDetail :is(button,a,input):focus-visible{outline:3px solid color-mix(in srgb,var(--lavella-orange) 62%,white);outline-offset:3px}
+@media(max-width:900px){.travelFacts,.financialOverview{grid-template-columns:repeat(2,minmax(0,1fr))}.customerReservationHero{align-items:start;display:grid}.customerHeroMeta{justify-items:start;text-align:left}.paymentActionPanel{align-items:flex-start;display:grid}.customerReservationDetail .customerTransferArea{justify-items:start}}
+@media(max-width:600px){.customerReservationDetail{width:min(100% - 32px,1160px);gap:30px;padding-bottom:48px}.customerReservationHero{margin:0 -16px;padding:26px 16px}.customerReservationHero h1{font-size:clamp(2rem,12vw,3.1rem)}.sectionHeading{align-items:start;display:grid;gap:8px}.sectionHeading>p{text-align:left}.travelFacts,.financialOverview{grid-template-columns:1fr}.nextStepsGrid{grid-template-columns:1fr}.contactStrip{display:grid;gap:4px}.paymentActionPanel{gap:14px}.customerReservationDetail .customerTransferArea,.customerReservationDetail .customerTransferButton{width:100%}.customerReservationDetail .customerPaymentItem{grid-template-columns:1fr}.documentRow{grid-template-columns:36px minmax(0,1fr);gap:12px}.documentRow :global(.control){grid-column:1/-1}.documentRow button{width:100%}.documentIcon{width:36px;height:36px}.customerReservationDetail .travelerForm button{width:100%}}
