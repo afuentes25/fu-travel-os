@@ -10,23 +10,31 @@ export type CustomerDocumentItem = Readonly<{
   generatedAt: string;
   paymentContext?: Readonly<{ amount: number; currency: Currency; paidAt: string }> | null;
   acceptanceContext?: Readonly<{ acceptedAt: string }> | null;
+  travelerContext?: Readonly<{ name: string; travelerType: "adult" | "minor"; position: number }> | null;
 }>;
 export type CustomerDocumentListResult =
   | Readonly<{ status: "authorized"; documents: readonly CustomerDocumentItem[] }>
   | Readonly<{ status: "unauthenticated" } | { status: "selection_required" } | { status: "forbidden" } | { status: "not_found" }>;
-export type CustomerDocumentRow = Readonly<{ id: string; documentType: string; version: number; generatedAt: string; paymentId: string | null; contractAcceptanceId?: string | null }>;
+export type CustomerDocumentRow = Readonly<{ id: string; documentType: string; version: number; generatedAt: string; paymentId: string | null; contractAcceptanceId?: string | null; reservationTravelerId?: string | null }>;
 export type CustomerDocumentPaymentRow = Readonly<{ id: string; amount: number; currency: string; paidAt: string | null }>;
+export type CustomerDocumentTravelerRow = Readonly<{ id: string; position: number; travelerType: string; firstName: string | null; lastName: string | null }>;
 export interface CustomerDocumentListRepositoryClient {
   findLinkedReservation(input: Readonly<{ customerAccountId: string; agencyId: string; reservationId: string }>): Promise<boolean>;
   listAvailableDocuments(input: Readonly<{ agencyId: string; reservationId: string }>): Promise<readonly CustomerDocumentRow[]>;
   findPaymentContexts(input: Readonly<{ agencyId: string; reservationId: string; paymentIds: readonly string[] }>): Promise<ReadonlyMap<string, CustomerDocumentPaymentRow>>;
   findAcceptanceContexts?(input: Readonly<{ agencyId: string; reservationId: string; acceptanceIds: readonly string[] }>): Promise<ReadonlyMap<string, Readonly<{ acceptedAt: string }>>>;
+  findTicketContexts?(input: Readonly<{ agencyId: string; reservationId: string; travelerIds: readonly string[] }>): Promise<ReadonlyMap<string, CustomerDocumentTravelerRow>>;
 }
 export class CustomerDocumentListError extends Error { readonly name = "CustomerDocumentListError"; constructor() { super("No fue posible consultar los documentos."); } }
 const types: readonly CustomerDocumentType[] = ["payment_receipt", "contract", "acceptance_certificate", "voucher", "ticket"];
 const order: Record<CustomerDocumentType, number> = { acceptance_certificate: 0, ticket: 1, voucher: 2, contract: 3, payment_receipt: 4 };
 function isType(value: string): value is CustomerDocumentType { return (types as readonly string[]).includes(value); }
 function isCurrency(value: string): value is Currency { return value === "MXN" || value === "USD"; }
+function travelerContext(row: CustomerDocumentTravelerRow | undefined) {
+  return row && Number.isInteger(row.position) && row.position > 0 && (row.travelerType === "adult" || row.travelerType === "minor") && row.firstName?.trim() && row.lastName?.trim()
+    ? { name: `${row.firstName.trim()} ${row.lastName.trim()}`, travelerType: row.travelerType, position: row.position } as const
+    : null;
+}
 
 /** Lists only currently available documents after the customer-reservation link is verified. */
 export function createCustomerDocumentListService(dependencies: Readonly<{
@@ -47,18 +55,24 @@ export function createCustomerDocumentListService(dependencies: Readonly<{
       const payments = paymentIds.length ? await repository.findPaymentContexts({ agencyId: scope.agencyId, reservationId: scope.reservationId, paymentIds }) : new Map<string, CustomerDocumentPaymentRow>();
       const acceptanceIds = rows.flatMap((row) => row.documentType === "acceptance_certificate" && row.contractAcceptanceId ? [row.contractAcceptanceId] : []);
       const acceptances = acceptanceIds.length && repository.findAcceptanceContexts ? await repository.findAcceptanceContexts({ agencyId: scope.agencyId, reservationId: scope.reservationId, acceptanceIds }) : new Map<string, Readonly<{ acceptedAt: string }>>();
+      const travelerIds = rows.flatMap((row) => row.documentType === "ticket" && row.reservationTravelerId ? [row.reservationTravelerId] : []);
+      const travelers = travelerIds.length && repository.findTicketContexts ? await repository.findTicketContexts({ agencyId: scope.agencyId, reservationId: scope.reservationId, travelerIds }) : new Map<string, CustomerDocumentTravelerRow>();
       const documents = rows.flatMap((row): CustomerDocumentItem[] => {
         if (!isType(row.documentType) || !Number.isInteger(row.version) || row.version <= 0 || !row.id || !row.generatedAt) return [];
         if (row.documentType === "acceptance_certificate") {
           const acceptance = row.contractAcceptanceId ? acceptances.get(row.contractAcceptanceId) : null;
-          return acceptance ? [{ documentKey: row.id, documentType: row.documentType, version: row.version, generatedAt: row.generatedAt, paymentContext: null, acceptanceContext: acceptance }] : [];
+          return acceptance ? [{ documentKey: row.id, documentType: row.documentType, version: row.version, generatedAt: row.generatedAt, paymentContext: null, acceptanceContext: acceptance, travelerContext: null }] : [];
         }
-        if (row.documentType !== "payment_receipt") return [{ documentKey: row.id, documentType: row.documentType, version: row.version, generatedAt: row.generatedAt, paymentContext: null, acceptanceContext: null }];
+        if (row.documentType === "ticket") {
+          const traveler = row.reservationTravelerId ? travelerContext(travelers.get(row.reservationTravelerId)) : null;
+          return traveler ? [{ documentKey: row.id, documentType: row.documentType, version: row.version, generatedAt: row.generatedAt, paymentContext: null, acceptanceContext: null, travelerContext: traveler }] : [];
+        }
+        if (row.documentType !== "payment_receipt") return [{ documentKey: row.id, documentType: row.documentType, version: row.version, generatedAt: row.generatedAt, paymentContext: null, acceptanceContext: null, travelerContext: null }];
         const payment = row.paymentId ? payments.get(row.paymentId) : null;
         return payment && Number.isFinite(payment.amount) && isCurrency(payment.currency) && payment.paidAt
-          ? [{ documentKey: row.id, documentType: row.documentType, version: row.version, generatedAt: row.generatedAt, paymentContext: { amount: payment.amount, currency: payment.currency, paidAt: payment.paidAt }, acceptanceContext: null }]
+          ? [{ documentKey: row.id, documentType: row.documentType, version: row.version, generatedAt: row.generatedAt, paymentContext: { amount: payment.amount, currency: payment.currency, paidAt: payment.paidAt }, acceptanceContext: null, travelerContext: null }]
           : [];
-      }).sort((a, b) => order[a.documentType] - order[b.documentType] || new Date(b.generatedAt).getTime() - new Date(a.generatedAt).getTime());
+      }).sort((a, b) => order[a.documentType] - order[b.documentType] || (a.documentType === "ticket" && b.documentType === "ticket" ? (a.travelerContext?.position ?? 0) - (b.travelerContext?.position ?? 0) || b.version - a.version : new Date(b.generatedAt).getTime() - new Date(a.generatedAt).getTime()));
       return { status: "authorized", documents };
     } catch { throw new CustomerDocumentListError(); }
   } };

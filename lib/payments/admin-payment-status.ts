@@ -4,6 +4,7 @@ import { resolveAdminAgencyAccess } from "@/lib/agencies/admin-access";
 import { ensurePaymentReceiptDocument } from "@/lib/documents/payment-receipt";
 import { revokePaymentReceiptDocument } from "@/lib/documents/payment-receipt-revocation";
 import { reconcileReservationVoucherLifecycle } from "@/lib/travel-documents/voucher-lifecycle";
+import { reconcileReservationTicketLifecycle } from "@/lib/travel-documents/ticket-lifecycle";
 
 import {
   createAdminPaymentStatusService,
@@ -35,7 +36,8 @@ export async function changeManualPaymentStatus(
       }
       const result = await revokePaymentReceiptDocument({ requestedAgencySlug, reservationId, paymentId });
       const voucher = await reconcileReservationVoucherLifecycle({ requestedAgencySlug, reservationId });
-      if (voucher === "document_error") return "document_error";
+      const ticket = await reconcileReservationTicketLifecycle({ requestedAgencySlug, reservationId });
+      if (voucher === "document_error" || ticket === "document_error") return "document_error";
       return result.status === "revoked" ? "revoked"
         : result.status === "already_revoked" || result.status === "no_receipt" ? "not_applicable"
           : "document_error";

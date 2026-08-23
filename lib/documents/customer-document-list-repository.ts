@@ -10,8 +10,8 @@ export function createSupabaseCustomerDocumentListRepository(supabase: SupabaseC
       if (error) throw failure(); const linked = data as { reservation_snapshots: { id: string } | { id: string }[] | null } | null; return Boolean(Array.isArray(linked?.reservation_snapshots) ? linked?.reservation_snapshots[0] : linked?.reservation_snapshots);
     },
     async listAvailableDocuments({ agencyId, reservationId }) {
-      const { data, error } = await supabase.from("reservation_documents").select("id, document_type, version, generated_at, payment_id, contract_acceptance_id").eq("reservation_id", reservationId).eq("agency_id", agencyId).eq("status", "available").order("generated_at", { ascending: false });
-      if (error) throw failure(); return (data ?? []).map((row) => ({ id: String(row.id), documentType: String(row.document_type), version: Number(row.version), generatedAt: String(row.generated_at), paymentId: typeof row.payment_id === "string" ? row.payment_id : null, contractAcceptanceId: typeof row.contract_acceptance_id === "string" ? row.contract_acceptance_id : null }));
+      const { data, error } = await supabase.from("reservation_documents").select("id, document_type, version, generated_at, payment_id, contract_acceptance_id, reservation_traveler_id").eq("reservation_id", reservationId).eq("agency_id", agencyId).eq("status", "available").order("generated_at", { ascending: false });
+      if (error) throw failure(); return (data ?? []).map((row) => ({ id: String(row.id), documentType: String(row.document_type), version: Number(row.version), generatedAt: String(row.generated_at), paymentId: typeof row.payment_id === "string" ? row.payment_id : null, contractAcceptanceId: typeof row.contract_acceptance_id === "string" ? row.contract_acceptance_id : null, reservationTravelerId: typeof row.reservation_traveler_id === "string" ? row.reservation_traveler_id : null }));
     },
     async findPaymentContexts({ agencyId, reservationId, paymentIds }) {
       if (!paymentIds.length) return new Map(); const { data, error } = await supabase.from("reservation_payments").select("id, amount, currency, paid_at").eq("reservation_id", reservationId).eq("agency_id", agencyId).in("id", [...paymentIds]);
@@ -20,6 +20,10 @@ export function createSupabaseCustomerDocumentListRepository(supabase: SupabaseC
     async findAcceptanceContexts({ agencyId, reservationId, acceptanceIds }) {
       if (!acceptanceIds.length) return new Map(); const { data, error } = await supabase.from("reservation_contract_acceptances").select("id, accepted_at").eq("reservation_id", reservationId).eq("agency_id", agencyId).in("id", [...acceptanceIds]);
       if (error) throw failure(); return new Map((data ?? []).flatMap((row) => typeof row.accepted_at === "string" ? [[String(row.id), { acceptedAt: row.accepted_at }] as const] : []));
+    },
+    async findTicketContexts({ agencyId, reservationId, travelerIds }) {
+      if (!travelerIds.length) return new Map(); const { data, error } = await supabase.from("reservation_travelers").select("id,position,traveler_type,first_name,last_name").eq("reservation_id", reservationId).eq("agency_id", agencyId).in("id", [...travelerIds]);
+      if (error) throw failure(); return new Map((data ?? []).map((row) => [String(row.id), { id: String(row.id), position: Number(row.position), travelerType: String(row.traveler_type), firstName: typeof row.first_name === "string" ? row.first_name : null, lastName: typeof row.last_name === "string" ? row.last_name : null }]));
     },
   };
 }

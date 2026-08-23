@@ -292,6 +292,7 @@ export default async function CustomerReservationDetailPage({
             <div className={styles.customerPaymentHeading}><strong>{customerDocumentLabels[document.documentType]}</strong>{document.documentType === "payment_receipt" && <span className={styles.customerPaymentMethod}>Documento no fiscal</span>}</div>
             {document.paymentContext && <p className={styles.customerPaymentMessage}>{financialMoney(document.paymentContext.amount, document.paymentContext.currency)} · {date(document.paymentContext.paidAt)}</p>}
             {document.acceptanceContext && <p className={styles.customerPaymentMessage}>Aceptado el {date(document.acceptanceContext.acceptedAt)}</p>}
+            {document.travelerContext && <p className={styles.customerPaymentMessage}>{document.travelerContext.name} · {document.travelerContext.travelerType === "adult" ? "Adulto" : "Menor"}</p>}
             {document.documentType !== "payment_receipt" && <p className={styles.customerPaymentDate}>{date(document.generatedAt)}</p>}
             <DocumentOpenButton requestedAgencySlug={detail.account.agencySlug} reservationId={reservationId} documentKey={document.documentKey} />
           </article>)}</div>}

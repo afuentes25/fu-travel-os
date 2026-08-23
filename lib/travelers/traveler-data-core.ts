@@ -180,6 +180,7 @@ function scopeFrom(access: Extract<CustomerAgencyAccess, { status: "authorized" 
 export function createReservationTravelerDataService(dependencies: Readonly<{
   resolveAccess: (input: Readonly<{ requestedAgencySlug?: string }>) => Promise<CustomerAgencyAccess>;
   repository: TravelerDataRepositoryClient | (() => TravelerDataRepositoryClient);
+  afterNameChanged?: (input: Readonly<{ requestedAgencySlug?: string; reservationId: string; position: number }>) => Promise<unknown>;
 }>) {
   const resolve = async (requestedAgencySlug?: string) => {
     try {
@@ -228,12 +229,22 @@ export function createReservationTravelerDataService(dependencies: Readonly<{
       if (access.status !== "authorized") return { status: "forbidden" };
 
       try {
+        const scope = scopeFrom(access, input.reservationId);
+        const beforeRows = await repository().listAuthorized(scope);
+        if (beforeRows === null) return { status: "not_found" };
+        const previous = beforeRows.find((row) => row.position === validated.value.position);
+        if (!previous) return { status: "not_found" };
         const row = await repository().updateAuthorized({
-          ...scopeFrom(access, input.reservationId),
+          ...scope,
           ...validated.value,
         });
         const traveler = row ? projectTraveler(row) : null;
-        return traveler ? { status: "saved", traveler } : { status: "not_found" };
+        if (!traveler) return { status: "not_found" };
+        const previousTraveler = projectTraveler(previous);
+        if (previousTraveler && (previousTraveler.firstName !== traveler.firstName || previousTraveler.lastName !== traveler.lastName)) {
+          try { await dependencies.afterNameChanged?.({ requestedAgencySlug: input.requestedAgencySlug, reservationId: input.reservationId, position: traveler.position }); } catch { /* a stale ticket is reconciled safely later */ }
+        }
+        return { status: "saved", traveler };
       } catch {
         throw new TravelerDataError();
       }

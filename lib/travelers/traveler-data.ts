@@ -10,6 +10,7 @@ import {
   type SaveReservationTravelerDataResult,
 } from "./traveler-data-core";
 import { createSupabaseTravelerDataRepository } from "./traveler-data-repository";
+import { revokeChangedTravelerTickets } from "@/lib/travel-documents/ticket-lifecycle";
 
 export {
   createReservationTravelerDataService,
@@ -25,6 +26,7 @@ function travelerDataService() {
   return createReservationTravelerDataService({
     resolveAccess: resolveCustomerAgencyAccess,
     repository: () => createSupabaseTravelerDataRepository(),
+    afterNameChanged: revokeChangedTravelerTickets,
   });
 }
 

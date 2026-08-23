@@ -186,6 +186,13 @@ import {
 import { createVoucherLifecycleService } from "../lib/travel-documents/voucher-lifecycle-core";
 import { renderReservationVoucherPdf } from "../lib/documents/reservation-voucher-document-pdf";
 import {
+  createReservationTicketDocumentService,
+  ReservationTicketDocumentError,
+  type ReservationTicketDocumentRow,
+} from "../lib/documents/reservation-ticket-document-core";
+import { renderReservationTicketPdf } from "../lib/documents/reservation-ticket-document-pdf";
+import { createChangedTravelerTicketLifecycleService, createReservationTicketLifecycleService } from "../lib/travel-documents/ticket-lifecycle-core";
+import {
   createCustomerTransferIdempotencyKey,
   localTransferDateTimeToIso,
   localTransferDateTimeValue,
@@ -2056,7 +2063,7 @@ test("datos de viajeros validan, normalizan y actualizan solo las columnas permi
   }
   assert.equal(fixture.rows[0].traveler_type, originalType);
   assert.equal(fixture.rows[0].position, 1);
-  assert.equal(fixture.requests[0].kind, "update");
+  assert.ok(fixture.requests.some((request) => request.kind === "update"));
   assert.equal("agencyId" in fixture.rows[0], false);
   const reloaded = await fixture.service.get({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId });
   assert.equal(reloaded.status, "authorized");
@@ -6746,10 +6753,11 @@ test("documentos cliente se autorizan antes de listar, excluyen revoked y proyec
       async listAvailableDocuments() {
         return [
           { id: paymentReceiptDocumentId, documentType: "payment_receipt", version: 1, generatedAt: "2026-08-20T12:00:00.000Z", paymentId: adminPaymentId },
-          { id: "5bd3cecf-8f8d-4e55-aa98-16fe38e4e8d1", documentType: "ticket", version: 1, generatedAt: "2026-08-19T12:00:00.000Z", paymentId: null },
+          { id: "5bd3cecf-8f8d-4e55-aa98-16fe38e4e8d1", documentType: "ticket", version: 1, generatedAt: "2026-08-19T12:00:00.000Z", paymentId: null, reservationTravelerId: "74cf2e61-23bd-4d4a-85ca-e1d7a36fc183" },
         ];
       },
       async findPaymentContexts() { return new Map([[adminPaymentId, { id: adminPaymentId, amount: 9563.4, currency: "MXN", paidAt: "2026-08-20T11:00:00.000Z" }]]); },
+      async findTicketContexts() { return new Map([["74cf2e61-23bd-4d4a-85ca-e1d7a36fc183", { id: "74cf2e61-23bd-4d4a-85ca-e1d7a36fc183", position: 1, travelerType: "adult", firstName: "Ana", lastName: "Pérez" }]]); },
     },
   });
   const result = await list.list({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId });
@@ -7212,4 +7220,121 @@ test("ciclo de vida del Voucher revoca sólo tras perder elegibilidad y no revie
   assert.match(repository, /payment_id\s*:\s*null/); assert.match(repository, /contract_instance_id\s*:\s*null/); assert.match(repository, /contract_acceptance_id\s*:\s*null/); assert.match(repository, /reservation_traveler_id\s*:\s*null/);
   assert.match(lifecycleRepository, /status\s*:\s*"revoked"/); assert.match(action, /ensureReservationVoucherDocument/); assert.equal(/export\s+(?!async function|type\b)/.test(action), false);
   assert.match(control, /Generar Voucher/); assert.match(page, /reconcileReservationVoucherLifecycle/); assert.match(page, /Voucher disponible/);
+});
+
+test("Ticket individual reutiliza la elegibilidad global, versiona por traveler y conserva provenance privada", async () => {
+  const access = adminAccessFixture({ memberships: [adminMembership()] });
+  const travelerOne = "74cf2e61-23bd-4d4a-85ca-e1d7a36fc183";
+  const travelerTwo = "84cf2e61-23bd-4d4a-85ca-e1d7a36fc183";
+  const travelers = new Map([
+    [travelerOne, { id: travelerOne, position: 1, travelerType: "adult", status: "complete", firstName: "María", lastName: "Pérez" }],
+    [travelerTwo, { id: travelerTwo, position: 2, travelerType: "minor", status: "complete", firstName: "Ana", lastName: "Pérez" }],
+  ]);
+  const tickets = new Map<string, ReservationTicketDocumentRow[]>();
+  const state = { uploads: [] as string[], removals: [] as string[], inserts: [] as unknown[], pdf: null as Parameters<typeof renderReservationTicketPdf>[0] | null };
+  const bytes = new TextEncoder().encode("%PDF-1.7 ticket individual");
+  const service = createReservationTicketDocumentService({
+    resolveAccess: access.resolver.resolve,
+    eligibility: async () => ({ status: "authorized", eligibility: { ticket: { eligible: true, blockers: [] } } }),
+    repository: {
+      async findReservation() { return financialReservationRow(); },
+      async findTraveler({ travelerKey, agencyId, reservationId }) { return agencyId === "agency-furiver" && reservationId === customerDetailReservationId ? travelers.get(travelerKey) ?? null : null; },
+      async listTickets({ travelerId }) { return tickets.get(travelerId) ?? []; },
+      async insertTicket(input) { state.inserts.push(input); const row = { status: "available", version: input.version, generatedAt: input.generatedAt }; tickets.set(input.travelerId, [...(tickets.get(input.travelerId) ?? []), row]); return row; },
+    },
+    storage: { async upload({ path }) { state.uploads.push(path); }, async remove(path) { state.removals.push(path); }, async download() { return bytes; } },
+    renderPdf: async (data) => { state.pdf = data; return bytes; },
+    now: () => new Date(TEST_NOW),
+    createDocumentId: () => "94cf2e61-23bd-4d4a-85ca-e1d7a36fc183",
+  });
+  const request = { requestedAgencySlug: "furiver", reservationId: customerDetailReservationId, travelerKey: travelerOne };
+  const first = await service.ensure(request);
+  assert.deepEqual(first.status === "generated" ? first.ticket : null, { travelerPosition: 1, travelerName: "María Pérez", travelerType: "adult", version: 1, generatedAt: TEST_NOW });
+  assert.match(state.uploads[0], /^agency-furiver\/[0-9a-f-]+\/ticket\/[0-9a-f-]+\/[0-9a-f-]+\/v1\.pdf$/i);
+  const inserted = state.inserts[0] as Record<string, unknown>;
+  assert.equal(inserted.travelerId, travelerOne); assert.equal(inserted.contentSha256, calculateContractDocumentSha256(bytes));
+  assert.equal(JSON.stringify(inserted).includes("paymentId"), false);
+  assert.equal(state.pdf?.traveler.firstName, "María"); assert.equal(state.pdf?.traveler.travelerType, "adult");
+  assert.equal((await service.ensure(request)).status, "existing");
+  assert.equal((await service.ensure({ ...request, travelerKey: travelerTwo })).status, "generated");
+  tickets.set(travelerOne, [{ ...tickets.get(travelerOne)![0], status: "revoked" }]);
+  const reissued = await service.ensure(request); assert.equal(reissued.status === "generated" ? reissued.ticket.version : null, 2);
+  const blocked = createReservationTicketDocumentService({
+    resolveAccess: access.resolver.resolve,
+    eligibility: async () => ({ status: "authorized", eligibility: { ticket: { eligible: false, blockers: ["payment_threshold_not_met"] } } }),
+    repository: { async findReservation() { throw new Error("must not query"); }, async findTraveler() { throw new Error("must not query"); }, async listTickets() { return []; }, async insertTicket() { throw new Error("must not insert"); } },
+    storage: { async upload() { throw new Error("must not upload"); }, async remove() {}, async download() { return bytes; } }, renderPdf: async () => bytes,
+  });
+  assert.deepEqual(await blocked.ensure(request), { status: "not_eligible", blockers: ["payment_threshold_not_met"] });
+  const pending = createReservationTicketDocumentService({
+    resolveAccess: access.resolver.resolve, eligibility: async () => ({ status: "authorized", eligibility: { ticket: { eligible: true, blockers: [] } } }),
+    repository: { async findReservation() { return financialReservationRow(); }, async findTraveler() { return { ...travelers.get(travelerOne)!, status: "pending" }; }, async listTickets() { return []; }, async insertTicket() { throw new Error("must not insert"); } },
+    storage: { async upload() { throw new Error("must not upload"); }, async remove() {}, async download() { return bytes; } }, renderPdf: async () => bytes,
+  });
+  assert.deepEqual(await pending.ensure(request), { status: "traveler_incomplete" });
+  assert.deepEqual(await service.ensure({ ...request, requestedAgencySlug: "crisenix" }), { status: "forbidden" });
+});
+
+test("Ticket recupera fallos y el lifecycle revoca todos sólo al perder la elegibilidad global", async () => {
+  const access = adminAccessFixture({ memberships: [adminMembership()] });
+  const travelerId = "74cf2e61-23bd-4d4a-85ca-e1d7a36fc183";
+  const bytes = new TextEncoder().encode("%PDF-1.7 ticket");
+  const failure = createReservationTicketDocumentService({
+    resolveAccess: access.resolver.resolve, eligibility: async () => ({ status: "authorized", eligibility: { ticket: { eligible: true, blockers: [] } } }),
+    repository: { async findReservation() { return financialReservationRow(); }, async findTraveler() { return { id: travelerId, position: 1, travelerType: "adult", status: "complete", firstName: "Ana", lastName: "Pérez" }; }, async listTickets() { return []; }, async insertTicket() { throw new Error("database private"); } },
+    storage: { async upload() {}, async remove() {}, async download() { return bytes; } }, renderPdf: async () => bytes, createDocumentId: () => "94cf2e61-23bd-4d4a-85ca-e1d7a36fc183",
+  });
+  await assert.rejects(failure.ensure({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId, travelerKey: travelerId }), (error: unknown) => error instanceof ReservationTicketDocumentError && !error.message.includes("database"));
+  let revoked = 0;
+  const lifecycle = createReservationTicketLifecycleService({ resolveAccess: access.resolver.resolve, eligibility: async () => ({ status: "authorized", eligibility: { ticket: { eligible: false } } }), repository: { async hasAvailableTickets() { return true; }, async revokeAvailableTickets() { revoked += 1; }, async findTravelerByPosition() { return { id: travelerId }; }, async revokeAvailableTicketsForTraveler() { throw new Error("must not run"); } } });
+  assert.equal(await lifecycle.reconcile({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId }), "revoked"); assert.equal(revoked, 1);
+  const retained = createReservationTicketLifecycleService({ resolveAccess: access.resolver.resolve, eligibility: async () => ({ status: "authorized", eligibility: { ticket: { eligible: true } } }), repository: { async hasAvailableTickets() { return true; }, async revokeAvailableTickets() { throw new Error("must not revoke"); }, async findTravelerByPosition() { return null; }, async revokeAvailableTicketsForTraveler() {} } });
+  assert.equal(await retained.reconcile({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId }), "not_applicable");
+  const pdf = await renderReservationTicketPdf({ agencyName: "Furiver", version: 1, generatedAt: TEST_NOW, traveler: { position: 1, firstName: "María", lastName: "Pérez", travelerType: "adult" }, reservation: { code: "FT-004-260801-D01B4E", tripName: "Viaje", tripCode: "FT", departureDate: TEST_NOW, boarding: "Terminal", currency: "MXN" } });
+  assert.equal(new TextDecoder().decode(pdf.slice(0, 4)), "%PDF");
+  const repository = readFileSync("lib/documents/reservation-ticket-document-repository.ts", "utf8"); const lifecycleRepository = readFileSync("lib/travel-documents/ticket-lifecycle-repository.ts", "utf8"); const action = readFileSync("app/admin/[agencySlug]/reservaciones/[reservationId]/ticket-actions.ts", "utf8");
+  assert.match(repository, /reservation_traveler_id: input\.travelerId/); assert.match(repository, /payment_id: null/); assert.match(repository, /contract_instance_id: null/); assert.match(repository, /contract_acceptance_id: null/); assert.match(lifecycleRepository, /document_type", "ticket"/); assert.match(action, /ensureReservationTravelerTicket/); assert.equal(/export\s+(?!async function|type\b)/.test(action), false);
+});
+
+test("contexto cliente y cambios de nombre distinguen tickets sin exponer IDs ni revocar otros viajeros", async () => {
+  const ticketTravelerId = "74cf2e61-23bd-4d4a-85ca-e1d7a36fc183";
+  const list = createCustomerDocumentListService({
+    resolveAccess: customerAccessFixture({ accounts: [customerAccount()] }).resolver.resolve,
+    repository: { async findLinkedReservation() { return true; }, async listAvailableDocuments() { return [{ id: "a4cf2e61-23bd-4d4a-85ca-e1d7a36fc183", documentType: "ticket", version: 1, generatedAt: TEST_NOW, paymentId: null, reservationTravelerId: ticketTravelerId }]; }, async findPaymentContexts() { return new Map(); }, async findTicketContexts() { return new Map([[ticketTravelerId, { id: ticketTravelerId, position: 2, travelerType: "minor", firstName: "Ana", lastName: "Pérez" }]]); } },
+  });
+  const documents = await list.list({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId });
+  assert.deepEqual(documents.status === "authorized" ? documents.documents[0]?.travelerContext : null, { name: "Ana Pérez", travelerType: "minor", position: 2 });
+  assert.equal(JSON.stringify(documents).includes(ticketTravelerId), false);
+  let revokedTraveler: string | null = null;
+  const changed = createChangedTravelerTicketLifecycleService({ resolveAccess: customerAccessFixture({ accounts: [customerAccount()] }).resolver.resolve, repository: { async hasAvailableTickets() { return false; }, async revokeAvailableTickets() {}, async findTravelerByPosition() { return { id: ticketTravelerId }; }, async revokeAvailableTicketsForTraveler({ travelerId }) { revokedTraveler = travelerId; } } });
+  assert.equal(await changed.revokeForNameChange({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId, position: 2 }), "revoked"); assert.equal(revokedTraveler, ticketTravelerId);
+  const customerDocuments = readFileSync("lib/documents/customer-document-list-core.ts", "utf8"); const customerPage = readFileSync("app/cuenta/[agencySlug]/reservaciones/[reservationId]/page.tsx", "utf8"); const travelerCore = readFileSync("lib/travelers/traveler-data-core.ts", "utf8");
+  assert.match(customerDocuments, /travelerContext/); assert.match(customerPage, /travelerContext\.name/); assert.equal(customerDocuments.includes("birthDate"), false); assert.match(travelerCore, /afterNameChanged/);
+});
+
+test("guardar viajero revoca sólo su Ticket cuando cambia nombre o apellido, no por birth_date", async () => {
+  const rows: ReservationTravelerDataRow[] = [
+    { position: 1, traveler_type: "adult", status: "complete", first_name: "Maria", last_name: "Perez", birth_date: "1990-01-01" },
+    { position: 2, traveler_type: "adult", status: "complete", first_name: "Juan", last_name: "Pérez", birth_date: "1991-01-01" },
+  ];
+  const revocations: number[] = [];
+  const service = createReservationTravelerDataService({
+    resolveAccess: customerAccessFixture({ accounts: [customerAccount()] }).resolver.resolve,
+    repository: {
+      async listAuthorized() { return rows; },
+      async updateAuthorized(input) {
+        const row = rows.find((item) => item.position === input.position);
+        if (!row) return null;
+        const next = { ...row, first_name: input.firstName, last_name: input.lastName, birth_date: input.birthDate, status: "complete" } as const;
+        rows[rows.indexOf(row)] = next;
+        return next;
+      },
+    },
+    async afterNameChanged({ position }) { revocations.push(position); },
+  });
+  const base = { requestedAgencySlug: "furiver", reservationId: customerDetailReservationId, position: 1 };
+  assert.equal((await service.save({ ...base, firstName: "María", lastName: "Pérez", birthDate: "1990-01-01" })).status, "saved");
+  assert.deepEqual(revocations, [1]);
+  assert.equal((await service.save({ ...base, firstName: "María", lastName: "Pérez", birthDate: "1990-01-02" })).status, "saved");
+  assert.deepEqual(revocations, [1]);
 });

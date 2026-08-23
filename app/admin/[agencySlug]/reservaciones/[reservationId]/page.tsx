@@ -19,9 +19,12 @@ import { PaymentReceiptControl } from "./payment-receipt-control";
 import { ContractPreparationControl } from "./contract-preparation-control";
 import { ContractDocumentControl } from "./contract-document-control";
 import { VoucherControl } from "./voucher-control";
+import { TicketControl } from "./ticket-control";
 import { createSupabaseReservationContractDocumentRepository } from "@/lib/documents/reservation-contract-document-repository";
 import { createSupabaseReservationVoucherRepository } from "@/lib/documents/reservation-voucher-document-repository";
+import { createSupabaseReservationTicketRepository } from "@/lib/documents/reservation-ticket-document-repository";
 import { reconcileReservationVoucherLifecycle } from "@/lib/travel-documents/voucher-lifecycle";
+import { reconcileReservationTicketLifecycle } from "@/lib/travel-documents/ticket-lifecycle";
 import type { ReservationContractDocumentRow, ReservationContractInstanceRow } from "@/lib/documents/reservation-contract-document-core";
 import styles from "../../../admin.module.css";
 import detailStyles from "./admin-detail.module.css";
@@ -160,6 +163,28 @@ export default async function AdminReservationDetailPage({
       }
     }
   } catch { voucherAvailable = false; voucherReconciliationError = true; }
+  let ticketTravelers: Awaited<ReturnType<ReturnType<typeof createSupabaseReservationTicketRepository>["listTravelers"]>> = [];
+  let ticketsByTraveler = new Map<string, Readonly<{ status: string; version: number }>>();
+  let ticketReconciliationError = false;
+  try {
+    const ticketRepository = createSupabaseReservationTicketRepository();
+    ticketTravelers = await ticketRepository.listTravelers({ agencyId: access.agency.agencyId, reservationId: reservation.id });
+    const tickets = await ticketRepository.listReservationTickets({ agencyId: access.agency.agencyId, reservationId: reservation.id });
+    if (tickets.some((ticket) => ticket.status === "available") && documentEligibility?.status === "authorized" && !documentEligibility.eligibility.ticket.eligible) {
+      const lifecycle = await reconcileReservationTicketLifecycle({ requestedAgencySlug: access.agency.agencySlug, reservationId: reservation.id });
+      if (lifecycle === "document_error") ticketReconciliationError = true;
+    }
+    if (!ticketReconciliationError) {
+      const refreshed = await ticketRepository.listReservationTickets({ agencyId: access.agency.agencyId, reservationId: reservation.id });
+      ticketsByTraveler = new Map();
+      for (const ticket of refreshed) {
+        const current = ticketsByTraveler.get(ticket.travelerId);
+        if (!current || ticket.status === "available" || (current.status !== "available" && ticket.version > current.version)) {
+          ticketsByTraveler.set(ticket.travelerId, { status: ticket.status, version: ticket.version });
+        }
+      }
+    }
+  } catch { ticketReconciliationError = true; }
   let contractInstance: ReservationContractInstanceRow | null = null;
   let contractDocument: ReservationContractDocumentRow | null = null;
   try {
@@ -202,7 +227,7 @@ export default async function AdminReservationDetailPage({
           </article>)}</div>}
         </section>
         <section className={detailStyles.detailCard} aria-labelledby="detail-contract-title"><h2 id="detail-contract-title">Contrato</h2>{contractInstance && (contractInstance.status === "prepared" || contractInstance.status === "accepted") ? <ContractDocumentControl agencySlug={access.agency.agencySlug} reservationId={reservation.id} templateVersion={contractInstance.contractTemplateVersion} contractStatus={contractInstance.status} hasDocument={contractDocument?.status === "available" && contractDocument.version === 1} /> : <ContractPreparationControl agencySlug={access.agency.agencySlug} reservationId={reservation.id} />}</section>
-        <section className={detailStyles.detailCard} aria-labelledby="detail-travel-documents-title"><h2 id="detail-travel-documents-title">Documentos de viaje</h2>{documentEligibility?.status === "authorized" ? <div><article><h3>Voucher</h3>{voucherReconciliationError ? <p className={detailStyles.unavailable}>No fue posible reconciliar el estado del Voucher. Intenta nuevamente.</p> : voucherAvailable ? <p role="status">Voucher disponible</p> : documentEligibility.eligibility.voucher.eligible ? <><p role="status">{voucherRevoked ? "Listo para reemitir" : "Listo para generar"}</p><VoucherControl agencySlug={access.agency.agencySlug} reservationId={reservation.id} revoked={voucherRevoked} nextVersion={voucherNextVersion}/></> : <><p role="status">Pendiente</p><ul>{documentEligibility.eligibility.voucher.blockers.map((blocker) => <li key={blocker}>{documentBlockerLabels[blocker]}</li>)}</ul></>}</article><article><h3>Boleto</h3><p role="status">{documentEligibility.eligibility.ticket.eligible ? "Listo para generar" : "Pendiente"}</p><p>Pago confirmado: {documentEligibility.eligibility.ticket.confirmedPaymentPercent === null ? "No disponible" : `${documentEligibility.eligibility.ticket.confirmedPaymentPercent}%`} · Requerido: {documentEligibility.eligibility.ticket.requiredPaymentPercent}%</p>{documentEligibility.eligibility.ticket.blockers.length > 0 && <ul>{documentEligibility.eligibility.ticket.blockers.map((blocker) => <li key={blocker}>{documentBlockerLabels[blocker]}</li>)}</ul>}</article></div> : <p className={detailStyles.unavailable}>No fue posible calcular la elegibilidad de documentos de viaje.</p>}</section>
+        <section className={detailStyles.detailCard} aria-labelledby="detail-travel-documents-title"><h2 id="detail-travel-documents-title">Documentos de viaje</h2>{documentEligibility?.status === "authorized" ? <div><article><h3>Voucher</h3>{voucherReconciliationError ? <p className={detailStyles.unavailable}>No fue posible reconciliar el estado del Voucher. Intenta nuevamente.</p> : voucherAvailable ? <p role="status">Voucher disponible</p> : documentEligibility.eligibility.voucher.eligible ? <><p role="status">{voucherRevoked ? "Listo para reemitir" : "Listo para generar"}</p><VoucherControl agencySlug={access.agency.agencySlug} reservationId={reservation.id} revoked={voucherRevoked} nextVersion={voucherNextVersion}/></> : <><p role="status">Pendiente</p><ul>{documentEligibility.eligibility.voucher.blockers.map((blocker) => <li key={blocker}>{documentBlockerLabels[blocker]}</li>)}</ul></>}</article><article><h3>Boleto</h3>{ticketReconciliationError ? <p className={detailStyles.unavailable}>No fue posible reconciliar el estado de los boletos. Intenta nuevamente.</p> : <><p role="status">{documentEligibility.eligibility.ticket.eligible ? "Listo para generar" : "Pendiente"}</p><p>Pago confirmado: {documentEligibility.eligibility.ticket.confirmedPaymentPercent === null ? "No disponible" : `${documentEligibility.eligibility.ticket.confirmedPaymentPercent}%`} · Requerido: {documentEligibility.eligibility.ticket.requiredPaymentPercent}%</p>{documentEligibility.eligibility.ticket.blockers.length > 0 ? <ul>{documentEligibility.eligibility.ticket.blockers.map((blocker) => <li key={blocker}>{documentBlockerLabels[blocker]}</li>)}</ul> : <div>{ticketTravelers.map((traveler) => { const ticket = ticketsByTraveler.get(traveler.id); const fullName = traveler.firstName && traveler.lastName ? `${traveler.firstName} ${traveler.lastName}` : "Viajero sin datos completos"; const reissueVersion = ticket && ticket.status !== "available" ? ticket.version + 1 : null; return <article key={traveler.id}><strong>{fullName}</strong><p>{traveler.travelerType === "adult" ? "Adulto" : "Menor"}</p>{ticket?.status === "available" ? <p role="status">Boleto V{ticket.version} disponible</p> : <><p>Boleto: {reissueVersion ? "Versión anterior no vigente" : "No emitido"}</p><TicketControl agencySlug={access.agency.agencySlug} reservationId={reservation.id} travelerKey={traveler.id} reissueVersion={reissueVersion}/></>}</article>; })}</div>}</>}</article></div> : <p className={detailStyles.unavailable}>No fue posible calcular la elegibilidad de documentos de viaje.</p>}</section>
       </section>
     </AdminShell>
   );
