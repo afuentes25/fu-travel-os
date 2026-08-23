@@ -173,6 +173,11 @@ import {
 } from "../lib/documents/reservation-contract-document-core";
 import { renderReservationContractPdf } from "../lib/documents/reservation-contract-document-pdf";
 import {
+  createAcceptanceCertificateService,
+  type AcceptanceCertificateInsert,
+} from "../lib/documents/acceptance-certificate-core";
+import { renderAcceptanceCertificatePdf } from "../lib/documents/acceptance-certificate-pdf";
+import {
   createCustomerTransferIdempotencyKey,
   localTransferDateTimeToIso,
   localTransferDateTimeValue,
@@ -7015,4 +7020,49 @@ test("la migración de constancia vincula acceptance, instancia, reservación y 
   assert.match(migration, /document_type = 'payment_receipt'[\s\S]*contract_acceptance_id is null/);
   assert.match(migration, /reservation_documents_acceptance_version_unique/);
   assert.equal(migration.includes("insert into"), false);
+});
+
+test("constancia de aceptación usa evidencia congelada, verifica el contrato y es idempotente", async () => {
+  const access = customerAccessFixture({ accounts: [customerAccount()] });
+  const contractBytes = new TextEncoder().encode("%PDF-1.7 contract accepted");
+  const contractHash = calculateContractDocumentSha256(contractBytes);
+  const certificateBytes = new TextEncoder().encode("%PDF-1.7 acceptance certificate");
+  const certificates: AcceptanceCertificateInsert[] = [];
+  let uploaded = 0;
+  const service = createAcceptanceCertificateService({
+    resolveAccess: access.resolver.resolve,
+    repository: {
+      async findPrimaryLink() { return true; },
+      async findReservation() { return financialReservationRow(); },
+      async findInstance() { return { id: contractInstanceId, status: "accepted", contractTemplateVersion: 2, legalProfileSnapshot: { legalName: "Agencia Congelada", taxId: "ABC", legalAddress: null, supportEmail: null, supportPhone: null, jurisdiction: null }, contractContentSnapshot: { templateVersion: 2, title: "Contrato congelado", termsText: "Términos congelados" } }; },
+      async findAcceptance() { return { id: "44cf2e61-23bd-4d4a-85ca-e1d7a36fc183", contractDocumentId: contractInstanceDocumentId, documentContentSha256: contractHash, acceptedAt: TEST_NOW, statementVersion: "contract_acceptance_v1", statement: "Texto histórico" }; },
+      async findContractDocument() { return { id: contractInstanceDocumentId, status: "available", version: 1, generatedAt: TEST_NOW, storagePath: "private/contract.pdf", contentSha256: contractHash }; },
+      async findExistingCertificate({ contractAcceptanceId }) { const row = certificates.find((item) => item.contractAcceptanceId === contractAcceptanceId); return row ? { status: "available", version: 1, generatedAt: row.generatedAt, storagePath: row.storagePath, contentSha256: row.contentSha256 } : null; },
+      async updateExistingHash() {},
+      async insertCertificate(input) { certificates.push(input); return { status: "available", version: 1, generatedAt: input.generatedAt, storagePath: input.storagePath, contentSha256: input.contentSha256 }; },
+    },
+    storage: { async upload() { uploaded += 1; }, async download(path) { return path.includes("contract") ? contractBytes : certificateBytes; }, async remove() {} },
+    renderPdf: async (data) => { assert.equal(data.legalName, "Agencia Congelada"); assert.equal(data.statement, "Texto histórico"); assert.equal(data.contractSha256, contractHash); return certificateBytes; },
+    now: () => new Date(TEST_NOW), createDocumentId: () => "54cf2e61-23bd-4d4a-85ca-e1d7a36fc183",
+  });
+  const input = { requestedAgencySlug: "furiver", reservationId: customerDetailReservationId };
+  assert.equal((await service.ensure(input)).status, "generated");
+  assert.equal(certificates.length, 1); assert.equal(certificates[0].paymentId, null); assert.equal(certificates[0].contentSha256, calculateContractDocumentSha256(certificateBytes));
+  assert.match(certificates[0].storagePath, /^agency-furiver\/[0-9a-f-]+\/acceptance_certificate\/[0-9a-f-]+\/v1\.pdf$/i);
+  assert.equal((await service.ensure(input)).status, "existing"); assert.equal(uploaded, 1);
+  const mismatch = createAcceptanceCertificateService({ resolveAccess: access.resolver.resolve, repository: { async findPrimaryLink(){return true;},async findReservation(){return financialReservationRow();},async findInstance(){return{id:contractInstanceId,status:"accepted",contractTemplateVersion:2,legalProfileSnapshot:{legalName:"A",taxId:null},contractContentSnapshot:{templateVersion:2,title:"T",termsText:"x"}};},async findAcceptance(){return{id:"44cf2e61-23bd-4d4a-85ca-e1d7a36fc183",contractDocumentId:contractInstanceDocumentId,documentContentSha256:contractHash,acceptedAt:TEST_NOW,statementVersion:"v",statement:"x"};},async findContractDocument(){return{id:contractInstanceDocumentId,status:"available",version:1,generatedAt:TEST_NOW,storagePath:"contract",contentSha256:"a".repeat(64)};},async findExistingCertificate(){return null;},async updateExistingHash(){},async insertCertificate(){throw new Error("must not insert");}}, storage:{async upload(){throw new Error("must not upload");},async download(){return contractBytes;},async remove(){}},renderPdf:async()=>certificateBytes });
+  assert.deepEqual(await mismatch.ensure(input), { status: "invalid_structure" });
+  const pdf = await renderAcceptanceCertificatePdf({ legalName: "Agencia Española", taxId: null, reservationCode: "FT-004-260801-D01B4E", tripName: "Viaje", departureDate: null, contractTemplateVersion: 2, contractDocumentVersion: 1, contractGeneratedAt: TEST_NOW, contractSha256: contractHash, acceptedAt: TEST_NOW, statementVersion: "contract_acceptance_v1", statement: "á é í ó ú ñ ü ".repeat(300) });
+  assert.equal(new TextDecoder().decode(pdf.slice(0, 4)), "%PDF");
+});
+
+test("constancia se integra como documento privado sin exponer hash, acceptance ni rutas", () => {
+  const core = readFileSync("lib/documents/acceptance-certificate-core.ts", "utf8");
+  const repository = readFileSync("lib/documents/acceptance-certificate-repository.ts", "utf8");
+  const customerDocuments = readFileSync("lib/documents/customer-document-list-core.ts", "utf8");
+  const page = readFileSync("app/cuenta/[agencySlug]/reservaciones/[reservationId]/page.tsx", "utf8");
+  assert.match(core, /contractContentSnapshot/); assert.match(core, /documentContentSha256/); assert.match(core, /acceptance_certificate/);
+  assert.equal(core.includes("agency_legal_profiles"), false); assert.equal(core.includes("agency_contract_templates"), false);
+  assert.match(repository, /contract_acceptance_id/); assert.match(customerDocuments, /acceptance_certificate/); assert.match(page, /Constancia de aceptación/);
+  assert.equal(customerDocuments.includes("contentSha256"), false); assert.equal(page.includes("contractAcceptanceId"), false);
 });

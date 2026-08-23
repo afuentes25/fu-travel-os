@@ -18,6 +18,7 @@ import { TravelerDataForm } from "./traveler-data-form";
 import { CustomerTransferForm } from "./customer-transfer-form";
 import { DocumentOpenButton } from "./document-open-button";
 import { ContractAcceptanceForm } from "./contract-acceptance-form";
+import { AcceptanceCertificateRetry } from "./acceptance-certificate-retry";
 import {
   customerReservationDetailNextStep,
   customerReservationStatusLabel,
@@ -79,6 +80,7 @@ const customerPaymentMessages = {
 const customerDocumentLabels = {
   payment_receipt: "Comprobante de pago",
   contract: "Contrato",
+  acceptance_certificate: "Constancia de aceptación",
   voucher: "Voucher de viaje",
   ticket: "Boleto de viaje",
 } as const;
@@ -289,12 +291,13 @@ export default async function CustomerReservationDetailPage({
           {documents.length === 0 ? <div className={styles.paymentEmpty}><p>Aún no hay documentos disponibles.</p><span>Los documentos de tu viaje aparecerán aquí conforme estén disponibles.</span></div> : <div className={styles.customerPaymentList}>{documents.map((document) => <article className={styles.customerPaymentItem} key={document.documentKey}>
             <div className={styles.customerPaymentHeading}><strong>{customerDocumentLabels[document.documentType]}</strong>{document.documentType === "payment_receipt" && <span className={styles.customerPaymentMethod}>Documento no fiscal</span>}</div>
             {document.paymentContext && <p className={styles.customerPaymentMessage}>{financialMoney(document.paymentContext.amount, document.paymentContext.currency)} · {date(document.paymentContext.paidAt)}</p>}
+            {document.acceptanceContext && <p className={styles.customerPaymentMessage}>Aceptado el {date(document.acceptanceContext.acceptedAt)}</p>}
             {document.documentType !== "payment_receipt" && <p className={styles.customerPaymentDate}>{date(document.generatedAt)}</p>}
             <DocumentOpenButton requestedAgencySlug={detail.account.agencySlug} reservationId={reservationId} documentKey={document.documentKey} />
           </article>)}</div>}
         </section>
 
-        {contractDocument && <section className={styles.detailCard} aria-labelledby="customer-contract-acceptance-title"><h2 id="customer-contract-acceptance-title">{contractAccepted ? "Contrato aceptado" : "Contrato pendiente de aceptación"}</h2>{contractAccepted ? <p role="status">Contrato aceptado.</p> : contractPrimary ? <ContractAcceptanceForm agencySlug={detail.account.agencySlug} reservationId={reservationId} /> : <p>La aceptación contractual debe realizarla la cuenta principal vinculada a esta reservación.</p>}</section>}
+        {contractDocument && <section className={styles.detailCard} aria-labelledby="customer-contract-acceptance-title"><h2 id="customer-contract-acceptance-title">{contractAccepted ? "Contrato aceptado" : "Contrato pendiente de aceptación"}</h2>{contractAccepted ? <>{documents.some((document) => document.documentType === "acceptance_certificate") ? <p role="status">Contrato aceptado. La constancia de aceptación está disponible en Documentos.</p> : <><p role="status">Contrato aceptado. La constancia de aceptación aún no está disponible.</p>{contractPrimary && <AcceptanceCertificateRetry agencySlug={detail.account.agencySlug} reservationId={reservationId} />}</>}</> : contractPrimary ? <ContractAcceptanceForm agencySlug={detail.account.agencySlug} reservationId={reservationId} /> : <p>La aceptación contractual debe realizarla la cuenta principal vinculada a esta reservación.</p>}</section>}
 
         <section className={styles.detailCard} aria-labelledby="customer-travelers-title">
           <div className={styles.detailCardHeader}><h2 id="customer-travelers-title">Viajeros</h2>{travelerSlots.status === "ready" && <p role="status">{travelerDataComplete ? "Datos de viajeros completos" : "Datos de viajeros pendientes de completar"}</p>}</div>
