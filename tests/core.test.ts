@@ -7980,3 +7980,22 @@ test("acciones que cambian viajeros, Ticket, pagos o boarding invalidan el manif
   assert.match(boardingAction, /resolveBoardingScan/);
   assert.doesNotMatch(boardingAction, /reservation_documents.*download|\.download\(/);
 });
+
+test("migración de primary customer access audita duplicados y limita sólo un primary por reservación tenant-safe", () => {
+  const migration = readFileSync("supabase/migrations/20260801240000_unique_primary_customer_access.sql", "utf8");
+  const acceptanceMigration = readFileSync("supabase/migrations/20260801160000_contract_acceptance.sql", "utf8");
+  assert.match(migration, /from public\.reservation_customer_access/);
+  assert.match(migration, /where role = 'primary'/);
+  assert.match(migration, /group by agency_id, reservation_id/);
+  assert.match(migration, /having count\(\*\) > 1/);
+  assert.match(migration, /raise exception using/);
+  assert.match(migration, /Resolve duplicate primary reservation_customer_access rows manually/);
+  assert.match(migration, /create unique index reservation_customer_access_one_primary_per_reservation_idx/);
+  assert.match(migration, /on public\.reservation_customer_access \(agency_id, reservation_id\)/);
+  assert.match(migration, /where role = 'primary'/);
+  assert.doesNotMatch(migration, /\b(delete|update|insert)\b/i);
+  assert.equal(migration.includes("'traveler'"), false);
+  assert.equal(migration.includes("'payer'"), false);
+  assert.equal(migration.includes("'viewer'"), false);
+  assert.match(acceptanceMigration, /primary_count <> 1/);
+});
