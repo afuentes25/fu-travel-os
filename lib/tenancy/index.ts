@@ -19,6 +19,5 @@ export function isValidTheme(value?: string | null): value is TravelTheme {
   return value === "explorer" || value === "lavella";
 }
 export function resolveTheme(agency: Agency, requested?: string | null): TravelTheme {
-  void agency;
-  return isValidTheme(requested) ? requested : "explorer";
+  return isValidTheme(requested) ? requested : agency.theme;
 }

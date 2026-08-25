@@ -14,7 +14,7 @@ import { listCustomerReservationPayments } from "@/lib/payments/customer-payment
 import { listCustomerReservationDocuments } from "@/lib/documents/customer-document-list";
 import { createSupabaseCustomerContractAcceptanceRepository } from "@/lib/contracts/customer-contract-acceptance-repository";
 
-import { CustomerShell } from "../../../customer-shell";
+import { CustomerThemeShell } from "../../../customer-theme-shell";
 import { TravelerDataForm } from "./traveler-data-form";
 import { CustomerTransferForm } from "./customer-transfer-form";
 import { DocumentOpenButton } from "./document-open-button";
@@ -100,12 +100,12 @@ export default async function CustomerReservationDetailPage({
   } catch (error) {
     const unavailable = error instanceof CustomerReservationDetailError;
     return (
-      <CustomerShell>
+      <CustomerThemeShell agencySlug={agencySlug}>
         <section className={styles.stateCard} role="alert">
           <h1>{unavailable ? "Reservación no disponible" : "No fue posible cargar la reservación"}</h1>
           <p>{unavailable ? "No encontramos una reservación disponible para tu cuenta." : "Intenta nuevamente en unos momentos."}</p>
         </section>
-      </CustomerShell>
+      </CustomerThemeShell>
     );
   }
 
@@ -115,13 +115,13 @@ export default async function CustomerReservationDetailPage({
   if (detail.status === "selection_required") redirect("/cuenta");
   if (detail.status === "forbidden" || detail.status === "not_found") {
     return (
-      <CustomerShell>
+      <CustomerThemeShell agencySlug={agencySlug}>
         <section className={styles.stateCard}>
           <h1>Reservación no disponible</h1>
           <p>No encontramos una reservación disponible para tu cuenta.</p>
           <Link className={styles.reservationLink} href={`/cuenta/${encodeURIComponent(agencySlug)}/reservaciones`}>Volver a Mis reservaciones</Link>
         </section>
-      </CustomerShell>
+      </CustomerThemeShell>
     );
   }
 
@@ -140,12 +140,12 @@ export default async function CustomerReservationDetailPage({
   if (financial.status === "selection_required") redirect("/cuenta");
   if (financial.status === "forbidden" || financial.status === "not_found") {
     return (
-      <CustomerShell>
+      <CustomerThemeShell agencySlug={agencySlug}>
         <section className={styles.stateCard}>
           <h1>Reservación no disponible</h1>
           <p>No encontramos una reservación disponible para tu cuenta.</p>
         </section>
-      </CustomerShell>
+      </CustomerThemeShell>
     );
   }
 
@@ -164,12 +164,12 @@ export default async function CustomerReservationDetailPage({
   if (transferCapacity.status === "selection_required") redirect("/cuenta");
   if (transferCapacity.status === "forbidden" || transferCapacity.status === "not_found") {
     return (
-      <CustomerShell>
+      <CustomerThemeShell agencySlug={agencySlug}>
         <section className={styles.stateCard}>
           <h1>Reservación no disponible</h1>
           <p>No encontramos una reservación disponible para tu cuenta.</p>
         </section>
-      </CustomerShell>
+      </CustomerThemeShell>
     );
   }
 
@@ -188,12 +188,12 @@ export default async function CustomerReservationDetailPage({
   if (paymentHistory.status === "selection_required") redirect("/cuenta");
   if (paymentHistory.status === "forbidden" || paymentHistory.status === "not_found") {
     return (
-      <CustomerShell>
+      <CustomerThemeShell agencySlug={agencySlug}>
         <section className={styles.stateCard}>
           <h1>Reservación no disponible</h1>
           <p>No encontramos una reservación disponible para tu cuenta.</p>
         </section>
-      </CustomerShell>
+      </CustomerThemeShell>
     );
   }
 
@@ -208,7 +208,7 @@ export default async function CustomerReservationDetailPage({
   }
   if (documentList.status === "selection_required") redirect("/cuenta");
   if (documentList.status === "forbidden" || documentList.status === "not_found") {
-    return <CustomerShell><section className={styles.stateCard}><h1>Reservación no disponible</h1><p>No encontramos una reservación disponible para tu cuenta.</p></section></CustomerShell>;
+    return <CustomerThemeShell agencySlug={agencySlug}><section className={styles.stateCard}><h1>Reservación no disponible</h1><p>No encontramos una reservación disponible para tu cuenta.</p></section></CustomerThemeShell>;
   }
 
   let travelerSlots: Awaited<ReturnType<typeof ensureReservationTravelerSlots>>;
@@ -227,13 +227,13 @@ export default async function CustomerReservationDetailPage({
   if (travelerSlots.status === "selection_required") redirect("/cuenta");
   if (travelerSlots.status === "forbidden" || travelerSlots.status === "not_found") {
     return (
-      <CustomerShell>
+      <CustomerThemeShell agencySlug={agencySlug}>
         <section className={styles.stateCard}>
           <h1>Reservación no disponible</h1>
           <p>No encontramos una reservación disponible para tu cuenta.</p>
           <Link className={styles.reservationLink} href={`/cuenta/${encodeURIComponent(agencySlug)}/reservaciones`}>Volver a Mis reservaciones</Link>
         </section>
-      </CustomerShell>
+      </CustomerThemeShell>
     );
   }
 
@@ -266,12 +266,12 @@ export default async function CustomerReservationDetailPage({
   if (travelerData?.status === "selection_required") redirect("/cuenta");
   if (travelerData?.status === "forbidden" || travelerData?.status === "not_found") {
     return (
-      <CustomerShell>
+      <CustomerThemeShell agencySlug={agencySlug}>
         <section className={styles.stateCard}>
           <h1>Reservación no disponible</h1>
           <p>No encontramos una reservación disponible para tu cuenta.</p>
         </section>
-      </CustomerShell>
+      </CustomerThemeShell>
     );
   }
   const travelersByPosition = new Map(
@@ -282,7 +282,7 @@ export default async function CustomerReservationDetailPage({
   const travelerDataComplete = slots.length > 0 && slots.every((slot) => slot.status === "complete");
   const depositCovered = financialSummary?.balance.depositCovered === true;
   return (
-    <CustomerShell account={detail.account}>
+    <CustomerThemeShell account={detail.account}>
       <section className={`${styles.content} ${styles.customerReservationDetail}`} aria-labelledby="customer-reservation-title">
         <Link className={styles.backLink} href={`/cuenta/${encodeURIComponent(detail.account.agencySlug)}/reservaciones`}>← Volver a Mis reservaciones</Link>
         <header className={styles.customerReservationHero}>
@@ -350,6 +350,6 @@ export default async function CustomerReservationDetailPage({
           </article>)}</div>}
         </section>
       </section>
-    </CustomerShell>
+    </CustomerThemeShell>
   );
 }

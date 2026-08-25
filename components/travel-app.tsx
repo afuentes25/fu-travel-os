@@ -75,6 +75,7 @@ import type {
   TripSectionConfig,
 } from "@/types";
 import { TravelApp as LegacyTravelApp } from "./legacy-travel-app";
+import { CustomerAuthModal, type CustomerAuthMode } from "@/app/cuenta/customer-auth-modal";
 import {
   LavellaFooter,
   LavellaHeader,
@@ -325,9 +326,11 @@ function Logo({ agency, light = false }: { agency: Agency; light?: boolean }) {
   );
 }
 
-function ExplorerHeader({ agency, cartCount, onNavigate }: HeaderProps) {
+export function ExplorerHeader({ agency, cartCount, onNavigate, customerEmail }: HeaderProps) {
   const [open, setOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
+  const [accountOpen, setAccountOpen] = useState(false);
+  const [authMode, setAuthMode] = useState<CustomerAuthMode>("login");
   const triggerRef = useRef<HTMLButtonElement>(null);
   const drawerRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -370,6 +373,7 @@ function ExplorerHeader({ agency, cartCount, onNavigate }: HeaderProps) {
     onNavigate(path);
   };
   return (
+    <>
     <header
       className={`explorer-header ${scrolled ? "is-scrolled" : ""} ${open ? "is-menu-open" : ""}`}
     >
@@ -404,6 +408,11 @@ function ExplorerHeader({ agency, cartCount, onNavigate }: HeaderProps) {
         >
           Carrito <b>{cartCount}</b>
         </button>
+        {customerEmail ? (
+          <Link className="outline-cta explorer-account-button" href="/cuenta">Mi cuenta</Link>
+        ) : (
+          <button className="outline-cta explorer-account-button" type="button" onClick={() => { setAuthMode("login"); setAccountOpen(true); }}>Mi cuenta</button>
+        )}
         <button
           ref={triggerRef}
           className="v2-menu explorer-menu-trigger"
@@ -438,21 +447,26 @@ function ExplorerHeader({ agency, cartCount, onNavigate }: HeaderProps) {
               "Nosotros",
               "Contacto",
             ].map((item, index) => (
-              <button key={item} onClick={() => go(`/${item.toLowerCase()}`)}>
+            <button key={item} onClick={() => go(`/${item.toLowerCase()}`)}>
                 <small>0{index + 1}</small>
                 {item}
                 <span>↗</span>
-              </button>
-            ))}
+            </button>
+          ))}
+            {customerEmail ? (
+              <Link href="/cuenta"><small>07</small>Mi cuenta<span>↗</span></Link>
+            ) : (
+              <button onClick={() => { setOpen(false); setAuthMode("login"); setAccountOpen(true); }}><small>07</small>Mi cuenta<span>↗</span></button>
+            )}
             <button onClick={() => go("/carrito")}>
-              <small>07</small>Carrito ({cartCount})<span>↗</span>
+              <small>08</small>Carrito ({cartCount})<span>↗</span>
             </button>
             <a
               href={`https://wa.me/${agency.contact.whatsapp}`}
               target="_blank"
               rel="noreferrer"
             >
-              <small>08</small>WhatsApp<span>↗</span>
+              <small>09</small>WhatsApp<span>↗</span>
             </a>
           </nav>
           <section className="explorer-drawer-social">
@@ -476,6 +490,8 @@ function ExplorerHeader({ agency, cartCount, onNavigate }: HeaderProps) {
         </div>
       )}
     </header>
+    <CustomerAuthModal open={accountOpen} mode={authMode} next="/cuenta" onClose={() => setAccountOpen(false)} onModeChange={setAuthMode} />
+    </>
   );
 }
 

@@ -3770,6 +3770,36 @@ test("reintento idempotente conserva habitaciones, ocupación e importes", async
   assert.equal(retry.reservation.remainingAmount, first.reservation.remainingAmount);
 });
 
+test("la persistencia conserva el UUID de la fila sin convertir un retry en conflicto", async () => {
+  const reservation = finalizedReservationForRepository("persisted-row-id");
+  const persistedId = "46a10852-8620-4a59-9187-a21b07ce3f05";
+  const persisted = {
+    agencyId: reservation.agency.id,
+    idempotencyKey: reservation.idempotencyKey,
+    reservationCode: reservation.reservationCode,
+    status: reservation.status,
+    currency: reservation.currency,
+    snapshot: { ...reservation, id: persistedId },
+  };
+  const repository = createReservationSnapshotRepository({
+    async findByIdempotency() { return persisted; },
+    async findByReservationCode() { return null; },
+    async insert() { throw new Error("No debe insertar durante un retry"); },
+  });
+
+  const result = await repository.insert({
+    agencyId: reservation.agency.id,
+    idempotencyKey: reservation.idempotencyKey,
+    snapshot: reservation,
+  });
+  assert.equal(result.created, false);
+  assert.equal(result.reservation.id, persistedId);
+
+  const source = readFileSync("lib/reservations/supabase-repository.ts", "utf8");
+  assert.match(source, /id, agency_id, idempotency_key/);
+  assert.match(source, /id: row\.id/);
+});
+
 test("POST público devuelve una confirmación segura desde el snapshot servidor", async () => {
   const handler = createReservationPostHandler({
     execute: async () => reservationApiSuccess(),
@@ -8065,6 +8095,35 @@ test("POST público sólo intenta auto-link con contacto persistido y reporta un
   assert.equal(body.customerLinkStatus, "linked");
 });
 
+test("checkout autenticado reclama usando el UUID persistido y deja la reservación disponible", async () => {
+  const persistedReservationId = "46a10852-8620-4a59-9187-a21b07ce3f05";
+  let claimInput: unknown = null;
+  const handler = createReservationPostHandler({
+    execute: async () => ({
+      reservation: { ...reservationApiSuccess().reservation, id: persistedReservationId },
+      created: true,
+    }),
+    claim: async (input) => {
+      claimInput = input;
+      return { status: "claimed" };
+    },
+  });
+
+  const response = await handler(reservationApiRequest({
+    ...publicReservationBody(),
+    primaryContact: { firstName: "Demo", lastName: null, email: "demo@example.com", phone: null },
+  }));
+  const body = await response.json() as { reservationId: string; customerLinkStatus: string };
+  assert.equal(body.reservationId, persistedReservationId);
+  assert.equal(body.customerLinkStatus, "linked");
+  assert.deepEqual(claimInput, { requestedAgencySlug: "furiver", reservationId: persistedReservationId });
+
+  const checkout = readFileSync("components/legacy-travel-app.tsx", "utf8");
+  assert.match(checkout, /credentials: "same-origin"/);
+  assert.match(checkout, /Reservación asociada a tu cuenta/);
+  assert.doesNotMatch(checkout, /Vincular mi reservación/);
+});
+
 test("la continuidad checkout → Auth sólo admite retornos internos sin PII y no autoriza por correo anónimo", async () => {
   assert.equal(safeCustomerAuthReturnTo("/checkout?tenant=furiver&theme=lavella"), "/checkout?tenant=furiver&theme=lavella");
   assert.equal(safeCustomerAuthReturnTo("/carrito?tenant=furiver&theme=lavella"), "/carrito?tenant=furiver&theme=lavella");
@@ -8100,15 +8159,17 @@ test("el enlace de cuenta distingue éxito previo, mismatch y fallo sin silencia
     assert.equal(body.reservationId, reservationApiSuccess().reservation.id);
     assert.equal(body.customerLinkStatus, expected);
   }
+  let attempts = 0;
   const unexpectedFailure = createReservationPostHandler({
     execute: async () => reservationApiSuccess(),
-    claim: async () => { throw new Error("service unavailable"); },
+    claim: async () => { attempts += 1; throw new Error("service unavailable"); },
   });
   const response = await unexpectedFailure(reservationApiRequest({ ...publicReservationBody(), primaryContact: { firstName: "Juan", lastName: null, email: "cliente@example.test", phone: null } }));
   const body = await response.json() as { reservationId?: string; customerLinkStatus?: string };
   assert.equal(response.status, 201);
   assert.equal(body.reservationId, reservationApiSuccess().reservation.id);
   assert.equal(body.customerLinkStatus, "link_failed");
+  assert.equal(attempts, 2);
 });
 
 test("el journey Lavella ofrece cuenta temprana, conserva retorno y muestra recuperación explícita del enlace", () => {
@@ -8123,7 +8184,8 @@ test("el journey Lavella ofrece cuenta temprana, conserva retorno y muestra recu
   assert.match(checkout, /¿Ya tienes cuenta\?/);
   assert.match(checkout, /Esta reservación se asociará a tu cuenta/);
   assert.match(checkout, /link_failed/);
-  assert.match(checkout, /Vincular mi reservación/);
+  assert.match(checkout, /Ir a mi cuenta/);
+  assert.doesNotMatch(checkout, /Vincular mi reservación/);
   assert.match(login, /safeCustomerAuthReturnTo/);
   assert.match(registration, /returnTo/);
   assert.match(callback, /safeCustomerAuthReturnTo/);
@@ -8158,6 +8220,30 @@ test("la cuenta cliente reutiliza el modal Lavella y el shell sin alterar los fl
   assert.match(dashboard, /Aún no tienes reservaciones/);
   assert.match(dashboard, /listCustomerReservations/);
   assert.doesNotMatch(modal, /customerAccountId|tokenSha256|reservationTravelerId/);
+});
+
+test("el chrome del tema acompaña checkout y cuenta sin aplicar Lavella sobre Explorer", () => {
+  const tenancy = readFileSync("lib/tenancy/index.ts", "utf8");
+  const commerce = readFileSync("components/legacy-travel-app.tsx", "utf8");
+  const customerFrame = readFileSync("app/cuenta/customer-theme-shell.tsx", "utf8");
+  const customerChrome = readFileSync("app/cuenta/customer-theme-chrome.tsx", "utf8");
+  const customerStyles = readFileSync("app/cuenta/cuenta.module.css", "utf8");
+  const login = readFileSync("app/cuenta/login/page.tsx", "utf8");
+  const registration = readFileSync("app/cuenta/registro/page.tsx", "utf8");
+
+  assert.match(tenancy, /return isValidTheme\(requested\) \? requested : agency\.theme/);
+  assert.match(commerce, /theme === "lavella" \? <LavellaHeader/);
+  assert.match(commerce, /theme === "lavella" \? <LavellaFooter/);
+  assert.match(customerFrame, /resolveTenant\(/);
+  assert.match(customerFrame, /resolveTheme\(/);
+  assert.match(customerFrame, /account\?\.agencySlug/);
+  assert.match(customerChrome, /LavellaHeader/);
+  assert.match(customerChrome, /ExplorerHeader/);
+  assert.match(customerStyles, /customerThemeLavella/);
+  assert.match(customerStyles, /customerThemeExplorer/);
+  assert.match(login, /CustomerThemeFrame/);
+  assert.match(registration, /CustomerThemeFrame/);
+  assert.doesNotMatch(customerChrome, /localStorage|document\.cookie/);
 });
 
 test("el reset de demo es dry-run por defecto, exige confirmación exacta y atribuye Storage por prefijo estricto", () => {

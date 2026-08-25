@@ -55,6 +55,7 @@ import {
   createLavellaReservationRequest,
   type LavellaReservationApiSuccess,
 } from "@/components/themes/lavella/lavella-booking-cart";
+import { LavellaFooter, LavellaHeader } from "@/components/themes/lavella/lavella-theme";
 import type {
   Agency,
   CartLine,
@@ -1633,7 +1634,7 @@ function LavellaReservationConfirmation({
       <section className="lavella-confirmation-next">
         <div className="eyebrow">TU CUENTA</div>
         <h3>Administra tu reservación desde tu cuenta</h3>
-        {customerLinkStatus === "email_mismatch" ? <p role="alert">La reservación fue creada, pero el correo utilizado no coincide con la cuenta iniciada.</p> : customerLinkStatus === "link_failed" ? <p role="alert">Tu reservación fue creada, pero necesitamos volver a vincularla con tu cuenta.</p> : customerLinkStatus === "already_linked" ? <p role="status">Tu reservación ya está vinculada a tu cuenta.</p> : <p>Desde tu cuenta podrás completar viajeros, reportar pagos, consultar documentos y aceptar el contrato.</p>}
+        {customerLinkStatus === "email_mismatch" ? <p role="alert">La reservación fue creada, pero el correo utilizado no coincide con la cuenta iniciada.</p> : customerLinkStatus === "link_failed" ? <p role="alert">Tu reservación fue creada, pero estamos terminando de preparar el acceso desde tu cuenta.</p> : customerLinkStatus === "linked" || customerLinkStatus === "already_linked" ? <p role="status">✓ Reservación asociada a tu cuenta.</p> : <p>Desde tu cuenta podrás completar viajeros, reportar pagos, consultar documentos y aceptar el contrato.</p>}
       </section>
 
       <div className="lavella-confirmation-actions">
@@ -1645,7 +1646,7 @@ function LavellaReservationConfirmation({
         >
           Enviar folio por WhatsApp
         </a>
-        {customerLinkStatus === "link_failed" ? <a href={`/cuenta/vincular?next=${encodeURIComponent(`/cuenta/${reservation.tenant}/reservaciones/${reservation.id}`)}`}>Vincular mi reservación</a> : customerLinkStatus === "linked" || customerLinkStatus === "already_linked" ? <a href={`/cuenta/${reservation.tenant}/reservaciones/${reservation.id}`}>Ver mi reservación</a> : <><button type="button" onClick={() => onOpenAuth("login")}>Ya tengo cuenta</button><button type="button" onClick={() => onOpenAuth("register")}>Crear mi cuenta</button></>}
+        {customerLinkStatus === "link_failed" ? <Link href="/cuenta">Ir a mi cuenta</Link> : customerLinkStatus === "linked" || customerLinkStatus === "already_linked" ? <Link href={`/cuenta/${reservation.tenant}/reservaciones/${reservation.id}`}>Ver mi reservación</Link> : <><button type="button" onClick={() => onOpenAuth("login")}>Ya tengo cuenta</button><button type="button" onClick={() => onOpenAuth("register")}>Crear mi cuenta</button></>}
         <button type="button" onClick={onContinue}>
           Volver a viajes
         </button>
@@ -2140,6 +2141,7 @@ function Checkout({
           });
           const apiResponse = await fetch("/api/reservations", {
             method: "POST",
+            credentials: "same-origin",
             headers: {
               "Content-Type": "application/json",
               "Idempotency-Key": reservationSubmissionKeyRef.current,
@@ -2162,10 +2164,6 @@ function Checkout({
             throw new Error(message);
           }
           setCustomerLinkStatus(apiBody.customerLinkStatus ?? null);
-          if (apiBody.customerLinkStatus === "linked" || apiBody.customerLinkStatus === "already_linked") {
-            window.location.assign(`/cuenta/${encodeURIComponent(agency.slug)}/reservaciones/${encodeURIComponent(apiBody.reservationId)}`);
-            return;
-          }
           setReservation(
             createLavellaReservationMirror({
               response: apiBody,
@@ -3558,8 +3556,8 @@ export function TravelApp({
       }
     >
       <DemoBar tenant={agency} theme={theme} admin={admin} onChange={change} />
-      {!admin && <Header agency={agency} cartCount={cart.length} theme={theme} customerEmail={customerEmail} />} {content}
-      {!admin && <Footer agency={agency} />}
+      {!admin && (theme === "lavella" ? <LavellaHeader agency={agency} cartCount={cart.length} customerEmail={customerEmail} embedded onNavigate={go} /> : <Header agency={agency} cartCount={cart.length} theme={theme} customerEmail={customerEmail} />)} {content}
+      {!admin && (theme === "lavella" ? <LavellaFooter agency={agency} onNavigate={go} /> : <Footer agency={agency} />)}
     </div>
   );
 }

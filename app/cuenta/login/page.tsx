@@ -1,6 +1,7 @@
 import { unstable_noStore as noStore } from "next/cache";
 
 import styles from "../cuenta.module.css";
+import { CustomerThemeFrame } from "../customer-theme-shell";
 import { parseCustomerReservationClaimNext, safeCustomerAuthReturnTo, safeCustomerNext } from "../customer-utils";
 import { CustomerLoginForm } from "./login-form";
 
@@ -18,15 +19,17 @@ export default async function CustomerLoginPage({
   const returnTo = safeCustomerAuthReturnTo(params.returnTo);
   const claim = params.claim === "1" && Boolean(parseCustomerReservationClaimNext(next));
   return (
-    <main className={styles.loginPage}>
-      <section className={styles.loginCard} aria-labelledby="customer-login-title">
-        <div className={styles.kicker}>FU TRAVEL OS · MI CUENTA</div>
-        <h1 id="customer-login-title">Inicia sesión</h1>
-        <p>Consulta y administra tus reservaciones, pagos, viajeros y documentos.</p>
-        {returnTo && <p className={styles.authContext}>Después de iniciar sesión volverás a tu reservación.</p>}
-        {claim && <p className={styles.authContext}>Después de iniciar sesión volverás a tu reservación.</p>}
-        <CustomerLoginForm next={next} returnTo={returnTo} claim={claim} />
-      </section>
-    </main>
+    <CustomerThemeFrame requestedReturnTo={returnTo ?? next}>
+      <main className={styles.loginPage}>
+        <section className={styles.loginCard} aria-labelledby="customer-login-title">
+          <div className={styles.kicker}>FU TRAVEL OS · MI CUENTA</div>
+          <h1 id="customer-login-title">Inicia sesión</h1>
+          <p>Consulta y administra tus reservaciones, pagos, viajeros y documentos.</p>
+          {returnTo && <p className={styles.authContext}>Después de iniciar sesión volverás a tu reservación.</p>}
+          {claim && <p className={styles.authContext}>Después de iniciar sesión volverás a tu reservación.</p>}
+          <CustomerLoginForm next={next} returnTo={returnTo} claim={claim} />
+        </section>
+      </main>
+    </CustomerThemeFrame>
   );
 }

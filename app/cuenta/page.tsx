@@ -5,7 +5,7 @@ import { redirect } from "next/navigation";
 import { resolveCustomerAgencyAccess } from "@/lib/customers/customer-access";
 import { listCustomerReservations, type CustomerReservationSummary } from "@/lib/customers/customer-reservations";
 
-import { CustomerShell } from "./customer-shell";
+import { CustomerThemeShell } from "./customer-theme-shell";
 import { customerReservationStatusLabel } from "./customer-reservation-utils";
 import styles from "./cuenta.module.css";
 
@@ -37,14 +37,14 @@ export default async function CustomerPage() {
   try {
     access = await resolveCustomerAgencyAccess();
   } catch {
-    return <CustomerShell><section className={styles.stateCard} role="alert"><h1>No fue posible cargar tu cuenta</h1><p>Intenta nuevamente en unos momentos.</p></section></CustomerShell>;
+    return <CustomerThemeShell><section className={styles.stateCard} role="alert"><h1>No fue posible cargar tu cuenta</h1><p>Intenta nuevamente en unos momentos.</p></section></CustomerThemeShell>;
   }
   if (access.status === "unauthenticated") redirect("/cuenta/login");
   if (access.status === "forbidden") {
-    return <CustomerShell><section className={styles.stateCard}><h1>Tu cuenta está lista</h1><p>Aún no tienes reservaciones vinculadas. Explora los próximos viajes para comenzar.</p><Link className={styles.reservationLink} href="/viajes">Explorar viajes</Link></section></CustomerShell>;
+    return <CustomerThemeShell><section className={styles.stateCard}><h1>Tu cuenta está lista</h1><p>Aún no tienes reservaciones vinculadas. Explora los próximos viajes para comenzar.</p><Link className={styles.reservationLink} href="/viajes">Explorar viajes</Link></section></CustomerThemeShell>;
   }
   if (access.status === "selection_required") {
-    return <CustomerShell accounts={access.accounts}><section className={styles.content} aria-labelledby="customer-agencies-title"><div className={styles.heading}><div><span className={styles.kicker}>MI CUENTA</span><h1 id="customer-agencies-title">Elige una agencia</h1></div><p>Accede únicamente a las reservaciones vinculadas a tu cuenta de cliente.</p></div><div className={styles.agencyGrid}>{access.accounts.map((account) => <Link className={styles.agencyCard} key={account.agencySlug} href={`/cuenta/${encodeURIComponent(account.agencySlug)}/reservaciones`}><strong>{account.agencyName}</strong><span>Ver mis reservaciones</span></Link>)}</div></section></CustomerShell>;
+    return <CustomerThemeShell accounts={access.accounts}><section className={styles.content} aria-labelledby="customer-agencies-title"><div className={styles.heading}><div><span className={styles.kicker}>MI CUENTA</span><h1 id="customer-agencies-title">Elige una agencia</h1></div><p>Accede únicamente a las reservaciones vinculadas a tu cuenta de cliente.</p></div><div className={styles.agencyGrid}>{access.accounts.map((account) => <Link className={styles.agencyCard} key={account.agencySlug} href={`/cuenta/${encodeURIComponent(account.agencySlug)}/reservaciones`}><strong>{account.agencyName}</strong><span>Ver mis reservaciones</span></Link>)}</div></section></CustomerThemeShell>;
   }
 
   let listing: Awaited<ReturnType<typeof listCustomerReservations>> | null = null;
@@ -57,7 +57,7 @@ export default async function CustomerPage() {
   const featured = nextReservation(reservations);
   const reservationHref = `/cuenta/${encodeURIComponent(access.account.agencySlug)}/reservaciones`;
   return (
-    <CustomerShell account={access.account}>
+    <CustomerThemeShell account={access.account}>
       <section className={`${styles.content} ${styles.customerDashboard}`} aria-labelledby="customer-dashboard-title">
         <header className={styles.customerDashboardHero}>
           <div><span className={styles.kicker}>MI CUENTA</span><h1 id="customer-dashboard-title">Tus próximos viajes, en un solo lugar.</h1></div>
@@ -82,6 +82,6 @@ export default async function CustomerPage() {
           <section className={styles.customerDashboardEmpty}><span className={styles.kicker}>TU PRÓXIMA AVENTURA</span><h2>Aún no tienes reservaciones.</h2><p>Explora nuestros próximos viajes y encuentra tu siguiente destino.</p><Link href={`/viajes?tenant=${encodeURIComponent(access.account.agencySlug)}`}>Explorar viajes</Link></section>
         )}
       </section>
-    </CustomerShell>
+    </CustomerThemeShell>
   );
 }

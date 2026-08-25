@@ -55,10 +55,10 @@ export function CustomerShell({ children, account }: CustomerShellProps) {
   }, [drawerOpen]);
   return (
     <main className={styles.customerPortal}>
-      <header className={styles.customerMobileBar}>
+      <div className={styles.customerMobileBar} role="navigation" aria-label="Navegación de mi cuenta">
         <Link href="/cuenta" className={styles.customerMobileBrand} aria-label="Mi cuenta, Fu Travel OS"><span>{brand}</span><small>MI CUENTA</small></Link>
         <button ref={menuTrigger} type="button" className={styles.customerMenuButton} onClick={() => setDrawerOpen(true)} aria-expanded={drawerOpen} aria-controls="customer-navigation-drawer">Menú</button>
-      </header>
+      </div>
       <aside className={styles.customerSidebar}>
         <Link href="/cuenta" className={styles.customerPortalBrand}><span>{brand}</span><small>MI CUENTA</small></Link>
         {account && <p className={styles.customerAgencyLabel}>{account.agencyName}</p>}

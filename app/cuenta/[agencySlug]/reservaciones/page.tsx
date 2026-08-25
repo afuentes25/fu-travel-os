@@ -9,7 +9,7 @@ import {
   type CustomerReservationSummary,
 } from "@/lib/customers/customer-reservations";
 
-import { CustomerShell } from "../../customer-shell";
+import { CustomerThemeShell } from "../../customer-theme-shell";
 import {
   customerReservationHref,
   customerReservationNextStep,
@@ -118,12 +118,12 @@ export default async function CustomerReservationsPage({
     });
   } catch {
     return (
-      <CustomerShell>
+      <CustomerThemeShell agencySlug={agencySlug}>
         <section className={styles.stateCard} role="alert">
           <h1>No fue posible cargar tus reservaciones</h1>
           <p>Intenta nuevamente en unos momentos.</p>
         </section>
-      </CustomerShell>
+      </CustomerThemeShell>
     );
   }
 
@@ -133,12 +133,12 @@ export default async function CustomerReservationsPage({
   if (reservations.status === "selection_required") redirect("/cuenta");
   if (reservations.status === "forbidden") {
     return (
-      <CustomerShell>
+      <CustomerThemeShell agencySlug={agencySlug}>
         <section className={styles.stateCard}>
           <h1>Acceso no autorizado</h1>
           <p>No tienes acceso a esta área de reservaciones.</p>
         </section>
-      </CustomerShell>
+      </CustomerThemeShell>
     );
   }
 
@@ -150,7 +150,7 @@ export default async function CustomerReservationsPage({
     : null;
 
   return (
-    <CustomerShell account={reservations.account}>
+    <CustomerThemeShell account={reservations.account}>
       <section className={styles.content} aria-labelledby="customer-reservations-title">
         <div className={styles.heading}>
           <div>
@@ -199,6 +199,6 @@ export default async function CustomerReservationsPage({
           {nextHref ? <Link href={nextHref}>Siguiente</Link> : <span aria-disabled="true">Siguiente</span>}
         </nav>
       </section>
-    </CustomerShell>
+    </CustomerThemeShell>
   );
 }

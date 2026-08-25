@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 import { claimReservationForAuthenticatedCustomer } from "@/lib/customers/reservation-claim";
 import { createSupabaseAuthServerClient } from "@/lib/supabase/auth-server";
 
-import { CustomerShell } from "../customer-shell";
+import { CustomerThemeShell } from "../customer-theme-shell";
 import { parseCustomerReservationClaimNext, safeCustomerNext } from "../customer-utils";
 import styles from "../cuenta.module.css";
 
@@ -38,12 +38,12 @@ export default async function LinkReservationPage({
       ? "Esta reservación ya está vinculada a otra cuenta."
       : "No fue posible vincular la reservación en este momento. Inténtalo nuevamente.";
   return (
-    <CustomerShell>
+    <CustomerThemeShell agencySlug={target.agencySlug}>
       <section className={styles.stateCard} role="alert">
         <span className={styles.kicker}>MI CUENTA</span>
         <h1>No pudimos vincular la reservación</h1>
         <p>{message}</p>
       </section>
-    </CustomerShell>
+    </CustomerThemeShell>
   );
 }

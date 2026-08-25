@@ -28,6 +28,7 @@ export function LavellaHeader({
   cartCount,
   onNavigate,
   customerEmail,
+  embedded = false,
 }: LavellaHeaderProps) {
   const [solid, setSolid] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -43,8 +44,8 @@ export function LavellaHeader({
   return (
     <>
       <header
-        className={`${styles.header} ${solid ? styles.headerSolid : ""}`}
-        data-lavella-surface={solid ? "dark" : "image"}
+        className={`${styles.header} ${(solid || embedded) ? styles.headerSolid : ""} ${embedded ? styles.headerEmbedded : ""}`}
+        data-lavella-surface={solid || embedded ? "dark" : "image"}
       >
         <div className={styles.headerInner}>
           <div className={styles.topbar}>
