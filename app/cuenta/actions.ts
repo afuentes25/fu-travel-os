@@ -3,10 +3,11 @@
 import { redirect } from "next/navigation";
 
 import { resolveCustomerAgencyAccess } from "@/lib/customers/customer-access";
+import { claimReservationForAuthenticatedCustomer } from "@/lib/customers/reservation-claim";
 import { createSupabaseAuthServerClient } from "@/lib/supabase/auth-server";
 
 import { runCustomerLoginFlow } from "./customer-login-core";
-import { safeCustomerNext, validateCustomerLoginCredentials } from "./customer-utils";
+import { parseCustomerReservationClaimNext, safeCustomerNext, validateCustomerLoginCredentials } from "./customer-utils";
 import type { CustomerLoginState } from "./login/login-state";
 
 function loginError(): CustomerLoginState {
@@ -22,11 +23,14 @@ export async function loginCustomerAction(
     password: formData.get("password"),
   });
   const next = safeCustomerNext(formData.get("next"));
+  const claim = formData.get("claim") === "1" ? parseCustomerReservationClaimNext(next) : null;
   if (!credentials) return loginError();
 
   let result: Awaited<ReturnType<typeof runCustomerLoginFlow>>;
+  let authenticatedAuth: Awaited<ReturnType<typeof createSupabaseAuthServerClient>>;
   try {
     const auth = await createSupabaseAuthServerClient();
+    authenticatedAuth = auth;
     result = await runCustomerLoginFlow({
       signInWithPassword: (input) => auth.auth.signInWithPassword(input),
       // Reuse the client that has just written the response cookies; a second
@@ -35,6 +39,14 @@ export async function loginCustomerAction(
     }, credentials);
   } catch {
     return loginError();
+  }
+
+  if (claim) {
+    const claimed = await claimReservationForAuthenticatedCustomer({ requestedAgencySlug: claim.agencySlug, reservationId: claim.reservationId }, authenticatedAuth!);
+    if (claimed.status === "claimed" || claimed.status === "existing") redirect(`/cuenta/${encodeURIComponent(claim.agencySlug)}/reservaciones/${encodeURIComponent(claim.reservationId)}`);
+    if (claimed.status === "email_mismatch") return { error: "El correo de esta cuenta no coincide con el utilizado en la reservación." };
+    if (claimed.status === "reservation_already_claimed") return { error: "Esta reservación ya está vinculada a otra cuenta." };
+    return { error: "No fue posible vincular la reservación a esta cuenta." };
   }
 
   if (result.status === "authorized") {

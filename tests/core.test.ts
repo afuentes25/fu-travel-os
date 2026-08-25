@@ -73,6 +73,8 @@ import {
   createCustomerAgencyAccessResolver,
   type CustomerAgencyAccountRecord,
 } from "../lib/customers/customer-access-core";
+import { normalizeCustomerEmail } from "../lib/customers/customer-email";
+import { createReservationClaimService } from "../lib/customers/reservation-claim-core";
 import {
   CustomerReservationListError,
   createCustomerReservationLister,
@@ -225,6 +227,7 @@ import {
 } from "../app/admin/admin-utils";
 import {
   safeCustomerNext,
+  parseCustomerReservationClaimNext,
   validateCustomerLoginCredentials,
 } from "../app/cuenta/customer-utils";
 import { runCustomerLoginFlow } from "../app/cuenta/customer-login-core";
@@ -6546,6 +6549,7 @@ test("checkout Lavella envía únicamente el payload permitido al endpoint", () 
     "depositPercent",
     "extraIds",
     "minors",
+    "primaryContact",
     "rooms",
     "tenantSlug",
     "travelers",
@@ -7998,4 +8002,57 @@ test("migración de primary customer access audita duplicados y limita sólo un 
   assert.equal(migration.includes("'payer'"), false);
   assert.equal(migration.includes("'viewer'"), false);
   assert.match(acceptanceMigration, /primary_count <> 1/);
+});
+
+test("claim de reservación exige Auth y correo histórico coincidente, crea un único primary idempotente", async () => {
+  let primary: string | null = null;
+  let accountCreates = 0;
+  const repository = {
+    async findReservation() { return { agencyId: "agency-furiver", bookingEmail: " Cliente@Furiver.Test " }; },
+    async findOrCreateActiveAccount() { accountCreates += 1; return "account-furiver"; },
+    async findPrimaryAccountId() { return primary; },
+    async upsertPrimaryAccess({ customerAccountId }: { customerAccountId: string }) { primary = customerAccountId; },
+  };
+  const service = createReservationClaimService({ getIdentity: async () => ({ userId: "customer-user", email: "cliente@furiver.test" }), repository });
+  const input = { requestedAgencySlug: "furiver", reservationId: customerDetailReservationId };
+  assert.equal(normalizeCustomerEmail(" Cliente@Furiver.Test "), "cliente@furiver.test");
+  assert.equal((await service.claim(input)).status, "claimed");
+  assert.equal((await service.claim(input)).status, "existing");
+  assert.equal(primary, "account-furiver");
+  assert.equal(accountCreates, 2);
+  const anonymous = createReservationClaimService({ getIdentity: async () => null, repository });
+  assert.equal((await anonymous.claim(input)).status, "unauthenticated");
+  const wrongEmail = createReservationClaimService({ getIdentity: async () => ({ userId: "other", email: "other@furiver.test" }), repository });
+  assert.equal((await wrongEmail.claim(input)).status, "email_mismatch");
+  const claimedByAnother = createReservationClaimService({ getIdentity: async () => ({ userId: "customer-user", email: "cliente@furiver.test" }), repository: { ...repository, async findPrimaryAccountId() { return "other-account"; } } });
+  assert.equal((await claimedByAnother.claim(input)).status, "reservation_already_claimed");
+  assert.deepEqual(parseCustomerReservationClaimNext(`/cuenta/furiver/reservaciones/${customerDetailReservationId}`), { agencySlug: "furiver", reservationId: customerDetailReservationId });
+  assert.equal(parseCustomerReservationClaimNext("https://malicioso.example/cuenta/furiver/reservaciones/x"), null);
+  const snapshot = finalizedReservationForRepository("contact-snapshot");
+  const withContact = finalizeReservation({ storage: reservationStorage(), input: { ...reservationInput("contact-snapshot"), primaryContact: { firstName: "Juan", lastName: "Pérez", email: "Juan@Example.Test", phone: "55 1234" } }, now: () => "2026-08-01T12:00:00.000Z", suffix: () => "CONTACT" }).reservation;
+  assert.equal(withContact.primaryContact?.email, "Juan@Example.Test");
+  assert.equal(JSON.stringify(snapshot).includes("Juan@Example.Test"), false);
+  const adminPage = readFileSync("app/admin/[agencySlug]/reservaciones/[reservationId]/page.tsx", "utf8");
+  const checkout = readFileSync("components/legacy-travel-app.tsx", "utf8");
+  const claimRepository = readFileSync("lib/customers/reservation-claim-repository.ts", "utf8");
+  assert.match(adminPage, /Sin cuenta vinculada/);
+  assert.match(adminPage, /Cuenta vinculada/);
+  assert.match(checkout, /Ya tengo cuenta/);
+  assert.match(checkout, /Crear mi cuenta/);
+  assert.match(claimRepository, /reservation_customer_access/);
+  assert.match(claimRepository, /role: "primary"/);
+});
+
+test("POST público sólo intenta auto-link con contacto persistido y reporta un resultado seguro", async () => {
+  let contact: unknown = null;
+  let claimInput: unknown = null;
+  const handler = createReservationPostHandler({
+    execute: async (input) => { contact = input.primaryContact; return reservationApiSuccess(); },
+    claim: async (input) => { claimInput = input; return { status: "claimed" }; },
+  });
+  const response = await handler(reservationApiRequest({ ...publicReservationBody(), primaryContact: { firstName: "Juan", lastName: "Pérez", email: "Juan@Example.Test", phone: null } }));
+  const body = await response.json() as { customerLinkStatus?: string };
+  assert.deepEqual(contact, { firstName: "Juan", lastName: "Pérez", email: "Juan@Example.Test", phone: null });
+  assert.deepEqual(claimInput, { requestedAgencySlug: "furiver", reservationId: reservationApiSuccess().reservation.id });
+  assert.equal(body.customerLinkStatus, "linked");
 });

@@ -31,3 +31,10 @@ export function validateCustomerLoginCredentials(input: Readonly<{
   if (!/^\S+@\S+\.\S+$/.test(email) || password.length < 8) return null;
   return { email, password };
 }
+
+export function parseCustomerReservationClaimNext(value: unknown): Readonly<{ agencySlug: string; reservationId: string }> | null {
+  const next = safeCustomerNext(value);
+  if (!next) return null;
+  const match = /^\/cuenta\/([^/?#]+)\/reservaciones\/([0-9a-f]{8}-[0-9a-f-]{27,})$/.exec(next);
+  return match ? { agencySlug: decodeURIComponent(match[1]), reservationId: match[2] } : null;
+}

@@ -45,6 +45,7 @@ export type AdminReservationDetail = Readonly<{
     email: string | null;
     phone: string | null;
   }> | null;
+  customerAccountLinked: boolean;
   travelers: readonly Readonly<{
     position: number;
     travelerType: "adult" | "minor";
@@ -66,6 +67,7 @@ export type AdminReservationTravelerRow = Readonly<{
 export interface AdminReservationDetailRepositoryClient {
   find(input: AdminReservationDetailInput): Promise<AdminReservationDetailRow | null>;
   listTravelers(input: AdminReservationDetailInput): Promise<readonly AdminReservationTravelerRow[]>;
+  findPrimaryAccess?(input: AdminReservationDetailInput): Promise<boolean>;
 }
 
 export class AdminReservationDetailError extends Error {
@@ -112,7 +114,10 @@ function projectContact(snapshot: Record<string, unknown> | null) {
     asRecord(snapshot?.holder);
   if (!contact) return null;
 
-  const fullName = optionalText(contact.fullName) ?? optionalText(contact.name);
+  const firstName = optionalText(contact.firstName);
+  const lastName = optionalText(contact.lastName);
+  const names = [firstName, lastName].filter(Boolean).join(" ");
+  const fullName = optionalText(contact.fullName) ?? optionalText(contact.name) ?? (names || null);
   const email = optionalText(contact.email);
   const phone = optionalText(contact.phone);
   return fullName || email || phone ? { fullName, email, phone } : null;
@@ -164,6 +169,7 @@ function projectTravelers(
 export function projectAdminReservationDetail(
   row: AdminReservationDetailRow,
   travelerRows: readonly AdminReservationTravelerRow[] = [],
+  customerAccountLinked = false,
 ): AdminReservationDetail {
   const snapshot = asRecord(row.snapshot);
   const tour = asRecord(snapshot?.tour);
@@ -203,6 +209,7 @@ export function projectAdminReservationDetail(
       remainingAmount: optionalAmount(snapshot?.remainingAmount),
     },
     primaryContact: projectContact(snapshot),
+    customerAccountLinked,
     travelers: projectedTravelers.travelers,
     travelerDataStatus: projectedTravelers.status,
   };
@@ -221,7 +228,8 @@ export function createAdminReservationDetail(dependencies: Readonly<{
         const row = await dependencies.reservationClient.find(input);
         if (!row) throw new AdminReservationDetailError("not_found");
         const travelers = await dependencies.reservationClient.listTravelers(input);
-        return projectAdminReservationDetail(row, travelers);
+        const customerAccountLinked = dependencies.reservationClient.findPrimaryAccess ? await dependencies.reservationClient.findPrimaryAccess(input) : false;
+        return projectAdminReservationDetail(row, travelers, customerAccountLinked);
       } catch (error) {
         if (error instanceof AdminReservationDetailError) throw error;
         throw new AdminReservationDetailError("internal");

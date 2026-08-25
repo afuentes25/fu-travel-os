@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useActionState } from "react";
 import { useFormStatus } from "react-dom";
 
@@ -15,11 +16,12 @@ function SubmitButton() {
   );
 }
 
-export function CustomerLoginForm({ next }: Readonly<{ next: string | null }>) {
+export function CustomerLoginForm({ next, claim }: Readonly<{ next: string | null; claim: boolean }>) {
   const [state, action] = useActionState(loginCustomerAction, initialCustomerLoginState);
   return (
     <form action={action} className="customer-login-form">
       {next && <input type="hidden" name="next" value={next} />}
+      {claim && <input type="hidden" name="claim" value="1" />}
       <label htmlFor="customer-email">
         Correo electrónico
         <input id="customer-email" name="email" type="email" autoComplete="email" required />
@@ -37,6 +39,7 @@ export function CustomerLoginForm({ next }: Readonly<{ next: string | null }>) {
       </label>
       {state.error && <p className="customer-form-error" role="alert">{state.error}</p>}
       <SubmitButton />
+      {next && <Link href={`/cuenta/registro?next=${encodeURIComponent(next)}${claim ? "&claim=1" : ""}`}>Crear mi cuenta</Link>}
     </form>
   );
 }

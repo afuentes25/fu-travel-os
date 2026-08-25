@@ -31,6 +31,7 @@ export type LavellaReservationRequest = Readonly<{
   extraIds: string[];
   boardingPointId: string;
   depositPercent: number;
+  primaryContact?: Readonly<{ firstName: string; lastName: string | null; email: string; phone: string | null }>;
   travelers: Readonly<{
     status: TravelerDataStatus;
     drafts: readonly TravelerDraft[];
@@ -42,6 +43,7 @@ export type LavellaReservationApiSuccess = Readonly<{
   reservationCode: string;
   status: ReservationSnapshot["status"];
   createdAt: string;
+  customerLinkStatus?: string;
   confirmation: Readonly<{
     tripCode: string;
     tripName: string;
@@ -72,6 +74,7 @@ export function createLavellaReservationRequest({
   extraIds,
   boardingPointId,
   depositPercent,
+  primaryContact,
   travelers,
 }: LavellaReservationRequest): LavellaReservationRequest {
   return {
@@ -84,6 +87,7 @@ export function createLavellaReservationRequest({
     extraIds: [...new Set(extraIds)],
     boardingPointId,
     depositPercent,
+    primaryContact,
     travelers: {
       status: travelers.status,
       drafts: [...travelers.drafts],
@@ -104,6 +108,7 @@ export function createLavellaReservationMirror({
   departureId,
   boarding,
   travelers,
+  primaryContact,
 }: {
   response: LavellaReservationApiSuccess;
   agency: Pick<Agency, "id" | "name" | "contact" | "slug">;
@@ -113,6 +118,7 @@ export function createLavellaReservationMirror({
   departureId: string;
   boarding: BookingBoardingSnapshot;
   travelers: LavellaReservationRequest["travelers"];
+  primaryContact?: LavellaReservationRequest["primaryContact"];
 }): ReservationSnapshot {
   const { confirmation } = response;
   return {
@@ -139,6 +145,7 @@ export function createLavellaReservationMirror({
       ...boarding,
       pointName: confirmation.boardingPointName,
     },
+    ...(primaryContact ? { primaryContact } : {}),
     travelers: {
       status: travelers.status,
       adults: confirmation.occupancy.adults,

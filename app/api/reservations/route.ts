@@ -10,6 +10,13 @@ import {
   type ReservationSnapshot,
 } from "@/lib/reservations";
 
+const primaryContactSchema = z.object({
+  firstName: z.string().trim().min(1).max(120),
+  lastName: z.string().trim().max(120).nullable(),
+  email: z.string().trim().email().max(320),
+  phone: z.string().trim().max(60).nullable(),
+}).strict();
+
 export const runtime = "nodejs";
 
 const travelerDraftSchema = z
@@ -38,6 +45,7 @@ const reservationRequestSchema = z
     extraIds: z.array(z.string().trim().min(1)),
     boardingPointId: z.string().trim().min(1),
     depositPercent: z.number().int().min(1).max(100),
+    primaryContact: primaryContactSchema.optional(),
     travelers: z
       .object({
         status: z.enum(["complete", "pending"]),
@@ -59,6 +67,7 @@ type ReservationCommand = (
 
 type ReservationRouteDependencies = Readonly<{
   execute: ReservationCommand;
+  claim?: (input: Readonly<{ requestedAgencySlug: string; reservationId: string }>) => Promise<Readonly<{ status: string }>>;
 }>;
 
 const noStoreHeaders = { "Cache-Control": "no-store" };
@@ -90,6 +99,7 @@ function confirmationFromSnapshot(snapshot: ReservationSnapshot) {
 export function createReservationPostHandler(
   dependencies: ReservationRouteDependencies = {
     execute: executeReservationServerCommand,
+    claim: async (input) => (await import("@/lib/customers/reservation-claim")).claimReservationForAuthenticatedCustomer(input),
   },
 ) {
   return async function postReservation(request: Request) {
@@ -121,6 +131,11 @@ export function createReservationPostHandler(
         ...parsed.data,
         idempotencyKey,
       });
+      let customerLinkStatus = "not_authenticated";
+      if (parsed.data.primaryContact && dependencies.claim) {
+        const claim = await dependencies.claim({ requestedAgencySlug: parsed.data.tenantSlug, reservationId: result.reservation.id });
+        customerLinkStatus = claim.status === "claimed" || claim.status === "existing" ? "linked" : claim.status;
+      }
       return response(
         {
           reservationId: result.reservation.id,
@@ -128,6 +143,7 @@ export function createReservationPostHandler(
           status: result.reservation.status,
           createdAt: result.reservation.createdAt,
           confirmation: confirmationFromSnapshot(result.reservation),
+          ...(parsed.data.primaryContact ? { customerLinkStatus } : {}),
         },
         201,
       );

@@ -56,5 +56,10 @@ export function createSupabaseAdminReservationDetailClient(
       if (error) throw new Error("No fue posible consultar los viajeros.");
       return (data ?? []) as AdminReservationTravelerRow[];
     },
+    async findPrimaryAccess({ agencyId, reservationId }) {
+      const { data, error } = await supabase.from("reservation_customer_access").select("id").eq("agency_id", agencyId).eq("reservation_id", reservationId).eq("role", "primary").maybeSingle();
+      if (error) throw new Error("No fue posible consultar el vínculo de cliente.");
+      return Boolean(data);
+    },
   };
 }

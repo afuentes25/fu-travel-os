@@ -23,6 +23,12 @@ export type ReservationSnapshot = Readonly<{
   tour: Readonly<{ id: string; code: string; title: string }>;
   departure: Readonly<{ id: string; startDate: string }>;
   boarding: BookingBoardingSnapshot;
+  primaryContact?: Readonly<{
+    firstName: string;
+    lastName: string | null;
+    email: string;
+    phone: string | null;
+  }>;
   travelers: Readonly<{
     status: TravelerDataStatus;
     adults: number;
@@ -56,6 +62,12 @@ export type ReservationSnapshotInput = {
   tour: { id: string; code: string; title: string };
   departure: { id: string; startDate: string };
   boarding: BookingBoardingSnapshot;
+  primaryContact?: {
+    firstName: string;
+    lastName: string | null;
+    email: string;
+    phone: string | null;
+  };
   travelers: {
     status: TravelerDataStatus;
     adults: number;
@@ -367,6 +379,7 @@ export function finalizeReservation({
       tour: input.tour,
       departure: input.departure,
       boarding: input.boarding,
+      ...(input.primaryContact ? { primaryContact: input.primaryContact } : {}),
       travelers: input.travelers,
       rooms: input.rooms ?? 0,
       occupancy: {

@@ -1408,14 +1408,23 @@ function TravelerStep({
   );
 }
 
+type BookingPrimaryContact = Readonly<{ firstName: string; lastName: string; email: string; phone: string }>;
+
+function BookingContactStep({ contact, error, onChange }: Readonly<{ contact: BookingPrimaryContact; error: string; onChange: (contact: BookingPrimaryContact) => void }>) {
+  const invalid = error.includes("datos del titular");
+  return <section className="traveler-step" aria-labelledby="booking-contact-title"><header><div><h2 id="booking-contact-title">Datos del titular</h2><p>Usaremos estos datos para identificar tu reservación y ayudarte a vincularla con tu cuenta.</p></div></header><div className="traveler-grid"><label>Nombre<input value={contact.firstName} autoComplete="given-name" required aria-invalid={invalid} onChange={(event) => onChange({ ...contact, firstName: event.target.value })} /></label><label>Apellidos <small>(opcional)</small><input value={contact.lastName} autoComplete="family-name" onChange={(event) => onChange({ ...contact, lastName: event.target.value })} /></label><label>Correo electrónico<input type="email" value={contact.email} autoComplete="email" required aria-invalid={invalid} onChange={(event) => onChange({ ...contact, email: event.target.value })} /></label><label>WhatsApp <small>(opcional)</small><input type="tel" value={contact.phone} autoComplete="tel" onChange={(event) => onChange({ ...contact, phone: event.target.value })} /></label></div>{invalid && <p className="traveler-error" role="alert">Captura un nombre y un correo electrónico válido.</p>}</section>;
+}
+
 function LavellaReservationConfirmation({
   reservation,
   whatsappHref,
   onContinue,
+  customerLinkStatus,
 }: {
   reservation: ReservationSnapshot;
   whatsappHref: string;
   onContinue: () => void;
+  customerLinkStatus: string | null;
 }) {
   const isPending = reservation.status === "pending";
   const depositPaid = [
@@ -1600,6 +1609,12 @@ function LavellaReservationConfirmation({
         </ol>
       </section>
 
+      <section className="lavella-confirmation-next">
+        <div className="eyebrow">TU CUENTA</div>
+        <h3>Administra tu reservación desde tu cuenta</h3>
+        {customerLinkStatus === "email_mismatch" ? <p role="alert">La reservación fue creada, pero el correo utilizado no coincide con la cuenta iniciada.</p> : <p>Desde tu cuenta podrás completar viajeros, reportar pagos, consultar documentos y aceptar el contrato.</p>}
+      </section>
+
       <div className="lavella-confirmation-actions">
         <a
           className="wa"
@@ -1609,6 +1624,8 @@ function LavellaReservationConfirmation({
         >
           Enviar folio por WhatsApp
         </a>
+        <a href={`/cuenta/login?next=${encodeURIComponent(`/cuenta/${reservation.tenant}/reservaciones/${reservation.id}`)}&claim=1`}>Ya tengo cuenta</a>
+        <a href={`/cuenta/registro?next=${encodeURIComponent(`/cuenta/${reservation.tenant}/reservaciones/${reservation.id}`)}&claim=1`}>Crear mi cuenta</a>
         <button type="button" onClick={onContinue}>
           Volver a viajes
         </button>
@@ -1658,6 +1675,8 @@ function Checkout({
   );
   const [step, setStep] = useState(1);
   const [reservation, setReservation] = useState<ReservationSnapshot>();
+  const [customerLinkStatus, setCustomerLinkStatus] = useState<string | null>(null);
+  const [primaryContact, setPrimaryContact] = useState<BookingPrimaryContact>({ firstName: "", lastName: "", email: "", phone: "" });
   const finalizingRef = useRef(false);
   const reservationSubmissionKeyRef = useRef<string | null>(null);
   const [isSubmittingReservation, setIsSubmittingReservation] = useState(false);
@@ -1906,6 +1925,10 @@ function Checkout({
       );
       return;
     }
+    if (step === 2 && (!primaryContact.firstName.trim() || !/^\S+@\S+\.\S+$/.test(primaryContact.email.trim()))) {
+      setError("Completa los datos del titular para continuar.");
+      return;
+    }
     if (
       step === 3 &&
       (theme === "explorer" || theme === "lavella")
@@ -2082,6 +2105,7 @@ function Checkout({
             extraIds: [...new Set(priced.flatMap((line) => line.extraIds))],
             boardingPointId: primary.boarding.boardingPointId,
             depositPercent: depositSnapshot.depositPercent,
+            primaryContact: { firstName: primaryContact.firstName.trim(), lastName: primaryContact.lastName.trim() || null, email: primaryContact.email.trim(), phone: primaryContact.phone.trim() || null },
             travelers: { status: travelerStatus, drafts: travelerDrafts },
           });
           const apiResponse = await fetch("/api/reservations", {
@@ -2107,6 +2131,11 @@ function Checkout({
                     : "No fue posible registrar la reservación. Revisa tu conexión e inténtalo de nuevo.";
             throw new Error(message);
           }
+          setCustomerLinkStatus(apiBody.customerLinkStatus ?? null);
+          if (apiBody.customerLinkStatus === "linked") {
+            window.location.assign(`/cuenta/${encodeURIComponent(agency.slug)}/reservaciones/${encodeURIComponent(apiBody.reservationId)}`);
+            return;
+          }
           setReservation(
             createLavellaReservationMirror({
               response: apiBody,
@@ -2117,6 +2146,7 @@ function Checkout({
               departureId: primary.departure.id,
               boarding: primary.boarding,
               travelers: request.travelers,
+              primaryContact: request.primaryContact,
             }),
           );
         } else {
@@ -2136,6 +2166,7 @@ function Checkout({
                 startDate: primary.departure.startDate,
               },
               boarding: primary.boarding,
+              primaryContact: { firstName: primaryContact.firstName.trim(), lastName: primaryContact.lastName.trim() || null, email: primaryContact.email.trim(), phone: primaryContact.phone.trim() || null },
               travelers: {
                 status: travelerStatus,
                 adults: reservationTravelers.adults,
@@ -2289,21 +2320,7 @@ function Checkout({
             </div>
           </>
         )}
-        {step === 2 && (
-          <FormGrid
-            useMexicoLocationSelectors={theme === "lavella"}
-            fields={[
-              "Nombre",
-              "Apellidos",
-              "Correo",
-              "WhatsApp",
-              "País",
-              "Estado",
-              "Ciudad",
-              "Contacto de emergencia (opcional)",
-            ]}
-          />
-        )}{" "}
+        {step === 2 && <BookingContactStep contact={primaryContact} error={error} onChange={setPrimaryContact} />}{" "}
         {step === 3 && (
           <>
             <BoardingStep
@@ -2545,6 +2562,7 @@ function Checkout({
             reservation={reservation}
             whatsappHref={reservationWhatsappHref}
             onContinue={() => go("/viajes")}
+            customerLinkStatus={customerLinkStatus}
           />
         )}
         {step === 6 && reservation && theme !== "lavella" && (

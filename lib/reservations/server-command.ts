@@ -27,6 +27,7 @@ export type ReservationServerCommandInput = Readonly<{
   rooms: number;
   extraIds: readonly string[];
   boardingPointId: string;
+  primaryContact?: Readonly<{ firstName: string; lastName: string | null; email: string; phone: string | null }>;
   depositPercent: number;
   travelers: Readonly<{
     status: TravelerDataStatus;
@@ -93,6 +94,14 @@ function validateTravelerData(
   ) {
     throw new ReservationServerCommandError();
   }
+}
+
+function normalizePrimaryContact(contact: ReservationServerCommandInput["primaryContact"]) {
+  if (!contact) return undefined;
+  const firstName = contact.firstName.trim();
+  const email = contact.email.trim();
+  if (!firstName || !/^\S+@\S+\.\S+$/.test(email)) throw new ReservationServerCommandError();
+  return { firstName, lastName: contact.lastName?.trim() || null, email, phone: contact.phone?.trim() || null };
 }
 
 function makeLines({
@@ -225,6 +234,7 @@ export function createReservationServerCommand(
           throw new ReservationServerCommandError();
         }
         validateTravelerData(input.travelers, input.adults, input.minors);
+        const primaryContact = normalizePrimaryContact(input.primaryContact);
 
         const departure = trip.departures.find(
           (candidate) => candidate.id === input.departureId,
@@ -310,6 +320,7 @@ export function createReservationServerCommand(
             tour: { id: trip.id, code: trip.code, title: trip.title },
             departure: { id: departure.id, startDate: departure.startDate },
             boarding: pricedLines[0].boarding,
+            ...(primaryContact ? { primaryContact } : {}),
             travelers: {
               status: input.travelers.status,
               adults: input.adults,

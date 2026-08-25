@@ -90,7 +90,10 @@ function projectContact(snapshot: Record<string, unknown> | null) {
     asSnapshotRecord(snapshot?.holder);
   if (!contact) return null;
 
-  const fullName = optionalSnapshotText(contact.fullName) ?? optionalSnapshotText(contact.name);
+  const firstName = optionalSnapshotText(contact.firstName);
+  const lastName = optionalSnapshotText(contact.lastName);
+  const names = [firstName, lastName].filter(Boolean).join(" ");
+  const fullName = optionalSnapshotText(contact.fullName) ?? optionalSnapshotText(contact.name) ?? (names || null);
   const email = optionalSnapshotText(contact.email);
   const phone = optionalSnapshotText(contact.phone);
   return fullName || email || phone ? { fullName, email, phone } : null;
