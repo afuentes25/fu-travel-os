@@ -203,8 +203,10 @@
 .lavella-commerce .lavella-checkout .checkout-account-gate p,
 .lavella-commerce .lavella-checkout .checkout-account-state p { max-width: 660px; margin: 0; color: var(--lavella-muted); line-height: 1.55; }
 .lavella-commerce .lavella-checkout .checkout-account-gate > div { display: flex; flex-wrap: wrap; gap: 10px; }
-.lavella-commerce .lavella-checkout .checkout-account-gate a { min-height: 44px; display: inline-flex; align-items: center; padding: 0 15px; border: 1px solid var(--lavella-orange); color: var(--lavella-orange); font-size: 13px; font-weight: 800; text-decoration: none; }
-.lavella-commerce .lavella-checkout .checkout-account-gate a:first-child { background: var(--lavella-orange); color: #fff; }
+.lavella-commerce .lavella-checkout .checkout-account-gate a,
+.lavella-commerce .lavella-checkout .checkout-account-gate button { min-height: 44px; display: inline-flex; align-items: center; padding: 0 15px; border: 1px solid var(--lavella-orange); background:#fff; color: var(--lavella-orange); font:inherit; font-size: 13px; font-weight: 800; text-decoration: none; cursor:pointer; }
+.lavella-commerce .lavella-checkout .checkout-account-gate a:first-child,
+.lavella-commerce .lavella-checkout .checkout-account-gate button:first-child { background: var(--lavella-orange); color: #fff; }
 .lavella-commerce .lavella-checkout .checkout-account-gate small { color: var(--lavella-muted); }
 .lavella-commerce .lavella-checkout .checkout-account-state { border-left: 3px solid #397053; background: #f4f8f4; }
 .lavella-commerce .lavella-checkout .checkout-account-state strong { color: #286343; }
@@ -581,7 +583,8 @@
   .lavella-commerce .lavella-checkout .checkout-account-gate,
   .lavella-commerce .lavella-checkout .checkout-account-state { margin-inline: -6px; padding: 18px 14px; }
   .lavella-commerce .lavella-checkout .checkout-account-gate > div { display: grid; }
-  .lavella-commerce .lavella-checkout .checkout-account-gate a { justify-content: center; }
+  .lavella-commerce .lavella-checkout .checkout-account-gate a,
+  .lavella-commerce .lavella-checkout .checkout-account-gate button { justify-content: center; }
 
   .lavella-commerce .lavella-checkout .boarding-option {
     min-height: 88px;

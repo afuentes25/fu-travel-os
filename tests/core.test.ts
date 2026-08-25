@@ -8131,6 +8131,35 @@ test("el journey Lavella ofrece cuenta temprana, conserva retorno y muestra recu
   assert.doesNotMatch(checkout, /customerAccountId|auth user ID/);
 });
 
+test("la cuenta cliente reutiliza el modal Lavella y el shell sin alterar los flujos de reservación", () => {
+  const modal = readFileSync("app/cuenta/customer-auth-modal.tsx", "utf8");
+  const loginForm = readFileSync("app/cuenta/login/login-form.tsx", "utf8");
+  const registrationForm = readFileSync("app/cuenta/registro/registration-form.tsx", "utf8");
+  const storefrontHeader = readFileSync("components/themes/lavella/lavella-header.tsx", "utf8");
+  const checkout = readFileSync("components/legacy-travel-app.tsx", "utf8");
+  const shell = readFileSync("app/cuenta/customer-shell.tsx", "utf8");
+  const dashboard = readFileSync("app/cuenta/page.tsx", "utf8");
+
+  assert.match(modal, /role="dialog"/);
+  assert.match(modal, /aria-modal="true"/);
+  assert.match(modal, /Escape/);
+  assert.match(modal, /CustomerLoginForm/);
+  assert.match(modal, /CustomerRegistrationForm/);
+  assert.match(loginForm, /inline/);
+  assert.match(registrationForm, /inline/);
+  assert.match(storefrontHeader, /CustomerAuthModal/);
+  assert.match(checkout, /onOpenAuth/);
+  assert.match(checkout, /CustomerAuthModal/);
+  assert.match(shell, /Resumen/);
+  assert.match(shell, /Mis reservas/);
+  assert.match(shell, /Cerrar sesión/);
+  assert.match(shell, /customerDrawer/);
+  assert.match(dashboard, /Próxima reservación/);
+  assert.match(dashboard, /Aún no tienes reservaciones/);
+  assert.match(dashboard, /listCustomerReservations/);
+  assert.doesNotMatch(modal, /customerAccountId|tokenSha256|reservationTravelerId/);
+});
+
 test("el reset de demo es dry-run por defecto, exige confirmación exacta y atribuye Storage por prefijo estricto", () => {
   const target = {
     agencyId: "11111111-1111-1111-1111-111111111111",

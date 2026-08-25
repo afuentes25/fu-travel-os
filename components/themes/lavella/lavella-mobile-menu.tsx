@@ -6,6 +6,7 @@ import { FaCartShopping, FaInstagram, FaWhatsapp } from "react-icons/fa6";
 import styles from "./lavella-layout.module.css";
 import type { LavellaHeaderProps } from "./lavella-types";
 import { lavellaWhatsApp, openLavellaWhatsApp } from "./lavella-utils";
+import type { CustomerAuthMode } from "@/app/cuenta/customer-auth-modal";
 
 const items = [
   ["Inicio", "/"],
@@ -24,10 +25,12 @@ export function LavellaMobileMenu({
   onClose,
   triggerRef,
   customerEmail,
+  onOpenAccount,
 }: LavellaHeaderProps & {
   open: boolean;
   onClose: () => void;
   triggerRef: RefObject<HTMLButtonElement | null>;
+  onOpenAccount: (mode: CustomerAuthMode) => void;
 }) {
   const panelRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -92,7 +95,7 @@ export function LavellaMobileMenu({
         </nav>
         <div className={styles.mobileContact}>
           <div className={styles.mobileAccount}>
-            {customerEmail ? <Link href="/cuenta">Mi cuenta</Link> : <><Link href="/cuenta/login">Iniciar sesión</Link><Link href="/cuenta/registro">Crear una cuenta</Link></>}
+            {customerEmail ? <Link href="/cuenta">Mi cuenta</Link> : <><button type="button" onClick={() => onOpenAccount("login")}>Iniciar sesión</button><button type="button" onClick={() => onOpenAccount("register")}>Crear una cuenta</button></>}
           </div>
           <button onClick={() => go("/carrito")}>
             <FaCartShopping /> Carrito <b>{cartCount}</b>

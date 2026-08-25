@@ -55,11 +55,13 @@ export async function loginCustomerAction(
   // the eventual reservation is still linked only after its booking email
   // matches this verified identity.
   if (returnTo && result.status !== "auth_failed" && result.status !== "unexpected_error") {
+    if (formData.get("inline") === "1") return { authenticated: true };
     redirect(returnTo);
   }
 
   if (result.status === "authorized") {
     const agencyPath = `/cuenta/${encodeURIComponent(result.access.account.agencySlug)}/reservaciones`;
+    if (!next || next === "/cuenta") redirect("/cuenta");
     redirect(next?.startsWith(`${agencyPath}/`) || next === agencyPath ? next : agencyPath);
   }
   if (result.status === "selection_required") redirect("/cuenta");
@@ -70,5 +72,5 @@ export async function loginCustomerAction(
 export async function logoutCustomerAction() {
   const auth = await createSupabaseAuthServerClient();
   await auth.auth.signOut();
-  redirect("/cuenta/login");
+  redirect("/");
 }

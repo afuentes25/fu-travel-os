@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useActionState } from "react";
+import { useActionState, useEffect } from "react";
 import { useFormStatus } from "react-dom";
 
 import { loginCustomerAction } from "../actions";
@@ -16,13 +16,32 @@ function SubmitButton() {
   );
 }
 
-export function CustomerLoginForm({ next, returnTo, claim }: Readonly<{ next: string | null; returnTo: string | null; claim: boolean }>) {
+export function CustomerLoginForm({
+  next,
+  returnTo,
+  claim,
+  inline = false,
+  onRegister,
+  onAuthenticated,
+}: Readonly<{
+  next: string | null;
+  returnTo: string | null;
+  claim: boolean;
+  inline?: boolean;
+  onRegister?: () => void;
+  onAuthenticated?: () => void;
+}>) {
   const [state, action] = useActionState(loginCustomerAction, initialCustomerLoginState);
+  useEffect(() => {
+    if (state.authenticated) onAuthenticated?.();
+  }, [onAuthenticated, state.authenticated]);
+  const registerHref = `/cuenta/registro?${new URLSearchParams({ ...(next ? { next } : {}), ...(returnTo ? { returnTo } : {}), ...(claim ? { claim: "1" } : {}) }).toString()}`;
   return (
     <form action={action} className="customer-login-form">
       {next && <input type="hidden" name="next" value={next} />}
       {returnTo && <input type="hidden" name="returnTo" value={returnTo} />}
       {claim && <input type="hidden" name="claim" value="1" />}
+      {inline && <input type="hidden" name="inline" value="1" />}
       <label htmlFor="customer-email">
         Correo electrónico
         <input id="customer-email" name="email" type="email" autoComplete="email" required />
@@ -40,7 +59,9 @@ export function CustomerLoginForm({ next, returnTo, claim }: Readonly<{ next: st
       </label>
       {state.error && <p className="customer-form-error" role="alert">{state.error}</p>}
       <SubmitButton />
-      <p className="customer-auth-switch">¿Aún no tienes cuenta? <Link href={`/cuenta/registro?${new URLSearchParams({ ...(next ? { next } : {}), ...(returnTo ? { returnTo } : {}), ...(claim ? { claim: "1" } : {}) }).toString()}`}>Crear una cuenta</Link></p>
+      <p className="customer-auth-switch">
+        ¿Aún no tienes cuenta? {onRegister ? <button type="button" className="customer-auth-text-button" onClick={onRegister}>Crear una cuenta</button> : <Link href={registerHref}>Crear una cuenta</Link>}
+      </p>
     </form>
   );
 }

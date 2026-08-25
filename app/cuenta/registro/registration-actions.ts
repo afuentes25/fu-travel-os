@@ -36,7 +36,11 @@ export async function registerCustomerAction(_previous: CustomerRegistrationStat
       if (claimed.status === "claimed" || claimed.status === "existing") redirect(`/cuenta/${encodeURIComponent(claim.agencySlug)}/reservaciones/${encodeURIComponent(claim.reservationId)}`);
       if (claimed.status === "email_mismatch") return { error: "El correo de esta cuenta no coincide con el utilizado en la reservación." };
     }
-    if (data.session && returnTo) redirect(returnTo);
+    if (data.session && returnTo) {
+      if (formData.get("inline") === "1") return { authenticated: true };
+      redirect(returnTo);
+    }
+    if (data.session && next === "/cuenta") redirect("/cuenta");
     return { success: "Revisa tu correo para confirmar la cuenta y continuar con tu reservación." };
   } catch { return { error: "No fue posible crear la cuenta. Intenta nuevamente." }; }
 }

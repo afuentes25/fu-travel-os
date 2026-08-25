@@ -13,6 +13,7 @@ import styles from "./lavella-layout.module.css";
 import { LavellaMobileMenu } from "./lavella-mobile-menu";
 import type { LavellaHeaderProps } from "./lavella-types";
 import { lavellaWhatsApp, openLavellaWhatsApp } from "./lavella-utils";
+import { CustomerAuthModal, type CustomerAuthMode } from "@/app/cuenta/customer-auth-modal";
 
 const navigation = [
   ["Inicio", "/"],
@@ -31,6 +32,7 @@ export function LavellaHeader({
   const [solid, setSolid] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
+  const [authMode, setAuthMode] = useState<CustomerAuthMode>("login");
   const triggerRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     const update = () => setSolid(scrollY > 44);
@@ -91,25 +93,7 @@ export function LavellaHeader({
               </button>
               {customerEmail ? (
                 <Link className={styles.accountButton} href="/cuenta">Mi cuenta</Link>
-              ) : (
-                <div className={styles.accountMenu}>
-                  <button
-                    className={styles.accountButton}
-                    type="button"
-                    onClick={() => setAccountOpen((current) => !current)}
-                    aria-expanded={accountOpen}
-                    aria-controls="lavella-account-menu"
-                  >
-                    Mi cuenta
-                  </button>
-                  {accountOpen && (
-                    <div id="lavella-account-menu" className={styles.accountPopover} role="dialog" aria-label="Opciones de cuenta">
-                      <Link href="/cuenta/login">Iniciar sesión</Link>
-                      <Link href="/cuenta/registro">Crear una cuenta</Link>
-                    </div>
-                  )}
-                </div>
-              )}
+              ) : <button className={styles.accountButton} type="button" aria-label="Mi cuenta: Iniciar sesión o Crear una cuenta" onClick={() => { setAuthMode("login"); setAccountOpen(true); }}>Mi cuenta</button>}
               <button
                 ref={triggerRef}
                 className={styles.menuButton}
@@ -135,8 +119,14 @@ export function LavellaHeader({
           open={menuOpen}
           onClose={() => setMenuOpen(false)}
           triggerRef={triggerRef}
+          onOpenAccount={(mode) => {
+            setMenuOpen(false);
+            setAuthMode(mode);
+            setAccountOpen(true);
+          }}
         />
       </div>
+      <CustomerAuthModal open={accountOpen} mode={authMode} next="/cuenta" onClose={() => setAccountOpen(false)} onModeChange={setAuthMode} />
     </>
   );
 }
