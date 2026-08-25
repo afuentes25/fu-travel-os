@@ -74,6 +74,13 @@ import {
   type CustomerAgencyAccountRecord,
 } from "../lib/customers/customer-access-core";
 import { normalizeCustomerEmail } from "../lib/customers/customer-email";
+import {
+  DEMO_RESERVATIONS_RESET_CONFIRMATION,
+  getSupabaseProjectRef,
+  isStoragePathOwnedByReservation,
+  parseDemoReservationResetArgs,
+  RESERVATION_RESET_DELETE_ORDER,
+} from "../scripts/reset-demo-reservations-core";
 import { createReservationClaimService } from "../lib/customers/reservation-claim-core";
 import {
   CustomerReservationListError,
@@ -8122,4 +8129,78 @@ test("el journey Lavella ofrece cuenta temprana, conserva retorno y muestra recu
   assert.match(callback, /safeCustomerAuthReturnTo/);
   assert.match(confirmationStyles, /checkout-account-gate/);
   assert.doesNotMatch(checkout, /customerAccountId|auth user ID/);
+});
+
+test("el reset de demo es dry-run por defecto, exige confirmación exacta y atribuye Storage por prefijo estricto", () => {
+  const target = {
+    agencyId: "11111111-1111-1111-1111-111111111111",
+    reservationId: "22222222-2222-2222-2222-222222222222",
+    reservationCode: "FT-TEST",
+  };
+  assert.equal(parseDemoReservationResetArgs([]), "dry-run");
+  assert.equal(
+    parseDemoReservationResetArgs([`--confirm=${DEMO_RESERVATIONS_RESET_CONFIRMATION}`]),
+    "confirmed",
+  );
+  assert.throws(() => parseDemoReservationResetArgs(["--confirm=force"]));
+  assert.equal(
+    isStoragePathOwnedByReservation(
+      "11111111-1111-1111-1111-111111111111/22222222-2222-2222-2222-222222222222/ticket/v1.pdf",
+      target,
+    ),
+    true,
+  );
+  assert.equal(
+    isStoragePathOwnedByReservation(
+      "11111111-1111-1111-1111-111111111111/22222222-2222-2222-2222-222222222222-other/ticket/v1.pdf",
+      target,
+    ),
+    false,
+  );
+  assert.equal(getSupabaseProjectRef("https://abc123.supabase.co"), "abc123");
+  assert.equal(getSupabaseProjectRef("http://127.0.0.1:54321"), null);
+});
+
+test("el reset de demo conserva configuración, usa la RPC privada y elimina dependencias en orden FK", () => {
+  const script = readFileSync("scripts/reset-demo-reservations.ts", "utf8");
+  const foundation = readFileSync("supabase/migrations/20260801000000_reservation_foundation.sql", "utf8");
+  const maintenanceMigration = readFileSync("supabase/migrations/20260801250000_reservation_maintenance_purge.sql", "utf8");
+  assert.deepEqual(RESERVATION_RESET_DELETE_ORDER, [
+    "traveler_boarding_events",
+    "traveler_boarding_credentials",
+    "traveler_boarding_state",
+    "acceptance_certificate_documents",
+    "reservation_contract_acceptances",
+    "remaining_reservation_documents",
+    "reservation_contract_instances",
+    "payment_evidence",
+    "reservation_payments",
+    "reservation_travelers",
+    "reservation_customer_access",
+    "reservation_snapshots",
+  ]);
+  assert.match(script, /createClient\(url, serviceRoleKey/);
+  assert.match(script, /select\("\*", \{ count: "exact", head: true \}\)/);
+  assert.doesNotMatch(script, /select\("id", \{ count: "exact", head: true \}\)/);
+  assert.match(script, /payment-evidence/);
+  assert.match(script, /reservation-documents/);
+  assert.match(script, /--confirm=DELETE-DEMO-RESERVATIONS/);
+  assert.match(script, /preflightRequiredTables/);
+  assert.match(script, /purge_demo_reservation_atomic/);
+  assert.match(script, /storage\.from\(bucket\)\.remove/);
+  assert.doesNotMatch(script, /\.from\([^)]*\)\.delete/);
+  assert.doesNotMatch(script, /from\("agency_customer_accounts"\)\.delete/);
+  assert.doesNotMatch(script, /from\("agencies"\)\.delete/);
+  assert.match(foundation, /before update or delete on public\.reservation_snapshots/);
+  assert.match(maintenanceMigration, /create or replace function public\.prevent_reservation_snapshot_mutation/);
+  assert.match(maintenanceMigration, /if tg_op = 'DELETE'[\s\S]*current_setting\('app\.reservation_maintenance_delete', true\) = 'enabled'[\s\S]*return old;[\s\S]*raise exception 'Reservation snapshots are immutable'/);
+  assert.match(maintenanceMigration, /set_config\('app\.reservation_maintenance_delete', 'enabled', true\)/);
+  assert.match(maintenanceMigration, /security definer/i);
+  assert.match(maintenanceMigration, /set search_path = public, pg_temp/i);
+  assert.match(maintenanceMigration, /for update/i);
+  assert.match(maintenanceMigration, /from public, anon, authenticated/i);
+  assert.match(maintenanceMigration, /to service_role/i);
+  assert.match(maintenanceMigration, /delete from public\.traveler_boarding_events[\s\S]*delete from public\.traveler_boarding_credentials[\s\S]*delete from public\.traveler_boarding_state/);
+  assert.match(maintenanceMigration, /delete from public\.reservation_contract_acceptances[\s\S]*delete from public\.reservation_documents[\s\S]*delete from public\.reservation_contract_instances/);
+  assert.match(maintenanceMigration, /delete from public\.reservation_snapshots/);
 });

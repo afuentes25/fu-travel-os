@@ -9,6 +9,7 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test tests/**/*.test.ts",
+    "demo:reset-reservations": "tsx scripts/reset-demo-reservations.ts",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
   },
