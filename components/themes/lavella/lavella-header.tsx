@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import {
   FaCartShopping,
   FaFacebookF,
@@ -25,9 +26,11 @@ export function LavellaHeader({
   agency,
   cartCount,
   onNavigate,
+  customerEmail,
 }: LavellaHeaderProps) {
   const [solid, setSolid] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [accountOpen, setAccountOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     const update = () => setSolid(scrollY > 44);
@@ -86,6 +89,27 @@ export function LavellaHeader({
                 <FaCartShopping />
                 {cartCount > 0 && <b>{cartCount}</b>}
               </button>
+              {customerEmail ? (
+                <Link className={styles.accountButton} href="/cuenta">Mi cuenta</Link>
+              ) : (
+                <div className={styles.accountMenu}>
+                  <button
+                    className={styles.accountButton}
+                    type="button"
+                    onClick={() => setAccountOpen((current) => !current)}
+                    aria-expanded={accountOpen}
+                    aria-controls="lavella-account-menu"
+                  >
+                    Mi cuenta
+                  </button>
+                  {accountOpen && (
+                    <div id="lavella-account-menu" className={styles.accountPopover} role="dialog" aria-label="Opciones de cuenta">
+                      <Link href="/cuenta/login">Iniciar sesión</Link>
+                      <Link href="/cuenta/registro">Crear una cuenta</Link>
+                    </div>
+                  )}
+                </div>
+              )}
               <button
                 ref={triggerRef}
                 className={styles.menuButton}
@@ -106,6 +130,7 @@ export function LavellaHeader({
         <LavellaMobileMenu
           agency={agency}
           cartCount={cartCount}
+          customerEmail={customerEmail}
           onNavigate={onNavigate}
           open={menuOpen}
           onClose={() => setMenuOpen(false)}

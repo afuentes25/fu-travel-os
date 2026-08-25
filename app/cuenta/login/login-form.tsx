@@ -16,11 +16,12 @@ function SubmitButton() {
   );
 }
 
-export function CustomerLoginForm({ next, claim }: Readonly<{ next: string | null; claim: boolean }>) {
+export function CustomerLoginForm({ next, returnTo, claim }: Readonly<{ next: string | null; returnTo: string | null; claim: boolean }>) {
   const [state, action] = useActionState(loginCustomerAction, initialCustomerLoginState);
   return (
     <form action={action} className="customer-login-form">
       {next && <input type="hidden" name="next" value={next} />}
+      {returnTo && <input type="hidden" name="returnTo" value={returnTo} />}
       {claim && <input type="hidden" name="claim" value="1" />}
       <label htmlFor="customer-email">
         Correo electrónico
@@ -39,7 +40,7 @@ export function CustomerLoginForm({ next, claim }: Readonly<{ next: string | nul
       </label>
       {state.error && <p className="customer-form-error" role="alert">{state.error}</p>}
       <SubmitButton />
-      {next && <Link href={`/cuenta/registro?next=${encodeURIComponent(next)}${claim ? "&claim=1" : ""}`}>Crear mi cuenta</Link>}
+      <p className="customer-auth-switch">¿Aún no tienes cuenta? <Link href={`/cuenta/registro?${new URLSearchParams({ ...(next ? { next } : {}), ...(returnTo ? { returnTo } : {}), ...(claim ? { claim: "1" } : {}) }).toString()}`}>Crear una cuenta</Link></p>
     </form>
   );
 }

@@ -1,8 +1,10 @@
 "use client";
 import "@/app/themes/lavella-commerce.css";
+import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { agencies, departurePoints, destinations, travels } from "@/data/demo";
 import { filterCatalog } from "@/lib/catalog";
+import type { ReservationCustomerLinkStatus } from "@/app/api/reservations/route";
 import {
   createFxConsent,
   ensureFreshDeterministicDemoPaymentQuote,
@@ -151,7 +153,17 @@ function DemoBar({
     </div>
   );
 }
-function Header({ agency, cartCount }: { agency: Agency; cartCount: number }) {
+function customerAuthHref(
+  route: "/carrito" | "/checkout",
+  agency: Agency,
+  theme: TravelTheme,
+  destination: "/cuenta/login" | "/cuenta/registro",
+) {
+  const returnTo = `${route}?${new URLSearchParams({ tenant: agency.slug, theme }).toString()}`;
+  return `${destination}?returnTo=${encodeURIComponent(returnTo)}`;
+}
+
+function Header({ agency, cartCount, theme, customerEmail }: { agency: Agency; cartCount: number; theme: TravelTheme; customerEmail: string | null }) {
   const [open, setOpen] = useState(false);
   return (
     <header className="site-header">
@@ -184,6 +196,17 @@ function Header({ agency, cartCount }: { agency: Agency; cartCount: number }) {
         <button className="cart-button" onClick={() => go("/carrito")}>
           <Icon name="cart" /> <span>{cartCount}</span>
         </button>
+        {customerEmail ? (
+          <Link className="customer-account-link" href="/cuenta">Mi cuenta</Link>
+        ) : (
+          <details className="customer-account-menu">
+            <summary>Mi cuenta</summary>
+            <div>
+              <a href={customerAuthHref("/carrito", agency, theme, "/cuenta/login")}>Iniciar sesión</a>
+              <a href={customerAuthHref("/carrito", agency, theme, "/cuenta/registro")}>Crear una cuenta</a>
+            </div>
+          </details>
+        )}
         <button
           className="menu"
           onClick={() => setOpen(!open)}
@@ -1410,9 +1433,10 @@ function TravelerStep({
 
 type BookingPrimaryContact = Readonly<{ firstName: string; lastName: string; email: string; phone: string }>;
 
-function BookingContactStep({ contact, error, onChange }: Readonly<{ contact: BookingPrimaryContact; error: string; onChange: (contact: BookingPrimaryContact) => void }>) {
+function BookingContactStep({ contact, error, onChange, authenticatedEmail, accountReturnTo }: Readonly<{ contact: BookingPrimaryContact; error: string; onChange: (contact: BookingPrimaryContact) => void; authenticatedEmail: string | null; accountReturnTo: string }>) {
   const invalid = error.includes("datos del titular");
-  return <section className="traveler-step" aria-labelledby="booking-contact-title"><header><div><h2 id="booking-contact-title">Datos del titular</h2><p>Usaremos estos datos para identificar tu reservación y ayudarte a vincularla con tu cuenta.</p></div></header><div className="traveler-grid"><label>Nombre<input value={contact.firstName} autoComplete="given-name" required aria-invalid={invalid} onChange={(event) => onChange({ ...contact, firstName: event.target.value })} /></label><label>Apellidos <small>(opcional)</small><input value={contact.lastName} autoComplete="family-name" onChange={(event) => onChange({ ...contact, lastName: event.target.value })} /></label><label>Correo electrónico<input type="email" value={contact.email} autoComplete="email" required aria-invalid={invalid} onChange={(event) => onChange({ ...contact, email: event.target.value })} /></label><label>WhatsApp <small>(opcional)</small><input type="tel" value={contact.phone} autoComplete="tel" onChange={(event) => onChange({ ...contact, phone: event.target.value })} /></label></div>{invalid && <p className="traveler-error" role="alert">Captura un nombre y un correo electrónico válido.</p>}</section>;
+  const sameEmail = Boolean(authenticatedEmail && contact.email.trim().toLowerCase() === authenticatedEmail.trim().toLowerCase());
+  return <section className="traveler-step" aria-labelledby="booking-contact-title"><header><div><h2 id="booking-contact-title">Datos del titular</h2><p>Usaremos estos datos para identificar tu reservación y ayudarte a vincularla con tu cuenta.</p></div></header>{authenticatedEmail ? <aside className="checkout-account-state" role="status"><strong>✓ Sesión iniciada</strong><span>{authenticatedEmail}</span><p>{sameEmail ? "Esta reservación se asociará a tu cuenta." : "Esta reservación podrá asociarse a tu cuenta cuando el correo del titular coincida."}</p></aside> : <aside className="checkout-account-gate"><span className="eyebrow">MI CUENTA</span><h3>¿Ya tienes cuenta?</h3><p>Inicia sesión para asociar automáticamente esta reservación y administrarla después desde tu cuenta.</p><div><a href={`/cuenta/login?returnTo=${encodeURIComponent(accountReturnTo)}`}>Iniciar sesión</a><a href={`/cuenta/registro?returnTo=${encodeURIComponent(accountReturnTo)}`}>Crear una cuenta</a></div><small>o <b>continúa como invitado</b></small></aside>}<div className="traveler-grid"><label>Nombre<input value={contact.firstName} autoComplete="given-name" required aria-invalid={invalid} onChange={(event) => onChange({ ...contact, firstName: event.target.value })} /></label><label>Apellidos <small>(opcional)</small><input value={contact.lastName} autoComplete="family-name" onChange={(event) => onChange({ ...contact, lastName: event.target.value })} /></label><label>Correo electrónico<input type="email" value={contact.email} autoComplete="email" required aria-invalid={invalid} onChange={(event) => onChange({ ...contact, email: event.target.value })} /></label><label>WhatsApp <small>(opcional)</small><input type="tel" value={contact.phone} autoComplete="tel" onChange={(event) => onChange({ ...contact, phone: event.target.value })} /></label></div>{authenticatedEmail && contact.email.trim() && !sameEmail && <p className="checkout-account-warning" role="status">Esta reservación se realizará con un correo diferente al de tu cuenta y no se asociará automáticamente.</p>}{invalid && <p className="traveler-error" role="alert">Captura un nombre y un correo electrónico válido.</p>}</section>;
 }
 
 function LavellaReservationConfirmation({
@@ -1424,7 +1448,7 @@ function LavellaReservationConfirmation({
   reservation: ReservationSnapshot;
   whatsappHref: string;
   onContinue: () => void;
-  customerLinkStatus: string | null;
+  customerLinkStatus: ReservationCustomerLinkStatus | null;
 }) {
   const isPending = reservation.status === "pending";
   const depositPaid = [
@@ -1612,7 +1636,7 @@ function LavellaReservationConfirmation({
       <section className="lavella-confirmation-next">
         <div className="eyebrow">TU CUENTA</div>
         <h3>Administra tu reservación desde tu cuenta</h3>
-        {customerLinkStatus === "email_mismatch" ? <p role="alert">La reservación fue creada, pero el correo utilizado no coincide con la cuenta iniciada.</p> : <p>Desde tu cuenta podrás completar viajeros, reportar pagos, consultar documentos y aceptar el contrato.</p>}
+        {customerLinkStatus === "email_mismatch" ? <p role="alert">La reservación fue creada, pero el correo utilizado no coincide con la cuenta iniciada.</p> : customerLinkStatus === "link_failed" ? <p role="alert">Tu reservación fue creada, pero necesitamos volver a vincularla con tu cuenta.</p> : customerLinkStatus === "already_linked" ? <p role="status">Tu reservación ya está vinculada a tu cuenta.</p> : <p>Desde tu cuenta podrás completar viajeros, reportar pagos, consultar documentos y aceptar el contrato.</p>}
       </section>
 
       <div className="lavella-confirmation-actions">
@@ -1624,8 +1648,7 @@ function LavellaReservationConfirmation({
         >
           Enviar folio por WhatsApp
         </a>
-        <a href={`/cuenta/login?next=${encodeURIComponent(`/cuenta/${reservation.tenant}/reservaciones/${reservation.id}`)}&claim=1`}>Ya tengo cuenta</a>
-        <a href={`/cuenta/registro?next=${encodeURIComponent(`/cuenta/${reservation.tenant}/reservaciones/${reservation.id}`)}&claim=1`}>Crear mi cuenta</a>
+        {customerLinkStatus === "link_failed" ? <a href={`/cuenta/vincular?next=${encodeURIComponent(`/cuenta/${reservation.tenant}/reservaciones/${reservation.id}`)}`}>Vincular mi reservación</a> : customerLinkStatus === "linked" || customerLinkStatus === "already_linked" ? <a href={`/cuenta/${reservation.tenant}/reservaciones/${reservation.id}`}>Ver mi reservación</a> : <><a href={`/cuenta/login?next=${encodeURIComponent(`/cuenta/${reservation.tenant}/reservaciones/${reservation.id}`)}&claim=1`}>Ya tengo cuenta</a><a href={`/cuenta/registro?next=${encodeURIComponent(`/cuenta/${reservation.tenant}/reservaciones/${reservation.id}`)}&claim=1`}>Crear mi cuenta</a></>}
         <button type="button" onClick={onContinue}>
           Volver a viajes
         </button>
@@ -1638,12 +1661,14 @@ function Checkout({
   lines,
   agency,
   theme,
+  customerEmail,
   onDone,
   onUpdate,
 }: {
   lines: CartLine[];
   agency: Agency;
   theme: TravelTheme;
+  customerEmail: string | null;
   onDone: () => void;
   onUpdate: (line: CartLine) => void;
 }) {
@@ -1675,8 +1700,8 @@ function Checkout({
   );
   const [step, setStep] = useState(1);
   const [reservation, setReservation] = useState<ReservationSnapshot>();
-  const [customerLinkStatus, setCustomerLinkStatus] = useState<string | null>(null);
-  const [primaryContact, setPrimaryContact] = useState<BookingPrimaryContact>({ firstName: "", lastName: "", email: "", phone: "" });
+  const [customerLinkStatus, setCustomerLinkStatus] = useState<ReservationCustomerLinkStatus | null>(null);
+  const [primaryContact, setPrimaryContact] = useState<BookingPrimaryContact>({ firstName: "", lastName: "", email: customerEmail ?? "", phone: "" });
   const finalizingRef = useRef(false);
   const reservationSubmissionKeyRef = useRef<string | null>(null);
   const [isSubmittingReservation, setIsSubmittingReservation] = useState(false);
@@ -1894,6 +1919,12 @@ function Checkout({
     "Políticas",
     "Confirmación",
   ];
+  useEffect(() => {
+    if (!customerEmail) return;
+    setPrimaryContact((current) =>
+      current.email ? current : { ...current, email: customerEmail },
+    );
+  }, [customerEmail]);
   if (!lines.length && !reservation)
     return (
       <Cart
@@ -2132,7 +2163,7 @@ function Checkout({
             throw new Error(message);
           }
           setCustomerLinkStatus(apiBody.customerLinkStatus ?? null);
-          if (apiBody.customerLinkStatus === "linked") {
+          if (apiBody.customerLinkStatus === "linked" || apiBody.customerLinkStatus === "already_linked") {
             window.location.assign(`/cuenta/${encodeURIComponent(agency.slug)}/reservaciones/${encodeURIComponent(apiBody.reservationId)}`);
             return;
           }
@@ -2320,7 +2351,7 @@ function Checkout({
             </div>
           </>
         )}
-        {step === 2 && <BookingContactStep contact={primaryContact} error={error} onChange={setPrimaryContact} />}{" "}
+        {step === 2 && <BookingContactStep contact={primaryContact} error={error} onChange={setPrimaryContact} authenticatedEmail={customerEmail} accountReturnTo={`/checkout?${new URLSearchParams({ tenant: agency.slug, theme }).toString()}`} />}{" "}
         {step === 3 && (
           <>
             <BoardingStep
@@ -3290,11 +3321,13 @@ export function TravelApp({
   initialTenant,
   initialTheme,
   initialPath = "/",
+  customerEmail = null,
 }: {
   hostname: string;
   initialTenant?: string;
   initialTheme?: string;
   initialPath?: string;
+  customerEmail?: string | null;
 }) {
   const [route, setRoute] = useState(initialPath);
   const [version, setVersion] = useState(0);
@@ -3437,6 +3470,7 @@ export function TravelApp({
         lines={cart}
         agency={agency}
         theme={theme}
+        customerEmail={customerEmail}
         onDone={() => {
           setCart([]);
           localStorage.removeItem("fu-travel-booking-draft");
@@ -3507,7 +3541,7 @@ export function TravelApp({
       }
     >
       <DemoBar tenant={agency} theme={theme} admin={admin} onChange={change} />
-      {!admin && <Header agency={agency} cartCount={cart.length} />} {content}
+      {!admin && <Header agency={agency} cartCount={cart.length} theme={theme} customerEmail={customerEmail} />} {content}
       {!admin && <Footer agency={agency} />}
     </div>
   );

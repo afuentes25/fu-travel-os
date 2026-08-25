@@ -70,6 +70,23 @@ type ReservationRouteDependencies = Readonly<{
   claim?: (input: Readonly<{ requestedAgencySlug: string; reservationId: string }>) => Promise<Readonly<{ status: string }>>;
 }>;
 
+export type ReservationCustomerLinkStatus =
+  | "linked"
+  | "already_linked"
+  | "email_mismatch"
+  | "not_authenticated"
+  | "link_failed";
+
+function toCustomerLinkStatus(status: string): ReservationCustomerLinkStatus {
+  if (status === "claimed") return "linked";
+  if (status === "existing") return "already_linked";
+  if (status === "email_mismatch") return "email_mismatch";
+  if (status === "unauthenticated") return "not_authenticated";
+  // Repository and Auth failures must remain safe, but must never be
+  // represented as a successful link in the confirmation UI.
+  return "link_failed";
+}
+
 const noStoreHeaders = { "Cache-Control": "no-store" };
 
 function response(body: unknown, status: number) {
@@ -131,10 +148,17 @@ export function createReservationPostHandler(
         ...parsed.data,
         idempotencyKey,
       });
-      let customerLinkStatus = "not_authenticated";
+      let customerLinkStatus: ReservationCustomerLinkStatus = "not_authenticated";
       if (parsed.data.primaryContact && dependencies.claim) {
-        const claim = await dependencies.claim({ requestedAgencySlug: parsed.data.tenantSlug, reservationId: result.reservation.id });
-        customerLinkStatus = claim.status === "claimed" || claim.status === "existing" ? "linked" : claim.status;
+        try {
+          const claim = await dependencies.claim({ requestedAgencySlug: parsed.data.tenantSlug, reservationId: result.reservation.id });
+          customerLinkStatus = toCustomerLinkStatus(claim.status);
+        } catch {
+          // The immutable booking has already been created. Preserve that
+          // success and make recovery visible instead of converting it into a
+          // false reservation failure or a silent unlinked confirmation.
+          customerLinkStatus = "link_failed";
+        }
       }
       return response(
         {

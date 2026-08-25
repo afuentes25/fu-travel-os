@@ -33,6 +33,50 @@
   color: #fff;
 }
 
+.lavella-commerce > .site-header .customer-account-link,
+.lavella-commerce > .site-header .customer-account-menu > summary {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--lavella-line);
+  background: #fff;
+  color: var(--lavella-ink);
+  padding: 0 12px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .08em;
+  text-decoration: none;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.lavella-commerce > .site-header .customer-account-menu { position: relative; }
+.lavella-commerce > .site-header .customer-account-menu > summary { list-style: none; }
+.lavella-commerce > .site-header .customer-account-menu > summary::-webkit-details-marker { display: none; }
+.lavella-commerce > .site-header .customer-account-menu > div {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 30;
+  width: 190px;
+  display: grid;
+  padding: 7px;
+  border: 1px solid var(--lavella-line);
+  background: #fff;
+  box-shadow: 0 16px 34px rgba(20, 28, 37, .16);
+}
+.lavella-commerce > .site-header .customer-account-menu a {
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  color: var(--lavella-ink);
+  padding: 0 10px;
+  font-size: 13px;
+  text-decoration: none;
+}
+.lavella-commerce > .site-header .customer-account-menu a:hover,
+.lavella-commerce > .site-header .customer-account-menu a:focus-visible { color: var(--lavella-orange); background: #fff8f1; }
+
 .lavella-commerce .lavella-cart,
 .lavella-commerce .lavella-checkout,
 .lavella-commerce .lavella-cart button,
@@ -145,6 +189,27 @@
   background: #f8f8f8;
   color: var(--lavella-ink);
 }
+
+.lavella-commerce .lavella-checkout .checkout-account-gate,
+.lavella-commerce .lavella-checkout .checkout-account-state {
+  display: grid;
+  gap: 10px;
+  margin: 0 0 24px;
+  padding: 20px;
+  border: 1px solid var(--lavella-line);
+  background: #f8f8f8;
+}
+.lavella-commerce .lavella-checkout .checkout-account-gate h3 { margin: 0; font-size: 23px; }
+.lavella-commerce .lavella-checkout .checkout-account-gate p,
+.lavella-commerce .lavella-checkout .checkout-account-state p { max-width: 660px; margin: 0; color: var(--lavella-muted); line-height: 1.55; }
+.lavella-commerce .lavella-checkout .checkout-account-gate > div { display: flex; flex-wrap: wrap; gap: 10px; }
+.lavella-commerce .lavella-checkout .checkout-account-gate a { min-height: 44px; display: inline-flex; align-items: center; padding: 0 15px; border: 1px solid var(--lavella-orange); color: var(--lavella-orange); font-size: 13px; font-weight: 800; text-decoration: none; }
+.lavella-commerce .lavella-checkout .checkout-account-gate a:first-child { background: var(--lavella-orange); color: #fff; }
+.lavella-commerce .lavella-checkout .checkout-account-gate small { color: var(--lavella-muted); }
+.lavella-commerce .lavella-checkout .checkout-account-state { border-left: 3px solid #397053; background: #f4f8f4; }
+.lavella-commerce .lavella-checkout .checkout-account-state strong { color: #286343; }
+.lavella-commerce .lavella-checkout .checkout-account-state span { color: var(--lavella-ink); font-weight: 700; overflow-wrap: anywhere; }
+.lavella-commerce .lavella-checkout .checkout-account-warning { margin: 14px 0 0; padding: 11px 13px; border-left: 3px solid var(--lavella-orange); background: #fff8f1; color: #765023; line-height: 1.5; }
 
 .lavella-commerce .lavella-checkout .checkout-boarding > h2 {
   margin: 0 0 7px;
@@ -512,6 +577,11 @@
     margin-inline: -6px;
     padding: 20px 14px;
   }
+
+  .lavella-commerce .lavella-checkout .checkout-account-gate,
+  .lavella-commerce .lavella-checkout .checkout-account-state { margin-inline: -6px; padding: 18px 14px; }
+  .lavella-commerce .lavella-checkout .checkout-account-gate > div { display: grid; }
+  .lavella-commerce .lavella-checkout .checkout-account-gate a { justify-content: center; }
 
   .lavella-commerce .lavella-checkout .boarding-option {
     min-height: 88px;

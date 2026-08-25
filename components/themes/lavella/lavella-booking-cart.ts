@@ -8,6 +8,7 @@ import {
   validateFxGroupConsistency,
 } from "@/lib/pricing";
 import type { ReservationSnapshot } from "@/lib/reservations";
+import type { ReservationCustomerLinkStatus } from "@/app/api/reservations/route";
 import { getTripDisplayStartingPrice } from "@/lib/trip-sections";
 import type {
   Agency,
@@ -43,7 +44,7 @@ export type LavellaReservationApiSuccess = Readonly<{
   reservationCode: string;
   status: ReservationSnapshot["status"];
   createdAt: string;
-  customerLinkStatus?: string;
+  customerLinkStatus?: ReservationCustomerLinkStatus;
   confirmation: Readonly<{
     tripCode: string;
     tripName: string;

@@ -3,12 +3,13 @@ import { createServerClient } from "@supabase/ssr";
 
 import { claimReservationForAuthenticatedCustomer } from "@/lib/customers/reservation-claim";
 import { getSupabasePublicEnvironment } from "@/lib/supabase/auth-env";
-import { parseCustomerReservationClaimNext, safeCustomerNext } from "../../customer-utils";
+import { parseCustomerReservationClaimNext, safeCustomerAuthReturnTo, safeCustomerNext } from "../../customer-utils";
 
 export async function GET(request: NextRequest) {
   const next = safeCustomerNext(request.nextUrl.searchParams.get("next")) ?? "/cuenta";
+  const returnTo = safeCustomerAuthReturnTo(request.nextUrl.searchParams.get("returnTo"));
   const claim = request.nextUrl.searchParams.get("claim") === "1" ? parseCustomerReservationClaimNext(next) : null;
-  const response = NextResponse.redirect(new URL(next, request.url));
+  const response = NextResponse.redirect(new URL(returnTo ?? next, request.url));
   const { url, publishableKey } = getSupabasePublicEnvironment();
   const auth = createServerClient(url, publishableKey, { cookies: { getAll: () => request.cookies.getAll(), setAll: (items) => items.forEach(({ name, value, options }) => response.cookies.set(name, value, options)) } });
   const code = request.nextUrl.searchParams.get("code");

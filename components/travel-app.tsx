@@ -88,6 +88,7 @@ type HeaderProps = {
   agency: Agency;
   cartCount: number;
   onNavigate: (path: string) => void;
+  customerEmail?: string | null;
 };
 type HomeProps = {
   agency: Agency;
@@ -2312,11 +2313,13 @@ export function TravelApp({
   initialTenant,
   initialTheme,
   initialPath = "/",
+  customerEmail = null,
 }: {
   hostname: string;
   initialTenant?: string;
   initialTheme?: string;
   initialPath?: string;
+  customerEmail?: string | null;
 }) {
   const [route, setRoute] = useState(initialPath);
   const [version, setVersion] = useState(0);
@@ -2381,6 +2384,7 @@ export function TravelApp({
           initialTenant={agency.slug}
           initialTheme={theme}
           initialPath={route}
+          customerEmail={customerEmail}
         />
         {theme === "explorer" &&
           !route.startsWith("/admin") &&
@@ -2436,6 +2440,7 @@ export function TravelApp({
         agency={agency}
         cartCount={cartCount}
         onNavigate={navigate}
+        customerEmail={customerEmail}
       />
       {content}
       <components.Footer agency={agency} onNavigate={navigate} />

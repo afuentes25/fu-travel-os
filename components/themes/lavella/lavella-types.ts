@@ -6,6 +6,7 @@ export type LavellaHeaderProps = {
   agency: Agency;
   cartCount: number;
   onNavigate: LavellaNavigate;
+  customerEmail?: string | null;
 };
 export type LavellaHomeProps = {
   agency: Agency;

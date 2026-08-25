@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, type RefObject } from "react";
+import Link from "next/link";
 import { FaCartShopping, FaInstagram, FaWhatsapp } from "react-icons/fa6";
 import styles from "./lavella-layout.module.css";
 import type { LavellaHeaderProps } from "./lavella-types";
@@ -22,6 +23,7 @@ export function LavellaMobileMenu({
   open,
   onClose,
   triggerRef,
+  customerEmail,
 }: LavellaHeaderProps & {
   open: boolean;
   onClose: () => void;
@@ -89,6 +91,9 @@ export function LavellaMobileMenu({
           ))}
         </nav>
         <div className={styles.mobileContact}>
+          <div className={styles.mobileAccount}>
+            {customerEmail ? <Link href="/cuenta">Mi cuenta</Link> : <><Link href="/cuenta/login">Iniciar sesión</Link><Link href="/cuenta/registro">Crear una cuenta</Link></>}
+          </div>
           <button onClick={() => go("/carrito")}>
             <FaCartShopping /> Carrito <b>{cartCount}</b>
           </button>

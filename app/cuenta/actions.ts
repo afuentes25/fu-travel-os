@@ -7,7 +7,7 @@ import { claimReservationForAuthenticatedCustomer } from "@/lib/customers/reserv
 import { createSupabaseAuthServerClient } from "@/lib/supabase/auth-server";
 
 import { runCustomerLoginFlow } from "./customer-login-core";
-import { parseCustomerReservationClaimNext, safeCustomerNext, validateCustomerLoginCredentials } from "./customer-utils";
+import { parseCustomerReservationClaimNext, safeCustomerAuthReturnTo, safeCustomerNext, validateCustomerLoginCredentials } from "./customer-utils";
 import type { CustomerLoginState } from "./login/login-state";
 
 function loginError(): CustomerLoginState {
@@ -23,6 +23,7 @@ export async function loginCustomerAction(
     password: formData.get("password"),
   });
   const next = safeCustomerNext(formData.get("next"));
+  const returnTo = safeCustomerAuthReturnTo(formData.get("returnTo"));
   const claim = formData.get("claim") === "1" ? parseCustomerReservationClaimNext(next) : null;
   if (!credentials) return loginError();
 
@@ -47,6 +48,14 @@ export async function loginCustomerAction(
     if (claimed.status === "email_mismatch") return { error: "El correo de esta cuenta no coincide con el utilizado en la reservación." };
     if (claimed.status === "reservation_already_claimed") return { error: "Esta reservación ya está vinculada a otra cuenta." };
     return { error: "No fue posible vincular la reservación a esta cuenta." };
+  }
+
+  // A guest who pauses checkout may not have a customer account yet. A
+  // successful Auth session is enough to return safely to the public cart;
+  // the eventual reservation is still linked only after its booking email
+  // matches this verified identity.
+  if (returnTo && result.status !== "auth_failed" && result.status !== "unexpected_error") {
+    redirect(returnTo);
   }
 
   if (result.status === "authorized") {

@@ -226,6 +226,7 @@ import {
   validateAdminLoginCredentials,
 } from "../app/admin/admin-utils";
 import {
+  safeCustomerAuthReturnTo,
   safeCustomerNext,
   parseCustomerReservationClaimNext,
   validateCustomerLoginCredentials,
@@ -8055,4 +8056,70 @@ test("POST público sólo intenta auto-link con contacto persistido y reporta un
   assert.deepEqual(contact, { firstName: "Juan", lastName: "Pérez", email: "Juan@Example.Test", phone: null });
   assert.deepEqual(claimInput, { requestedAgencySlug: "furiver", reservationId: reservationApiSuccess().reservation.id });
   assert.equal(body.customerLinkStatus, "linked");
+});
+
+test("la continuidad checkout → Auth sólo admite retornos internos sin PII y no autoriza por correo anónimo", async () => {
+  assert.equal(safeCustomerAuthReturnTo("/checkout?tenant=furiver&theme=lavella"), "/checkout?tenant=furiver&theme=lavella");
+  assert.equal(safeCustomerAuthReturnTo("/carrito?tenant=furiver&theme=lavella"), "/carrito?tenant=furiver&theme=lavella");
+  assert.equal(safeCustomerAuthReturnTo("https://malicioso.example/checkout"), null);
+  assert.equal(safeCustomerAuthReturnTo("//malicioso.example/checkout"), null);
+  assert.equal(safeCustomerAuthReturnTo("/checkout?email=cliente@example.test"), null);
+  assert.equal(safeCustomerAuthReturnTo("/admin/furiver/reservaciones"), null);
+
+  let claims = 0;
+  const handler = createReservationPostHandler({
+    execute: async () => reservationApiSuccess(),
+    claim: async () => { claims += 1; return { status: "unauthenticated" }; },
+  });
+  const response = await handler(reservationApiRequest({ ...publicReservationBody(), primaryContact: { firstName: "Invitado", lastName: null, email: "cliente@example.test", phone: null } }));
+  const body = await response.json() as { customerLinkStatus?: string };
+  assert.equal(claims, 1);
+  assert.equal(body.customerLinkStatus, "not_authenticated");
+});
+
+test("el enlace de cuenta distingue éxito previo, mismatch y fallo sin silenciar una reservación creada", async () => {
+  const statuses = new Map<string, string>([
+    ["existing", "already_linked"],
+    ["email_mismatch", "email_mismatch"],
+    ["claim_error", "link_failed"],
+  ]);
+  for (const [claimStatus, expected] of statuses) {
+    const handler = createReservationPostHandler({
+      execute: async () => reservationApiSuccess(),
+      claim: async () => ({ status: claimStatus }),
+    });
+    const response = await handler(reservationApiRequest({ ...publicReservationBody(), primaryContact: { firstName: "Juan", lastName: null, email: "cliente@example.test", phone: null } }));
+    const body = await response.json() as { reservationId?: string; customerLinkStatus?: string };
+    assert.equal(body.reservationId, reservationApiSuccess().reservation.id);
+    assert.equal(body.customerLinkStatus, expected);
+  }
+  const unexpectedFailure = createReservationPostHandler({
+    execute: async () => reservationApiSuccess(),
+    claim: async () => { throw new Error("service unavailable"); },
+  });
+  const response = await unexpectedFailure(reservationApiRequest({ ...publicReservationBody(), primaryContact: { firstName: "Juan", lastName: null, email: "cliente@example.test", phone: null } }));
+  const body = await response.json() as { reservationId?: string; customerLinkStatus?: string };
+  assert.equal(response.status, 201);
+  assert.equal(body.reservationId, reservationApiSuccess().reservation.id);
+  assert.equal(body.customerLinkStatus, "link_failed");
+});
+
+test("el journey Lavella ofrece cuenta temprana, conserva retorno y muestra recuperación explícita del enlace", () => {
+  const storefrontHeader = readFileSync("components/themes/lavella/lavella-header.tsx", "utf8");
+  const checkout = readFileSync("components/legacy-travel-app.tsx", "utf8");
+  const login = readFileSync("app/cuenta/login/page.tsx", "utf8");
+  const registration = readFileSync("app/cuenta/registro/registration-actions.ts", "utf8");
+  const callback = readFileSync("app/cuenta/auth/callback/route.ts", "utf8");
+  const confirmationStyles = readFileSync("app/themes/lavella-commerce.css", "utf8");
+  assert.match(storefrontHeader, /Mi cuenta/);
+  assert.match(storefrontHeader, /Crear una cuenta/);
+  assert.match(checkout, /¿Ya tienes cuenta\?/);
+  assert.match(checkout, /Esta reservación se asociará a tu cuenta/);
+  assert.match(checkout, /link_failed/);
+  assert.match(checkout, /Vincular mi reservación/);
+  assert.match(login, /safeCustomerAuthReturnTo/);
+  assert.match(registration, /returnTo/);
+  assert.match(callback, /safeCustomerAuthReturnTo/);
+  assert.match(confirmationStyles, /checkout-account-gate/);
+  assert.doesNotMatch(checkout, /customerAccountId|auth user ID/);
 });
