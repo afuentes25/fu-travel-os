@@ -2,7 +2,8 @@
 
 import { useActionState, useEffect, useState } from "react";
 
-import { initialCustomerProfileFormState, updateCustomerProfileAction } from "./customer-profile-actions";
+import { updateCustomerProfileAction } from "./customer-profile-actions";
+import { initialCustomerProfileFormState } from "./customer-profile-state";
 import styles from "./cuenta.module.css";
 
 export function CustomerProfileForm({ agencySlug, email, firstName, lastName, phone }: Readonly<{

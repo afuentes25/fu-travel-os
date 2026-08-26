@@ -1,9 +1,7 @@
 "use server";
 
 import { updateAuthenticatedCustomerProfile } from "@/lib/customers/customer-profile";
-
-export type CustomerProfileFormState = Readonly<{ success?: string; error?: string }>;
-export const initialCustomerProfileFormState: CustomerProfileFormState = {};
+import type { CustomerProfileFormState } from "./customer-profile-state";
 
 export async function updateCustomerProfileAction(
   _previous: CustomerProfileFormState,
