@@ -75,6 +75,10 @@ import {
 } from "../lib/customers/customer-access-core";
 import { normalizeCustomerEmail } from "../lib/customers/customer-email";
 import {
+  createCustomerProfileService,
+  normalizeCustomerProfileInput,
+} from "../lib/customers/customer-profile-core";
+import {
   DEMO_RESERVATIONS_RESET_CONFIRMATION,
   getSupabaseProjectRef,
   isStoragePathOwnedByReservation,
@@ -8244,6 +8248,74 @@ test("el chrome del tema acompaña checkout y cuenta sin aplicar Lavella sobre E
   assert.match(login, /CustomerThemeFrame/);
   assert.match(registration, /CustomerThemeFrame/);
   assert.doesNotMatch(customerChrome, /localStorage|document\.cookie/);
+});
+
+test("checkout autenticado usa el UUID real, perfil tenant-safe y CTA visible sin alterar snapshots históricos", async () => {
+  const accountProfile = { firstName: "Ana", lastName: "López", phone: "55 0101 0101" };
+  const updated: unknown[] = [];
+  const profileService = createCustomerProfileService({
+    resolveAccess: async ({ requestedAgencySlug }) => requestedAgencySlug === "furiver"
+      ? {
+          status: "authorized",
+          identity: { userId: "customer-user", email: "ana@example.test" },
+          account: { customerAccountId: "customer-account", agencyId: "agency-furiver", agencySlug: "furiver", agencyName: "Furiver", ...accountProfile },
+          accounts: [],
+        }
+      : { status: "forbidden" },
+    repository: {
+      async updateOwnProfile(input) {
+        updated.push(input);
+        return input.customerAccountId === "customer-account" && input.agencyId === "agency-furiver" && input.userId === "customer-user";
+      },
+    },
+  });
+  assert.deepEqual(normalizeCustomerProfileInput({ firstName: " Ana ", lastName: " López ", phone: "55 0101 0101" }), accountProfile);
+  assert.equal((await profileService.update({ requestedAgencySlug: "furiver", ...accountProfile })).status, "updated");
+  assert.equal((await profileService.update({ requestedAgencySlug: "crisenix", ...accountProfile })).status, "forbidden");
+  assert.equal(updated.length, 1);
+
+  const persistedReservationId = "46a10852-8620-4a59-9187-a21b07ce3f05";
+  let primaryCreated = false;
+  const reservationHandler = createReservationPostHandler({
+    execute: async () => ({ reservation: { ...reservationApiSuccess().reservation, id: persistedReservationId }, created: true }),
+    claim: async (input) => {
+      assert.equal(input.reservationId, persistedReservationId);
+      primaryCreated = true;
+      return { status: "claimed" };
+    },
+  });
+  const response = await reservationHandler(reservationApiRequest({
+    ...publicReservationBody(),
+    primaryContact: { firstName: accountProfile.firstName, lastName: accountProfile.lastName, email: "ana@example.test", phone: accountProfile.phone },
+  }));
+  const responseBody = await response.json() as { reservationId: string; customerLinkStatus: string };
+  assert.equal(responseBody.reservationId, persistedReservationId);
+  assert.equal(responseBody.customerLinkStatus, "linked");
+  assert.equal(primaryCreated, true);
+
+  const migration = readFileSync("supabase/migrations/20260801260000_customer_account_profile.sql", "utf8");
+  const profileRepository = readFileSync("lib/customers/customer-profile-repository.ts", "utf8");
+  const checkout = readFileSync("components/legacy-travel-app.tsx", "utf8");
+  const snapshotRepository = readFileSync("lib/reservations/supabase-repository.ts", "utf8");
+  const dashboard = readFileSync("app/cuenta/page.tsx", "utf8");
+  const listingRepository = readFileSync("lib/customers/customer-reservations-repository.ts", "utf8");
+  const commerce = readFileSync("app/themes/lavella-commerce.css", "utf8");
+  assert.match(migration, /add column first_name text null/);
+  assert.match(migration, /add column last_name text null/);
+  assert.match(migration, /add column phone text null/);
+  assert.match(profileRepository, /\.eq\("id", customerAccountId\)[\s\S]*\.eq\("agency_id", agencyId\)[\s\S]*\.eq\("user_id", userId\)/);
+  assert.match(checkout, /current\.firstName \|\| customerProfile\?\.firstName/);
+  assert.match(checkout, /current\.email \|\| customerProfile\?\.email/);
+  assert.match(checkout, /Ir a mi reserva/);
+  assert.doesNotMatch(checkout, /Vincular mi reservación/);
+  assert.match(snapshotRepository, /snapshot: \{ \.\.\.row\.snapshot, id: row\.id \}/);
+  assert.match(dashboard, /CustomerProfileForm/);
+  assert.match(listingRepository, /reservation_customer_access/);
+  assert.match(commerce, /theme-v2-explorer \.reservation-account-cta/);
+  assert.match(commerce, /lavella-commerce \.reservation-account-cta/);
+  const historical = finalizeReservation({ storage: reservationStorage(), input: { ...reservationInput("profile-history"), primaryContact: { firstName: "Antes", lastName: "Histórico", email: "ana@example.test", phone: "55 0000 0000" } }, now: () => TEST_NOW, suffix: () => "PROFILE" }).reservation;
+  assert.equal(historical.primaryContact?.firstName, "Antes");
+  assert.equal(historical.primaryContact?.phone, "55 0000 0000");
 });
 
 test("el reset de demo es dry-run por defecto, exige confirmación exacta y atribuye Storage por prefijo estricto", () => {

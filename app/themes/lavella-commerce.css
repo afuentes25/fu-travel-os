@@ -35,9 +35,12 @@
 
 .lavella-commerce > .site-header .customer-account-link,
 .lavella-commerce > .site-header .customer-account-menu > summary {
+  height: 44px;
   min-height: 44px;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
   border: 1px solid var(--lavella-line);
   background: #fff;
   color: var(--lavella-ink);
@@ -45,6 +48,8 @@
   font-size: 11px;
   font-weight: 800;
   letter-spacing: .08em;
+  line-height: 1;
+  white-space: nowrap;
   text-decoration: none;
   text-transform: uppercase;
   cursor: pointer;
@@ -153,6 +158,23 @@
   color: #fff;
 }
 
+.lavella-commerce .reservation-account-cta,
+.theme-v2-explorer .reservation-account-cta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 50px;
+  padding: 0 22px;
+  text-decoration: none;
+  font-weight: 800;
+}
+
+.theme-v2-explorer .reservation-account-cta {
+  border: 0;
+  background: var(--accent);
+  color: var(--ink);
+}
+
 .lavella-commerce input,
 .lavella-commerce select,
 .lavella-commerce textarea {
@@ -245,7 +267,7 @@
   display: grid;
   grid-template-columns: 24px minmax(0, 1fr);
   gap: 13px;
-  align-items: start;
+  align-items: center;
   border: 1px solid var(--lavella-line);
   background: #fff;
   color: var(--lavella-ink);
@@ -267,8 +289,71 @@
   width: 22px;
   height: 22px;
   min-height: 22px;
-  margin: 2px 0 0;
+  margin: 0;
+  align-self: center;
   accent-color: var(--lavella-orange);
+}
+
+/* Keep checkout controls optically aligned without changing their behavior. */
+.lavella-commerce .lavella-checkout .stepper li {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  line-height: 1;
+}
+
+.lavella-commerce .lavella-checkout .stepper span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 29px;
+  line-height: 1;
+}
+
+.lavella-commerce .lavella-checkout .stepper small {
+  line-height: 1.25;
+  text-align: center;
+}
+
+.lavella-commerce .lavella-checkout .choice-grid label {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  column-gap: 10px;
+  align-items: center;
+}
+
+.lavella-commerce .lavella-checkout .choice-grid label > input {
+  grid-row: 1 / span 2;
+  align-self: center;
+  margin: 0;
+}
+
+.lavella-commerce .lavella-checkout .choice-grid label > b,
+.lavella-commerce .lavella-checkout .choice-grid label > small {
+  display: block;
+  margin: 0;
+  line-height: 1.35;
+}
+
+.lavella-commerce .lavella-checkout .choice-grid label > small + small {
+  margin-top: 4px;
+}
+
+.lavella-commerce .lavella-checkout .traveler-mode label {
+  align-items: center;
+}
+
+.lavella-commerce .lavella-checkout .traveler-mode input {
+  align-self: center;
+  margin: 0;
+}
+
+.lavella-commerce .lavella-checkout .checkout-actions > button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  line-height: 1;
 }
 
 .lavella-commerce .lavella-checkout .boarding-option span,

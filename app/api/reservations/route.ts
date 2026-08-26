@@ -87,6 +87,25 @@ function toCustomerLinkStatus(status: string): ReservationCustomerLinkStatus {
   return "link_failed";
 }
 
+async function linkCustomerReservation(
+  claim: NonNullable<ReservationRouteDependencies["claim"]>,
+  input: Readonly<{ requestedAgencySlug: string; reservationId: string }>,
+): Promise<ReservationCustomerLinkStatus> {
+  try {
+    const firstAttempt = toCustomerLinkStatus((await claim(input)).status);
+    if (firstAttempt !== "link_failed") return firstAttempt;
+  } catch {
+    // The reservation is already durable. Retry the idempotent server-side
+    // association once before presenting a degraded confirmation state.
+  }
+
+  try {
+    return toCustomerLinkStatus((await claim(input)).status);
+  } catch {
+    return "link_failed";
+  }
+}
+
 const noStoreHeaders = { "Cache-Control": "no-store" };
 
 function response(body: unknown, status: number) {
@@ -150,15 +169,10 @@ export function createReservationPostHandler(
       });
       let customerLinkStatus: ReservationCustomerLinkStatus = "not_authenticated";
       if (parsed.data.primaryContact && dependencies.claim) {
-        try {
-          const claim = await dependencies.claim({ requestedAgencySlug: parsed.data.tenantSlug, reservationId: result.reservation.id });
-          customerLinkStatus = toCustomerLinkStatus(claim.status);
-        } catch {
-          // The immutable booking has already been created. Preserve that
-          // success and make recovery visible instead of converting it into a
-          // false reservation failure or a silent unlinked confirmation.
-          customerLinkStatus = "link_failed";
-        }
+        customerLinkStatus = await linkCustomerReservation(dependencies.claim, {
+          requestedAgencySlug: parsed.data.tenantSlug,
+          reservationId: result.reservation.id,
+        });
       }
       return response(
         {

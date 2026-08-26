@@ -1,11 +1,23 @@
 import { normalizeCustomerEmail } from "./customer-email";
 
 export type ReservationClaimIdentity = Readonly<{ userId: string; email: string | null }>;
-export type ClaimReservationRow = Readonly<{ agencyId: string; bookingEmail: string | null }>;
+export type ClaimReservationRow = Readonly<{
+  agencyId: string;
+  bookingEmail: string | null;
+  bookingProfile?: Readonly<{
+    firstName: string | null;
+    lastName: string | null;
+    phone: string | null;
+  }>;
+}>;
 
 export interface ReservationClaimRepository {
   findReservation(input: Readonly<{ requestedAgencySlug: string; reservationId: string }>): Promise<ClaimReservationRow | null>;
-  findOrCreateActiveAccount(input: Readonly<{ agencyId: string; userId: string }>): Promise<string | null>;
+  findOrCreateActiveAccount(input: Readonly<{
+    agencyId: string;
+    userId: string;
+    profile?: NonNullable<ClaimReservationRow["bookingProfile"]>;
+  }>): Promise<string | null>;
   findPrimaryAccountId(input: Readonly<{ agencyId: string; reservationId: string }>): Promise<string | null>;
   upsertPrimaryAccess(input: Readonly<{ agencyId: string; reservationId: string; customerAccountId: string }>): Promise<void>;
 }
@@ -38,7 +50,11 @@ export function createReservationClaimService(dependencies: Readonly<{
         const bookingEmail = normalizeCustomerEmail(reservation.bookingEmail);
         const authenticatedEmail = normalizeCustomerEmail(identity.email);
         if (!bookingEmail || !authenticatedEmail || bookingEmail !== authenticatedEmail) return { status: "email_mismatch" };
-        const accountId = await dependencies.repository.findOrCreateActiveAccount({ agencyId: reservation.agencyId, userId: identity.userId });
+        const accountId = await dependencies.repository.findOrCreateActiveAccount({
+          agencyId: reservation.agencyId,
+          userId: identity.userId,
+          profile: reservation.bookingProfile,
+        });
         if (!accountId) return { status: "account_unavailable" };
         const primaryAccountId = await dependencies.repository.findPrimaryAccountId({ agencyId: reservation.agencyId, reservationId: input.reservationId });
         if (primaryAccountId === accountId) return { status: "existing" };

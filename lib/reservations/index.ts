@@ -158,9 +158,15 @@ function sameReservationSnapshot(
   left: PersistedReservationSnapshot,
   right: PersistedReservationSnapshot,
 ) {
+  // The JSON snapshot keeps its legacy human code in `id`, whereas database
+  // reads project the persisted UUID into that field for server-side routing.
+  // It is not booking content and must not turn an idempotent retry into a
+  // conflict merely because the source changed from JSON to the DB row.
+  const { id: _leftSnapshotId, ...leftSnapshot } = left.snapshot;
+  const { id: _rightSnapshotId, ...rightSnapshot } = right.snapshot;
   return (
-    JSON.stringify(canonicalReservationValue(left)) ===
-    JSON.stringify(canonicalReservationValue(right))
+    JSON.stringify(canonicalReservationValue({ ...left, snapshot: leftSnapshot })) ===
+    JSON.stringify(canonicalReservationValue({ ...right, snapshot: rightSnapshot }))
   );
 }
 

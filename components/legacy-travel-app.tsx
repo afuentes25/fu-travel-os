@@ -56,6 +56,7 @@ import {
   type LavellaReservationApiSuccess,
 } from "@/components/themes/lavella/lavella-booking-cart";
 import { LavellaFooter, LavellaHeader } from "@/components/themes/lavella/lavella-theme";
+import type { PublicCustomerCheckoutProfile } from "@/lib/customers/public-customer-identity";
 import type {
   Agency,
   CartLine,
@@ -1646,7 +1647,7 @@ function LavellaReservationConfirmation({
         >
           Enviar folio por WhatsApp
         </a>
-        {customerLinkStatus === "link_failed" ? <Link href="/cuenta">Ir a mi cuenta</Link> : customerLinkStatus === "linked" || customerLinkStatus === "already_linked" ? <Link href={`/cuenta/${reservation.tenant}/reservaciones/${reservation.id}`}>Ver mi reservación</Link> : <><button type="button" onClick={() => onOpenAuth("login")}>Ya tengo cuenta</button><button type="button" onClick={() => onOpenAuth("register")}>Crear mi cuenta</button></>}
+        {customerLinkStatus === "link_failed" ? <Link className="primary reservation-account-cta" href="/cuenta">Ir a mi cuenta</Link> : customerLinkStatus === "linked" || customerLinkStatus === "already_linked" ? <Link className="primary reservation-account-cta" href={`/cuenta/${reservation.tenant}/reservaciones/${reservation.id}`}>Ir a mi reserva</Link> : <><button type="button" onClick={() => onOpenAuth("login")}>Ya tengo cuenta</button><button type="button" onClick={() => onOpenAuth("register")}>Crear mi cuenta</button></>}
         <button type="button" onClick={onContinue}>
           Volver a viajes
         </button>
@@ -1660,6 +1661,7 @@ function Checkout({
   agency,
   theme,
   customerEmail,
+  customerProfile,
   onDone,
   onUpdate,
 }: {
@@ -1667,6 +1669,7 @@ function Checkout({
   agency: Agency;
   theme: TravelTheme;
   customerEmail: string | null;
+  customerProfile: PublicCustomerCheckoutProfile | null;
   onDone: () => void;
   onUpdate: (line: CartLine) => void;
 }) {
@@ -1701,7 +1704,12 @@ function Checkout({
   const [customerLinkStatus, setCustomerLinkStatus] = useState<ReservationCustomerLinkStatus | null>(null);
   const [authOpen, setAuthOpen] = useState(false);
   const [authMode, setAuthMode] = useState<CustomerAuthMode>("login");
-  const [primaryContact, setPrimaryContact] = useState<BookingPrimaryContact>({ firstName: "", lastName: "", email: customerEmail ?? "", phone: "" });
+  const [primaryContact, setPrimaryContact] = useState<BookingPrimaryContact>(() => ({
+    firstName: customerProfile?.firstName ?? "",
+    lastName: customerProfile?.lastName ?? "",
+    email: customerProfile?.email ?? customerEmail ?? "",
+    phone: customerProfile?.phone ?? "",
+  }));
   const finalizingRef = useRef(false);
   const reservationSubmissionKeyRef = useRef<string | null>(null);
   const [isSubmittingReservation, setIsSubmittingReservation] = useState(false);
@@ -1920,11 +1928,14 @@ function Checkout({
     "Confirmación",
   ];
   useEffect(() => {
-    if (!customerEmail) return;
-    setPrimaryContact((current) =>
-      current.email ? current : { ...current, email: customerEmail },
-    );
-  }, [customerEmail]);
+    if (!customerProfile && !customerEmail) return;
+    setPrimaryContact((current) => ({
+      firstName: current.firstName || customerProfile?.firstName || "",
+      lastName: current.lastName || customerProfile?.lastName || "",
+      email: current.email || customerProfile?.email || customerEmail || "",
+      phone: current.phone || customerProfile?.phone || "",
+    }));
+  }, [customerEmail, customerProfile]);
   if (!lines.length && !reservation)
     return (
       <Cart
@@ -3337,12 +3348,14 @@ export function TravelApp({
   initialTheme,
   initialPath = "/",
   customerEmail = null,
+  customerProfile = null,
 }: {
   hostname: string;
   initialTenant?: string;
   initialTheme?: string;
   initialPath?: string;
   customerEmail?: string | null;
+  customerProfile?: PublicCustomerCheckoutProfile | null;
 }) {
   const [route, setRoute] = useState(initialPath);
   const [version, setVersion] = useState(0);
@@ -3486,6 +3499,7 @@ export function TravelApp({
         agency={agency}
         theme={theme}
         customerEmail={customerEmail}
+        customerProfile={customerProfile}
         onDone={() => {
           setCart([]);
           localStorage.removeItem("fu-travel-booking-draft");

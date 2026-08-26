@@ -11,6 +11,9 @@ type SupabaseCustomerAccountRow = Readonly<{
   id: string;
   agency_id: string;
   status: string;
+  first_name: string | null;
+  last_name: string | null;
+  phone: string | null;
   agencies: { slug: string; name: string } | { slug: string; name: string }[] | null;
 }>;
 
@@ -29,7 +32,7 @@ export function createSupabaseCustomerAgencyAccountRepository(
     async listActiveByUserId(userId) {
       const { data, error } = await supabase
         .from("agency_customer_accounts")
-        .select("id, agency_id, status, agencies!inner(slug, name)")
+        .select("id, agency_id, status, first_name, last_name, phone, agencies!inner(slug, name)")
         .eq("user_id", userId)
         .eq("status", "active");
       if (error) throw safeCustomerAccountRepositoryError();
@@ -46,6 +49,9 @@ export function createSupabaseCustomerAgencyAccountRepository(
               agencySlug: agency.slug,
               agencyName: agency.name,
               status: account.status,
+              firstName: typeof account.first_name === "string" ? account.first_name : null,
+              lastName: typeof account.last_name === "string" ? account.last_name : null,
+              phone: typeof account.phone === "string" ? account.phone : null,
             }]
           : [];
       });

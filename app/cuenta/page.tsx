@@ -6,6 +6,7 @@ import { resolveCustomerAgencyAccess } from "@/lib/customers/customer-access";
 import { listCustomerReservations, type CustomerReservationSummary } from "@/lib/customers/customer-reservations";
 
 import { CustomerThemeShell } from "./customer-theme-shell";
+import { CustomerProfileForm } from "./customer-profile-form";
 import { customerReservationStatusLabel } from "./customer-reservation-utils";
 import styles from "./cuenta.module.css";
 
@@ -63,6 +64,13 @@ export default async function CustomerPage() {
           <div><span className={styles.kicker}>MI CUENTA</span><h1 id="customer-dashboard-title">Tus próximos viajes, en un solo lugar.</h1></div>
           <p>Consulta el estado de tus reservaciones y continúa con los datos de viajeros, pagos y documentos cuando estén disponibles.</p>
         </header>
+        <CustomerProfileForm
+          agencySlug={access.account.agencySlug}
+          email={access.identity.email}
+          firstName={access.account.firstName ?? null}
+          lastName={access.account.lastName ?? null}
+          phone={access.account.phone ?? null}
+        />
         {featured ? (
           <div className={styles.customerDashboardGrid}>
             <article className={styles.customerDashboardCard} aria-label="Próxima reservación">

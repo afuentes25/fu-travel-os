@@ -3,6 +3,9 @@ export type CustomerAgencyAccount = Readonly<{
   agencyId: string;
   agencySlug: string;
   agencyName: string;
+  firstName?: string | null;
+  lastName?: string | null;
+  phone?: string | null;
 }>;
 
 export type CustomerAgencyAccountRecord = Readonly<{
@@ -11,6 +14,9 @@ export type CustomerAgencyAccountRecord = Readonly<{
   agencySlug: string;
   agencyName: string;
   status: string;
+  firstName?: string | null;
+  lastName?: string | null;
+  phone?: string | null;
 }>;
 
 export type CustomerIdentity = Readonly<{
@@ -54,10 +60,13 @@ function activeAccounts(
     account.agencySlug &&
     account.agencyName
       ? [{
-          customerAccountId: account.customerAccountId,
-          agencyId: account.agencyId,
-          agencySlug: account.agencySlug,
-          agencyName: account.agencyName,
+        customerAccountId: account.customerAccountId,
+        agencyId: account.agencyId,
+        agencySlug: account.agencySlug,
+        agencyName: account.agencyName,
+        ...(account.firstName ? { firstName: account.firstName } : {}),
+        ...(account.lastName ? { lastName: account.lastName } : {}),
+        ...(account.phone ? { phone: account.phone } : {}),
         }]
       : [],
   );

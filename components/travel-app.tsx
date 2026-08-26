@@ -76,6 +76,7 @@ import type {
 } from "@/types";
 import { TravelApp as LegacyTravelApp } from "./legacy-travel-app";
 import { CustomerAuthModal, type CustomerAuthMode } from "@/app/cuenta/customer-auth-modal";
+import type { PublicCustomerCheckoutProfile } from "@/lib/customers/public-customer-identity";
 import {
   LavellaFooter,
   LavellaHeader,
@@ -2329,14 +2330,15 @@ export function TravelApp({
   initialTenant,
   initialTheme,
   initialPath = "/",
-  customerEmail = null,
+  customerProfile = null,
 }: {
   hostname: string;
   initialTenant?: string;
   initialTheme?: string;
   initialPath?: string;
-  customerEmail?: string | null;
+  customerProfile?: PublicCustomerCheckoutProfile | null;
 }) {
+  const customerEmail = customerProfile?.email ?? null;
   const [route, setRoute] = useState(initialPath);
   const [version, setVersion] = useState(0);
   useEffect(() => {
@@ -2401,6 +2403,7 @@ export function TravelApp({
           initialTheme={theme}
           initialPath={route}
           customerEmail={customerEmail}
+          customerProfile={customerProfile}
         />
         {theme === "explorer" &&
           !route.startsWith("/admin") &&

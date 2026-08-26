@@ -11,6 +11,7 @@ import {
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 
 type SupabaseReservationRow = {
+  id: string;
   agency_id: string;
   idempotency_key: string;
   reservation_code: string;
@@ -41,7 +42,10 @@ function fromRow(row: SupabaseReservationRow): PersistedReservationSnapshot {
     reservationCode: row.reservation_code,
     status: row.status,
     currency: row.currency,
-    snapshot: row.snapshot,
+    // `snapshot.id` predates persistence and is the human reservation code.
+    // All server-side routes must instead use the table UUID for references,
+    // links and tenant-safe foreign keys.
+    snapshot: { ...row.snapshot, id: row.id },
   };
 }
 
@@ -57,7 +61,7 @@ export function createSupabaseReservationSnapshotClient(
       const { data, error } = await supabase
         .from("reservation_snapshots")
         .select(
-          "agency_id, idempotency_key, reservation_code, status, currency, snapshot",
+          "id, agency_id, idempotency_key, reservation_code, status, currency, snapshot",
         )
         .eq("agency_id", agencyId)
         .eq("idempotency_key", idempotencyKey)
@@ -70,7 +74,7 @@ export function createSupabaseReservationSnapshotClient(
       const { data, error } = await supabase
         .from("reservation_snapshots")
         .select(
-          "agency_id, idempotency_key, reservation_code, status, currency, snapshot",
+          "id, agency_id, idempotency_key, reservation_code, status, currency, snapshot",
         )
         .eq("agency_id", agencyId)
         .eq("reservation_code", reservationCode)
@@ -91,7 +95,7 @@ export function createSupabaseReservationSnapshotClient(
           snapshot: snapshot.snapshot,
         })
         .select(
-          "agency_id, idempotency_key, reservation_code, status, currency, snapshot",
+          "id, agency_id, idempotency_key, reservation_code, status, currency, snapshot",
         )
         .single();
       if (error) throw databaseFailure(error);
