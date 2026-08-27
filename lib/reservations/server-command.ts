@@ -15,6 +15,7 @@ import type {
   TravelerDraft,
   TravelProduct,
 } from "@/types";
+import type { ReservationCustomerLinkStatus } from "./atomic-customer-access-core";
 
 export type ReservationServerCommandInput = Readonly<{
   tenantSlug: string;
@@ -33,6 +34,15 @@ export type ReservationServerCommandInput = Readonly<{
     status: TravelerDataStatus;
     drafts: readonly TravelerDraft[];
   }>;
+}>;
+
+export type AtomicReservationServerCommandInput = ReservationServerCommandInput &
+  Readonly<{ verifiedAuthUserId: string | null }>;
+
+export type AtomicReservationServerCommandResult = Readonly<{
+  reservation: ReservationSnapshot;
+  created: boolean;
+  customerLinkStatus: ReservationCustomerLinkStatus;
 }>;
 
 export type ReservationServerCommandDependencies = Readonly<{
@@ -362,18 +372,28 @@ export function createReservationServerCommand(
  * adapter so unit tests can use the injected command without a remote client.
  */
 export async function executeReservationServerCommand(
-  input: ReservationServerCommandInput,
-) {
-  const [reservationRepository, agencyRepository] = await Promise.all([
+  input: AtomicReservationServerCommandInput,
+): Promise<AtomicReservationServerCommandResult> {
+  const [reservationRepository, atomicRepository, agencyRepository] = await Promise.all([
     import("@/lib/reservations/supabase-repository"),
+    import("@/lib/reservations/atomic-customer-access-repository"),
     import("@/lib/agencies/supabase-repository"),
   ]);
-  return createReservationServerCommand({
+  const atomicPersistence = atomicRepository.createAtomicReservationPersistenceClient();
+  let customerLinkStatus: ReservationCustomerLinkStatus | null = null;
+  const result = await createReservationServerCommand({
     agencies,
     travels,
     resolvePersistedAgency: agencyRepository.findPersistedAgencyBySlug,
     findExisting: reservationRepository.findReservationSnapshotByIdempotency,
-    persist: reservationRepository.insertReservationSnapshot,
+    persist: async (persistenceInput) => {
+      const persisted = await atomicPersistence.persist({
+        ...persistenceInput,
+        verifiedAuthUserId: input.verifiedAuthUserId,
+      });
+      customerLinkStatus = persisted.customerLinkStatus;
+      return persisted;
+    },
     now: () => new Date().toISOString(),
     suffix: () => {
       const uuid = globalThis.crypto?.randomUUID?.();
@@ -384,4 +404,9 @@ export async function executeReservationServerCommand(
         .padStart(6, "0");
     },
   }).execute(input);
+
+  if (!customerLinkStatus) {
+    throw new Error("Atomic reservation persistence did not return a link status.");
+  }
+  return { ...result, customerLinkStatus };
 }

@@ -62,6 +62,7 @@ import {
   ReservationServerCommandError,
   type ReservationServerCommandInput,
 } from "../lib/reservations/server-command";
+import { AtomicReservationPersistenceError } from "../lib/reservations/atomic-customer-access-core";
 import { createPersistedAgencyResolver } from "../lib/agencies/index";
 import {
   AdminAgencyAccessError,
@@ -85,6 +86,11 @@ import {
   parseDemoReservationResetArgs,
   RESERVATION_RESET_DELETE_ORDER,
 } from "../scripts/reset-demo-reservations-core";
+import {
+  ORPHAN_CUSTOMER_ACCESS_CONFIRMATION,
+  normalizeMaintenanceEmail,
+  parseOrphanCustomerAccessArgs,
+} from "../scripts/reconcile-orphan-customer-access-core";
 import { createReservationClaimService } from "../lib/customers/reservation-claim-core";
 import {
   CustomerReservationListError,
@@ -1144,6 +1150,7 @@ const reservationApiRequest = (
 const reservationApiSuccess = () => ({
   reservation: finalizedReservationForRepository("api-idempotency-key"),
   created: true,
+  customerLinkStatus: "not_authenticated" as const,
 });
 
 test("resolvedor de agencias devuelve únicamente el UUID persistido", async () => {
@@ -8085,32 +8092,38 @@ test("claim de reservación exige Auth y correo histórico coincidente, crea un 
   assert.match(claimRepository, /role: "primary"/);
 });
 
-test("POST público sólo intenta auto-link con contacto persistido y reporta un resultado seguro", async () => {
+test("POST entrega identidad Auth verificada a la persistencia atómica y reporta linked", async () => {
   let contact: unknown = null;
-  let claimInput: unknown = null;
+  let verifiedUserId: unknown = null;
+  let revalidated: unknown = null;
   const handler = createReservationPostHandler({
-    execute: async (input) => { contact = input.primaryContact; return reservationApiSuccess(); },
-    claim: async (input) => { claimInput = input; return { status: "claimed" }; },
+    resolveVerifiedAuthUserId: async () => "auth-user-id",
+    execute: async (input) => {
+      contact = input.primaryContact;
+      verifiedUserId = input.verifiedAuthUserId;
+      return { ...reservationApiSuccess(), customerLinkStatus: "linked" };
+    },
+    revalidateLinkedReservation: async (input) => { revalidated = input; },
   });
   const response = await handler(reservationApiRequest({ ...publicReservationBody(), primaryContact: { firstName: "Juan", lastName: "Pérez", email: "Juan@Example.Test", phone: null } }));
   const body = await response.json() as { customerLinkStatus?: string };
   assert.deepEqual(contact, { firstName: "Juan", lastName: "Pérez", email: "Juan@Example.Test", phone: null });
-  assert.deepEqual(claimInput, { requestedAgencySlug: "furiver", reservationId: reservationApiSuccess().reservation.id });
+  assert.equal(verifiedUserId, "auth-user-id");
+  assert.deepEqual(revalidated, { agencySlug: "furiver", reservationRowId: reservationApiSuccess().reservation.id });
   assert.equal(body.customerLinkStatus, "linked");
 });
 
-test("checkout autenticado reclama usando el UUID persistido y deja la reservación disponible", async () => {
+test("checkout autenticado persiste y revalida usando el UUID real", async () => {
   const persistedReservationId = "46a10852-8620-4a59-9187-a21b07ce3f05";
-  let claimInput: unknown = null;
+  let revalidationInput: unknown = null;
   const handler = createReservationPostHandler({
-    execute: async () => ({
+    resolveVerifiedAuthUserId: async () => "auth-user-id",
+    execute: async (input) => ({
       reservation: { ...reservationApiSuccess().reservation, id: persistedReservationId },
       created: true,
+      customerLinkStatus: input.verifiedAuthUserId ? "linked" : "not_authenticated",
     }),
-    claim: async (input) => {
-      claimInput = input;
-      return { status: "claimed" };
-    },
+    revalidateLinkedReservation: async (input) => { revalidationInput = input; },
   });
 
   const response = await handler(reservationApiRequest({
@@ -8120,7 +8133,7 @@ test("checkout autenticado reclama usando el UUID persistido y deja la reservaci
   const body = await response.json() as { reservationId: string; customerLinkStatus: string };
   assert.equal(body.reservationId, persistedReservationId);
   assert.equal(body.customerLinkStatus, "linked");
-  assert.deepEqual(claimInput, { requestedAgencySlug: "furiver", reservationId: persistedReservationId });
+  assert.deepEqual(revalidationInput, { agencySlug: "furiver", reservationRowId: persistedReservationId });
 
   const checkout = readFileSync("components/legacy-travel-app.tsx", "utf8");
   assert.match(checkout, /credentials: "same-origin"/);
@@ -8136,44 +8149,40 @@ test("la continuidad checkout → Auth sólo admite retornos internos sin PII y 
   assert.equal(safeCustomerAuthReturnTo("/checkout?email=cliente@example.test"), null);
   assert.equal(safeCustomerAuthReturnTo("/admin/furiver/reservaciones"), null);
 
-  let claims = 0;
   const handler = createReservationPostHandler({
-    execute: async () => reservationApiSuccess(),
-    claim: async () => { claims += 1; return { status: "unauthenticated" }; },
+    resolveVerifiedAuthUserId: async () => null,
+    execute: async (input) => {
+      assert.equal(input.verifiedAuthUserId, null);
+      return reservationApiSuccess();
+    },
   });
   const response = await handler(reservationApiRequest({ ...publicReservationBody(), primaryContact: { firstName: "Invitado", lastName: null, email: "cliente@example.test", phone: null } }));
   const body = await response.json() as { customerLinkStatus?: string };
-  assert.equal(claims, 1);
   assert.equal(body.customerLinkStatus, "not_authenticated");
 });
 
-test("el enlace de cuenta distingue éxito previo, mismatch y fallo sin silenciar una reservación creada", async () => {
-  const statuses = new Map<string, string>([
-    ["existing", "already_linked"],
-    ["email_mismatch", "email_mismatch"],
-    ["claim_error", "link_failed"],
-  ]);
-  for (const [claimStatus, expected] of statuses) {
+test("la creación atómica expone estados definitivos y un fallo primary responde 500", async () => {
+  const statuses = ["linked", "already_linked", "email_mismatch", "not_authenticated"] as const;
+  for (const expected of statuses) {
     const handler = createReservationPostHandler({
-      execute: async () => reservationApiSuccess(),
-      claim: async () => ({ status: claimStatus }),
+      execute: async () => ({ ...reservationApiSuccess(), customerLinkStatus: expected }),
     });
     const response = await handler(reservationApiRequest({ ...publicReservationBody(), primaryContact: { firstName: "Juan", lastName: null, email: "cliente@example.test", phone: null } }));
     const body = await response.json() as { reservationId?: string; customerLinkStatus?: string };
     assert.equal(body.reservationId, reservationApiSuccess().reservation.id);
     assert.equal(body.customerLinkStatus, expected);
   }
-  let attempts = 0;
   const unexpectedFailure = createReservationPostHandler({
-    execute: async () => reservationApiSuccess(),
-    claim: async () => { attempts += 1; throw new Error("service unavailable"); },
+    resolveVerifiedAuthUserId: async () => "auth-user-id",
+    execute: async () => {
+      throw new AtomicReservationPersistenceError("primary_access_failed");
+    },
   });
   const response = await unexpectedFailure(reservationApiRequest({ ...publicReservationBody(), primaryContact: { firstName: "Juan", lastName: null, email: "cliente@example.test", phone: null } }));
   const body = await response.json() as { reservationId?: string; customerLinkStatus?: string };
-  assert.equal(response.status, 201);
-  assert.equal(body.reservationId, reservationApiSuccess().reservation.id);
-  assert.equal(body.customerLinkStatus, "link_failed");
-  assert.equal(attempts, 2);
+  assert.equal(response.status, 500);
+  assert.equal(body.reservationId, undefined);
+  assert.equal(body.customerLinkStatus, undefined);
 });
 
 test("el journey Lavella ofrece cuenta temprana, conserva retorno y muestra recuperación explícita del enlace", () => {
@@ -8187,8 +8196,8 @@ test("el journey Lavella ofrece cuenta temprana, conserva retorno y muestra recu
   assert.match(storefrontHeader, /Crear una cuenta/);
   assert.match(checkout, /¿Ya tienes cuenta\?/);
   assert.match(checkout, /Esta reservación se asociará a tu cuenta/);
-  assert.match(checkout, /link_failed/);
-  assert.match(checkout, /Ir a mi cuenta/);
+  assert.doesNotMatch(checkout, /link_failed/);
+  assert.match(checkout, /Ir a mi reserva/);
   assert.doesNotMatch(checkout, /Vincular mi reservación/);
   assert.match(login, /safeCustomerAuthReturnTo/);
   assert.match(registration, /returnTo/);
@@ -8275,13 +8284,15 @@ test("checkout autenticado usa el UUID real, perfil tenant-safe y CTA visible si
   assert.equal(updated.length, 1);
 
   const persistedReservationId = "46a10852-8620-4a59-9187-a21b07ce3f05";
-  let primaryCreated = false;
   const reservationHandler = createReservationPostHandler({
-    execute: async () => ({ reservation: { ...reservationApiSuccess().reservation, id: persistedReservationId }, created: true }),
-    claim: async (input) => {
-      assert.equal(input.reservationId, persistedReservationId);
-      primaryCreated = true;
-      return { status: "claimed" };
+    resolveVerifiedAuthUserId: async () => "customer-user",
+    execute: async (input) => {
+      assert.equal(input.verifiedAuthUserId, "customer-user");
+      return {
+        reservation: { ...reservationApiSuccess().reservation, id: persistedReservationId },
+        created: true,
+        customerLinkStatus: "linked",
+      };
     },
   });
   const response = await reservationHandler(reservationApiRequest({
@@ -8291,7 +8302,6 @@ test("checkout autenticado usa el UUID real, perfil tenant-safe y CTA visible si
   const responseBody = await response.json() as { reservationId: string; customerLinkStatus: string };
   assert.equal(responseBody.reservationId, persistedReservationId);
   assert.equal(responseBody.customerLinkStatus, "linked");
-  assert.equal(primaryCreated, true);
 
   const migration = readFileSync("supabase/migrations/20260801260000_customer_account_profile.sql", "utf8");
   const profileRepository = readFileSync("lib/customers/customer-profile-repository.ts", "utf8");
@@ -8316,6 +8326,110 @@ test("checkout autenticado usa el UUID real, perfil tenant-safe y CTA visible si
   const historical = finalizeReservation({ storage: reservationStorage(), input: { ...reservationInput("profile-history"), primaryContact: { firstName: "Antes", lastName: "Histórico", email: "ana@example.test", phone: "55 0000 0000" } }, now: () => TEST_NOW, suffix: () => "PROFILE" }).reservation;
   assert.equal(historical.primaryContact?.firstName, "Antes");
   assert.equal(historical.primaryContact?.phone, "55 0000 0000");
+});
+
+test("la creación de reservación y primary comparte una frontera PostgreSQL atómica y privada", () => {
+  const migration = readFileSync(
+    "supabase/migrations/20260801270000_atomic_reservation_customer_access.sql",
+    "utf8",
+  );
+  const route = readFileSync("app/api/reservations/route.ts", "utf8");
+  const serverCommand = readFileSync("lib/reservations/server-command.ts", "utf8");
+  const repository = readFileSync(
+    "lib/reservations/atomic-customer-access-repository.ts",
+    "utf8",
+  );
+
+  assert.match(migration, /create function public\.create_reservation_with_customer_access_atomic/);
+  assert.match(migration, /security definer/);
+  assert.match(migration, /set search_path = public, pg_temp/);
+  assert.match(migration, /from auth\.users/);
+  assert.match(migration, /lower\(btrim\(auth_user\.email\)\)/);
+  assert.match(migration, /from public\.reservation_snapshots[\s\S]*for update/);
+  assert.match(migration, /insert into public\.reservation_snapshots/);
+  assert.match(migration, /insert into public\.agency_customer_accounts/);
+  assert.match(migration, /insert into public\.reservation_customer_access/);
+  assert.match(migration, /primary_count <> 1/);
+  assert.match(migration, /raise exception using errcode = 'P0001', message = 'primary_access_failed'/);
+  assert.match(migration, /from public, anon, authenticated/);
+  assert.match(migration, /to service_role/);
+  assert.match(serverCommand, /createAtomicReservationPersistenceClient/);
+  assert.match(repository, /create_reservation_with_customer_access_atomic/);
+  assert.match(repository, /id: row\.reservation_row_id/);
+  assert.match(route, /resolveVerifiedAuthUserId/);
+  assert.doesNotMatch(route, /claimReservationForAuthenticatedCustomer|linkCustomerReservation/);
+});
+
+test("el POST no devuelve 201 cuando falla la identidad o el primary atómico", async () => {
+  let writes = 0;
+  const authFailure = createReservationPostHandler({
+    resolveVerifiedAuthUserId: async () => {
+      throw new Error("raw auth failure");
+    },
+    execute: async () => {
+      writes += 1;
+      return reservationApiSuccess();
+    },
+  });
+  const authResponse = await authFailure(reservationApiRequest());
+  assert.equal(authResponse.status, 500);
+  assert.equal(writes, 0);
+
+  const primaryFailure = createReservationPostHandler({
+    resolveVerifiedAuthUserId: async () => "verified-user",
+    execute: async () => {
+      throw new AtomicReservationPersistenceError("primary_access_failed");
+    },
+  });
+  const primaryResponse = await primaryFailure(reservationApiRequest({
+    ...publicReservationBody(),
+    primaryContact: {
+      firstName: "Demo",
+      lastName: null,
+      email: "demo@example.test",
+      phone: null,
+    },
+  }));
+  const primaryBody = await primaryResponse.json() as { reservationId?: string; error?: string };
+  assert.equal(primaryResponse.status, 500);
+  assert.equal(primaryBody.reservationId, undefined);
+  assert.equal(primaryBody.error, "No fue posible registrar la reservación.");
+});
+
+test("la reconciliación de huérfanas es dry-run, exige frase exacta y usa RPC idempotente", () => {
+  assert.equal(parseOrphanCustomerAccessArgs([]), "dry-run");
+  assert.equal(
+    parseOrphanCustomerAccessArgs([
+      `--confirm=${ORPHAN_CUSTOMER_ACCESS_CONFIRMATION}`,
+    ]),
+    "confirmed",
+  );
+  assert.throws(() => parseOrphanCustomerAccessArgs(["--confirm=force"]));
+  assert.equal(normalizeMaintenanceEmail(" Same@Example.Test "), "same@example.test");
+
+  const script = readFileSync(
+    "scripts/reconcile-orphan-customer-access.ts",
+    "utf8",
+  );
+  const migration = readFileSync(
+    "supabase/migrations/20260801270000_atomic_reservation_customer_access.sql",
+    "utf8",
+  );
+  const databaseHarness = readFileSync(
+    "supabase/tests/20260801270000_atomic_reservation_customer_access_test.sql",
+    "utf8",
+  );
+  assert.match(script, /auth\.admin\.listUsers/);
+  assert.match(script, /access\.length !== 0/);
+  assert.match(script, /account\.status === "active"/);
+  assert.match(script, /reconcile_orphan_customer_access_atomic/);
+  assert.doesNotMatch(script, /\.from\("reservation_customer_access"\)\.insert/);
+  assert.match(migration, /create function public\.reconcile_orphan_customer_access_atomic/);
+  assert.match(migration, /matching_auth_users <> 1/);
+  assert.match(migration, /reservation_already_claimed/);
+  assert.match(databaseHarness, /forced_primary_failure/);
+  assert.match(databaseHarness, /primary insert failure rolls back the new reservation/);
+  assert.match(databaseHarness, /already_linked/);
 });
 
 test("el reset de demo es dry-run por defecto, exige confirmación exacta y atribuye Storage por prefijo estricto", () => {

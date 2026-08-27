@@ -1635,7 +1635,7 @@ function LavellaReservationConfirmation({
       <section className="lavella-confirmation-next">
         <div className="eyebrow">TU CUENTA</div>
         <h3>Administra tu reservación desde tu cuenta</h3>
-        {customerLinkStatus === "email_mismatch" ? <p role="alert">La reservación fue creada, pero el correo utilizado no coincide con la cuenta iniciada.</p> : customerLinkStatus === "link_failed" ? <p role="alert">Tu reservación fue creada, pero estamos terminando de preparar el acceso desde tu cuenta.</p> : customerLinkStatus === "linked" || customerLinkStatus === "already_linked" ? <p role="status">✓ Reservación asociada a tu cuenta.</p> : <p>Desde tu cuenta podrás completar viajeros, reportar pagos, consultar documentos y aceptar el contrato.</p>}
+        {customerLinkStatus === "email_mismatch" ? <p role="alert">La reservación fue creada, pero el correo utilizado no coincide con la cuenta iniciada.</p> : customerLinkStatus === "linked" || customerLinkStatus === "already_linked" ? <p role="status">✓ Reservación asociada a tu cuenta.</p> : <p>Desde tu cuenta podrás completar viajeros, reportar pagos, consultar documentos y aceptar el contrato.</p>}
       </section>
 
       <div className="lavella-confirmation-actions">
@@ -1647,7 +1647,7 @@ function LavellaReservationConfirmation({
         >
           Enviar folio por WhatsApp
         </a>
-        {customerLinkStatus === "link_failed" ? <Link className="primary reservation-account-cta" href="/cuenta">Ir a mi cuenta</Link> : customerLinkStatus === "linked" || customerLinkStatus === "already_linked" ? <Link className="primary reservation-account-cta" href={`/cuenta/${reservation.tenant}/reservaciones/${reservation.id}`}>Ir a mi reserva</Link> : <><button type="button" onClick={() => onOpenAuth("login")}>Ya tengo cuenta</button><button type="button" onClick={() => onOpenAuth("register")}>Crear mi cuenta</button></>}
+        {customerLinkStatus === "linked" || customerLinkStatus === "already_linked" ? <Link className="primary reservation-account-cta" href={`/cuenta/${reservation.tenant}/reservaciones/${reservation.id}`}>Ir a mi reserva</Link> : <><button type="button" onClick={() => onOpenAuth("login")}>Ya tengo cuenta</button><button type="button" onClick={() => onOpenAuth("register")}>Crear mi cuenta</button></>}
         <button type="button" onClick={onContinue}>
           Volver a viajes
         </button>

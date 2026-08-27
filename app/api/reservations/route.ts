@@ -1,14 +1,18 @@
+import { randomUUID } from "node:crypto";
+
 import { z } from "zod";
 
 import {
   executeReservationServerCommand,
   ReservationServerCommandError,
-  type ReservationServerCommandInput,
+  type AtomicReservationServerCommandInput,
+  type AtomicReservationServerCommandResult,
 } from "@/lib/reservations/server-command";
 import {
   ReservationSnapshotConflictError,
   type ReservationSnapshot,
 } from "@/lib/reservations";
+import { AtomicReservationPersistenceError } from "@/lib/reservations/atomic-customer-access-core";
 
 const primaryContactSchema = z.object({
   firstName: z.string().trim().min(1).max(120),
@@ -59,52 +63,23 @@ const reservationRequestSchema = z
   });
 
 type ReservationCommand = (
-  input: ReservationServerCommandInput,
-) => Promise<{
-  reservation: ReservationSnapshot;
-  created: boolean;
-}>;
+  input: AtomicReservationServerCommandInput,
+) => Promise<AtomicReservationServerCommandResult>;
 
 type ReservationRouteDependencies = Readonly<{
   execute: ReservationCommand;
-  claim?: (input: Readonly<{ requestedAgencySlug: string; reservationId: string }>) => Promise<Readonly<{ status: string }>>;
+  resolveVerifiedAuthUserId?: () => Promise<string | null>;
+  revalidateLinkedReservation?: (input: Readonly<{
+    agencySlug: string;
+    reservationRowId: string;
+  }>) => Promise<void>;
 }>;
 
 export type ReservationCustomerLinkStatus =
   | "linked"
   | "already_linked"
   | "email_mismatch"
-  | "not_authenticated"
-  | "link_failed";
-
-function toCustomerLinkStatus(status: string): ReservationCustomerLinkStatus {
-  if (status === "claimed") return "linked";
-  if (status === "existing") return "already_linked";
-  if (status === "email_mismatch") return "email_mismatch";
-  if (status === "unauthenticated") return "not_authenticated";
-  // Repository and Auth failures must remain safe, but must never be
-  // represented as a successful link in the confirmation UI.
-  return "link_failed";
-}
-
-async function linkCustomerReservation(
-  claim: NonNullable<ReservationRouteDependencies["claim"]>,
-  input: Readonly<{ requestedAgencySlug: string; reservationId: string }>,
-): Promise<ReservationCustomerLinkStatus> {
-  try {
-    const firstAttempt = toCustomerLinkStatus((await claim(input)).status);
-    if (firstAttempt !== "link_failed") return firstAttempt;
-  } catch {
-    // The reservation is already durable. Retry the idempotent server-side
-    // association once before presenting a degraded confirmation state.
-  }
-
-  try {
-    return toCustomerLinkStatus((await claim(input)).status);
-  } catch {
-    return "link_failed";
-  }
-}
+  | "not_authenticated";
 
 const noStoreHeaders = { "Cache-Control": "no-store" };
 
@@ -135,10 +110,30 @@ function confirmationFromSnapshot(snapshot: ReservationSnapshot) {
 export function createReservationPostHandler(
   dependencies: ReservationRouteDependencies = {
     execute: executeReservationServerCommand,
-    claim: async (input) => (await import("@/lib/customers/reservation-claim")).claimReservationForAuthenticatedCustomer(input),
+    resolveVerifiedAuthUserId: async () => {
+      const [{ createSupabaseAuthServerClient }, { resolveVerifiedSupabaseIdentity }] =
+        await Promise.all([
+          import("@/lib/supabase/auth-server"),
+          import("@/lib/supabase/auth-identity-core"),
+        ]);
+      const identity = await resolveVerifiedSupabaseIdentity(
+        await createSupabaseAuthServerClient(),
+      );
+      return identity?.userId ?? null;
+    },
+    revalidateLinkedReservation: async ({ agencySlug, reservationRowId }) => {
+      const { revalidatePath } = await import("next/cache");
+      const slug = encodeURIComponent(agencySlug);
+      const reservationId = encodeURIComponent(reservationRowId);
+      revalidatePath("/cuenta", "layout");
+      revalidatePath(`/cuenta/${slug}/reservaciones`, "layout");
+      revalidatePath(`/cuenta/${slug}/reservaciones/${reservationId}`);
+      revalidatePath(`/admin/${slug}/reservaciones/${reservationId}`);
+    },
   },
 ) {
   return async function postReservation(request: Request) {
+    const requestId = randomUUID();
     if (request.method !== "POST") {
       return response({ error: "Método no permitido." }, 405);
     }
@@ -163,15 +158,34 @@ export function createReservationPostHandler(
     }
 
     try {
+      let verifiedAuthUserId: string | null;
+      try {
+        verifiedAuthUserId = dependencies.resolveVerifiedAuthUserId
+          ? await dependencies.resolveVerifiedAuthUserId()
+          : null;
+      } catch {
+        console.error("reservation_create_failed", {
+          event: "auth_identity_failed",
+          requestId,
+        });
+        return response({ error: "No fue posible validar la sesión." }, 500);
+      }
+
       const result = await dependencies.execute({
         ...parsed.data,
         idempotencyKey,
+        verifiedAuthUserId,
       });
-      let customerLinkStatus: ReservationCustomerLinkStatus = "not_authenticated";
-      if (parsed.data.primaryContact && dependencies.claim) {
-        customerLinkStatus = await linkCustomerReservation(dependencies.claim, {
-          requestedAgencySlug: parsed.data.tenantSlug,
-          reservationId: result.reservation.id,
+      const customerLinkStatus: ReservationCustomerLinkStatus =
+        result.customerLinkStatus;
+      if (
+        (customerLinkStatus === "linked" ||
+          customerLinkStatus === "already_linked") &&
+        dependencies.revalidateLinkedReservation
+      ) {
+        await dependencies.revalidateLinkedReservation({
+          agencySlug: parsed.data.tenantSlug,
+          reservationRowId: result.reservation.id,
         });
       }
       return response(
@@ -195,6 +209,17 @@ export function createReservationPostHandler(
       if (error instanceof ReservationSnapshotConflictError) {
         return response({ error: error.message }, 409);
       }
+      if (error instanceof AtomicReservationPersistenceError) {
+        console.error("reservation_create_failed", {
+          event: error.event,
+          requestId,
+        });
+        return response({ error: error.message }, 500);
+      }
+      console.error("reservation_create_failed", {
+        event: "reservation_create_failed",
+        requestId,
+      });
       return response({ error: "No fue posible registrar la reservación." }, 500);
     }
   };

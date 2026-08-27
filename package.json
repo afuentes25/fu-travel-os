@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit",
     "test": "tsx --test tests/**/*.test.ts",
     "demo:reset-reservations": "tsx scripts/reset-demo-reservations.ts",
+    "maintenance:reconcile-customer-access": "tsx scripts/reconcile-orphan-customer-access.ts",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
   },
