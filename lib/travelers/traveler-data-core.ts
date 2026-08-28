@@ -2,6 +2,7 @@ import { isCustomerReservationUuid } from "@/lib/customers/customer-reservation-
 import type { CustomerAgencyAccess } from "@/lib/customers/customer-access-core";
 
 export type ReservationTravelerData = Readonly<{
+  travelerId: string;
   position: number;
   travelerType: "adult" | "minor";
   status: "pending" | "complete";
@@ -11,6 +12,7 @@ export type ReservationTravelerData = Readonly<{
 }>;
 
 export type ReservationTravelerDataRow = Readonly<{
+  id: string;
   position: number;
   traveler_type: string;
   status: string;
@@ -34,6 +36,7 @@ export type GetReservationTravelerDataResult =
 export type SaveReservationTravelerDataInput = Readonly<{
   requestedAgencySlug?: string;
   reservationId: string;
+  travelerId: string;
   position: number;
   firstName: unknown;
   lastName: unknown;
@@ -65,6 +68,7 @@ export interface TravelerDataRepositoryClient {
     customerAccountId: string;
     agencyId: string;
     reservationId: string;
+    travelerId: string;
     position: number;
     firstName: string;
     lastName: string;
@@ -81,10 +85,12 @@ export class TravelerDataError extends Error {
 }
 
 function projectTraveler(row: ReservationTravelerDataRow): ReservationTravelerData | null {
+  if (!isCustomerReservationUuid(row.id)) return null;
   if (!Number.isInteger(row.position) || row.position <= 0) return null;
   if (row.traveler_type !== "adult" && row.traveler_type !== "minor") return null;
   if (row.status !== "pending" && row.status !== "complete") return null;
   return {
+    travelerId: row.id,
     position: row.position,
     travelerType: row.traveler_type,
     status: row.status,
@@ -143,7 +149,7 @@ function normalizeBirthDate(value: unknown) {
 
 export function validateReservationTravelerData(input: Pick<
   SaveReservationTravelerDataInput,
-  "position" | "firstName" | "lastName" | "birthDate"
+  "travelerId" | "position" | "firstName" | "lastName" | "birthDate"
 >) {
   const firstName = normalizeRequiredText(input.firstName, 100, "Ingresa el nombre o los nombres.");
   const lastName = normalizeRequiredText(input.lastName, 150, "Ingresa los apellidos.");
@@ -155,12 +161,16 @@ export function validateReservationTravelerData(input: Pick<
     ...(!Number.isInteger(input.position) || input.position <= 0
       ? { position: "El viajero solicitado no es válido." }
       : {}),
+    ...(!isCustomerReservationUuid(input.travelerId)
+      ? { position: "El viajero solicitado no es válido." }
+      : {}),
   };
   return Object.keys(errors).length
     ? { errors }
     : {
         value: {
           position: input.position,
+          travelerId: input.travelerId,
           firstName: firstName.value as string,
           lastName: lastName.value as string,
           birthDate: birthDate.value as string,
@@ -232,7 +242,11 @@ export function createReservationTravelerDataService(dependencies: Readonly<{
         const scope = scopeFrom(access, input.reservationId);
         const beforeRows = await repository().listAuthorized(scope);
         if (beforeRows === null) return { status: "not_found" };
-        const previous = beforeRows.find((row) => row.position === validated.value.position);
+        const previous = beforeRows.find(
+          (row) =>
+            row.id === validated.value.travelerId &&
+            row.position === validated.value.position,
+        );
         if (!previous) return { status: "not_found" };
         const row = await repository().updateAuthorized({
           ...scope,

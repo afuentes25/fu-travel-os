@@ -13,6 +13,7 @@ const initialState: TravelerDataFormState = {};
 export function TravelerDataForm({
   requestedAgencySlug,
   reservationId,
+  travelerId,
   position,
   firstName,
   lastName,
@@ -21,6 +22,7 @@ export function TravelerDataForm({
 }: Readonly<{
   requestedAgencySlug: string;
   reservationId: string;
+  travelerId: string;
   position: number;
   firstName: string | null;
   lastName: string | null;
@@ -33,6 +35,7 @@ export function TravelerDataForm({
     <form className={styles.travelerForm} action={formAction}>
       <input type="hidden" name="requestedAgencySlug" value={requestedAgencySlug} />
       <input type="hidden" name="reservationId" value={reservationId} />
+      <input type="hidden" name="travelerId" value={travelerId} />
       <input type="hidden" name="position" value={position} />
       <label>
         Nombre(s)

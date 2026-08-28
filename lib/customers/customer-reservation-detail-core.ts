@@ -1,7 +1,6 @@
 import type { Currency } from "@/types";
 import {
   asSnapshotRecord,
-  optionalSnapshotCount,
   optionalSnapshotText,
   projectReservationSnapshotOperational,
   type ReservationSnapshotProjectionSource,
@@ -41,12 +40,6 @@ export type CustomerReservationDetail = Readonly<{
     remainingAmount: number | null;
   }>;
   travelerDataStatus: string | null;
-  travelers: readonly Readonly<{
-    category: string | null;
-    fullName: string | null;
-    age: number | null;
-    status: string | null;
-  }>[];
   primaryContact: Readonly<{
     fullName: string | null;
     email: string | null;
@@ -99,22 +92,6 @@ function projectContact(snapshot: Record<string, unknown> | null) {
   return fullName || email || phone ? { fullName, email, phone } : null;
 }
 
-function projectTravelers(snapshot: Record<string, unknown> | null) {
-  const travelers = asSnapshotRecord(snapshot?.travelers);
-  const drafts = Array.isArray(travelers?.drafts) ? travelers.drafts : [];
-  return drafts.flatMap((draft) => {
-    const traveler = asSnapshotRecord(draft);
-    return traveler
-      ? [{
-          category: optionalSnapshotText(traveler.category),
-          fullName: optionalSnapshotText(traveler.fullName),
-          age: optionalSnapshotCount(traveler.age),
-          status: optionalSnapshotText(traveler.completionStatus),
-        }]
-      : [];
-  });
-}
-
 /** Projects personal fields only after the linked customer account is authorized. */
 export function projectCustomerReservationDetail(
   row: CustomerReservationDetailRow,
@@ -123,7 +100,6 @@ export function projectCustomerReservationDetail(
   const snapshot = asSnapshotRecord(row.snapshot);
   return {
     ...operational,
-    travelers: projectTravelers(snapshot),
     primaryContact: projectContact(snapshot),
   };
 }

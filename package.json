@@ -11,6 +11,7 @@
     "test": "tsx --test tests/**/*.test.ts",
     "demo:reset-reservations": "tsx scripts/reset-demo-reservations.ts",
     "maintenance:reconcile-customer-access": "tsx scripts/reconcile-orphan-customer-access.ts",
+    "maintenance:reconcile-travelers": "tsx scripts/reconcile-reservation-travelers.ts",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
   },

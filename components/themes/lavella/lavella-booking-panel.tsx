@@ -24,9 +24,8 @@ import {
   validateRoomCapacity,
 } from "@/lib/room-capacity";
 import {
+  createTravelerDraftAttemptScope,
   createTravelerDrafts,
-  draftsFromLines,
-  reconcileTravelerDrafts,
 } from "@/lib/travelers";
 import type {
   Agency,
@@ -275,43 +274,19 @@ export function LavellaBookingPanel({
       const existing = JSON.parse(
         localStorage.getItem("fu-travel-demo-cart") ?? "[]",
       ) as CartLine[];
-      const previousLines = existing.filter(
-        (line) =>
-          line.travelId === trip.id && line.departureId === departure.id,
-      );
-      const previousDrafts = draftsFromLines(previousLines);
-      let reconciled = reconcileTravelerDrafts({
-        drafts: previousDrafts,
+      const freshDrafts = createTravelerDrafts(
         adults,
         minors,
-        scope: `${trip.id}-${departure.id}`,
-      });
-      if (
-        reconciled.requiresConfirmation &&
-        !window.confirm(
-          "Reducir viajeros descartará datos ya capturados. ¿Deseas continuar?",
-        )
-      ) {
-        reservingRef.current = false;
-        return;
-      }
-      if (reconciled.requiresConfirmation)
-        reconciled = reconcileTravelerDrafts({
-          drafts: previousDrafts,
-          adults,
-          minors,
-          scope: `${trip.id}-${departure.id}`,
-          confirmDiscard: true,
-        });
+        createTravelerDraftAttemptScope(trip.id, departure.id),
+      );
       const nextLines = [adultLine, minorLine]
         .filter(Boolean)
         .map((line) => ({
           ...line!,
           ...(fxSnapshot ? { fxSnapshot } : {}),
           ...(paymentAllocation ? { paymentAllocation } : {}),
-          travelerDataStatus:
-            previousLines[0]?.travelerDataStatus ?? "pending",
-          travelerDrafts: reconciled.drafts.filter(
+          travelerDataStatus: "pending",
+          travelerDrafts: freshDrafts.filter(
             (draft) =>
               draft.category ===
               (line!.id.endsWith("-menores") ? "minor" : "adult"),

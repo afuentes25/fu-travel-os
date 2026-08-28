@@ -28,6 +28,19 @@ export function createTravelerDrafts(
   ];
 }
 
+/** A checkout draft scope is ephemeral and must never identify a traveler. */
+export function createTravelerDraftAttemptScope(
+  tripId: string,
+  departureId: string,
+  attemptId = globalThis.crypto.randomUUID(),
+) {
+  return `checkout-v2:${attemptId}:${tripId}:${departureId}`;
+}
+
+export function isTravelerDraftAttemptScoped(id: unknown) {
+  return typeof id === "string" && id.startsWith("checkout-v2:");
+}
+
 export function travelerCountsFromLines(lines: CartLine[]) {
   return lines.reduce(
     (counts, line) => {

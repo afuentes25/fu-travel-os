@@ -41,7 +41,10 @@ import {
 import { resolveTenant, resolveTheme } from "@/lib/tenancy";
 import {
   applyTravelerDataToLines,
+  createTravelerDraftAttemptScope,
+  createTravelerDrafts,
   draftsFromLines,
+  isTravelerDraftAttemptScoped,
   travelerFollowUpMessage,
   validateTravelerDrafts,
 } from "@/lib/travelers";
@@ -1555,17 +1558,9 @@ function LavellaReservationConfirmation({
               posteriormente.
             </p>
           ) : (
-            <ul>
-              {reservation.travelers.drafts.map((draft) => (
-                <li key={draft.id}>
-                  <span>
-                    {draft.category === "adult" ? "Adulto" : "Menor"}{" "}
-                    {draft.sequence}
-                  </span>
-                  <b>{draft.fullName}</b>
-                </li>
-              ))}
-            </ul>
+            <p className="lavella-confirmation-note">
+              Los datos capturados quedaron guardados en tu reservación.
+            </p>
           )}
         </section>
 
@@ -3372,13 +3367,43 @@ export function TravelApp({
     const saved = localStorage.getItem("fu-travel-demo-cart");
     if (saved)
       try {
-        setCart(JSON.parse(saved) as CartLine[]);
+        const parsed = JSON.parse(saved) as CartLine[];
+        const hasUnscopedLavellaTravelerData =
+          theme === "lavella" &&
+          parsed.some((line) =>
+            line.travelerDrafts?.some(
+              (draft) => !isTravelerDraftAttemptScoped(draft.id),
+            ),
+          );
+        const safeCart = hasUnscopedLavellaTravelerData
+          ? parsed.map((line) => {
+              const category = line.travelerDrafts?.[0]?.category;
+              if (!category) return line;
+              const scope = createTravelerDraftAttemptScope(
+                line.travelId,
+                line.departureId,
+              );
+              return {
+                ...line,
+                travelerDataStatus: "pending" as const,
+                travelerDrafts: createTravelerDrafts(
+                  category === "adult" ? line.travelers : 0,
+                  category === "minor" ? line.travelers : 0,
+                  scope,
+                ),
+              };
+            })
+          : parsed;
+        setCart(safeCart);
+        if (hasUnscopedLavellaTravelerData) {
+          localStorage.setItem("fu-travel-demo-cart", JSON.stringify(safeCart));
+        }
       } catch {}
     const sync = () => setRoute(path());
     sync();
     addEventListener("popstate", sync);
     return () => removeEventListener("popstate", sync);
-  }, []);
+  }, [theme]);
   useEffect(() => {
     localStorage.setItem("fu-travel-demo-cart", JSON.stringify(cart));
   }, [cart]);
@@ -3502,6 +3527,7 @@ export function TravelApp({
         customerProfile={customerProfile}
         onDone={() => {
           setCart([]);
+          localStorage.removeItem("fu-travel-demo-cart");
           localStorage.removeItem("fu-travel-booking-draft");
         }}
         onUpdate={updateLine}

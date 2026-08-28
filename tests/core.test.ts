@@ -91,6 +91,13 @@ import {
   normalizeMaintenanceEmail,
   parseOrphanCustomerAccessArgs,
 } from "../scripts/reconcile-orphan-customer-access-core";
+import {
+  hasMaterializableTravelerData,
+  parseReservationTravelerReconciliationArgs,
+  planReservationTravelerReconciliation,
+  RESERVATION_TRAVELER_RECONCILIATION_CONFIRMATION,
+  type HistoricalReservationTravelerRow,
+} from "../scripts/reconcile-reservation-travelers-core";
 import { createReservationClaimService } from "../lib/customers/reservation-claim-core";
 import {
   CustomerReservationListError,
@@ -184,7 +191,11 @@ import {
   createAdminContractActivationService,
 } from "../lib/contracts/admin-contract-activation-core";
 import { createReservationContractService } from "../lib/contracts/reservation-contract-core";
-import { createCustomerContractAcceptanceService, CONTRACT_ACCEPTANCE_STATEMENT, CONTRACT_ACCEPTANCE_STATEMENT_VERSION } from "../lib/contracts/customer-contract-acceptance-core";
+import {
+  createCustomerContractAcceptanceService,
+  CONTRACT_ACCEPTANCE_STATEMENT,
+  CONTRACT_ACCEPTANCE_STATEMENT_VERSION,
+} from "../lib/contracts/customer-contract-acceptance-core";
 import {
   createReservationContractDocumentService,
   calculateContractDocumentSha256,
@@ -211,7 +222,10 @@ import {
   createAdminDepartureManifestService,
   departureKeyForIdentity,
 } from "../lib/departures/admin-departure-manifest-core";
-import { createReservationDocumentEligibilityService, DEFAULT_TICKET_PAYMENT_THRESHOLD_BPS } from "../lib/travel-documents/document-eligibility-core";
+import {
+  createReservationDocumentEligibilityService,
+  DEFAULT_TICKET_PAYMENT_THRESHOLD_BPS,
+} from "../lib/travel-documents/document-eligibility-core";
 import {
   createReservationVoucherDocumentService,
   ReservationVoucherDocumentError,
@@ -225,7 +239,10 @@ import {
   type ReservationTicketDocumentRow,
 } from "../lib/documents/reservation-ticket-document-core";
 import { renderReservationTicketPdf } from "../lib/documents/reservation-ticket-document-pdf";
-import { createChangedTravelerTicketLifecycleService, createReservationTicketLifecycleService } from "../lib/travel-documents/ticket-lifecycle-core";
+import {
+  createChangedTravelerTicketLifecycleService,
+  createReservationTicketLifecycleService,
+} from "../lib/travel-documents/ticket-lifecycle-core";
 import {
   createCustomerTransferIdempotencyKey,
   localTransferDateTimeToIso,
@@ -305,12 +322,18 @@ import {
   validateRoomCapacity,
 } from "../lib/room-capacity/index";
 import {
+  createTravelerDraftAttemptScope,
   createTravelerDrafts,
+  isTravelerDraftAttemptScoped,
   reconcileTravelerDrafts,
   travelerFollowUpMessage,
   travelerWhatsAppSummary,
   validateTravelerDrafts,
 } from "../lib/travelers/index";
+import {
+  createReservationTravelerMaterializer,
+  projectReservationTravelerMaterialization,
+} from "../lib/travelers/traveler-materialization-core";
 import { getAgencySocialLinks, isValidSocialUrl } from "../lib/social/index";
 import {
   isValidTheme,
@@ -375,12 +398,14 @@ const adminMembership = (
   ...input,
 });
 
-function adminAccessFixture(input: Readonly<{
+function adminAccessFixture(
+  input: Readonly<{
   identity?: { userId: string; email: string | null } | null;
   memberships?: readonly AdminAgencyMembershipRecord[];
   failIdentity?: boolean;
   failMemberships?: boolean;
-}> = {}) {
+  }> = {},
+) {
   const queriedUserIds: string[] = [];
   const resolver = createAdminAgencyAccessResolver({
     async getIdentity() {
@@ -411,12 +436,14 @@ const customerAccount = (
   ...input,
 });
 
-function customerAccessFixture(input: Readonly<{
+function customerAccessFixture(
+  input: Readonly<{
   identity?: { userId: string; email: string | null } | null;
   accounts?: readonly CustomerAgencyAccountRecord[];
   failIdentity?: boolean;
   failAccounts?: boolean;
-}> = {}) {
+  }> = {},
+) {
   const queriedUserIds: string[] = [];
   const resolver = createCustomerAgencyAccessResolver({
     async getIdentity() {
@@ -450,7 +477,8 @@ test("configuración pública de Supabase falla de forma segura cuando faltan va
   } finally {
     if (savedUrl === undefined) delete process.env.NEXT_PUBLIC_SUPABASE_URL;
     else process.env.NEXT_PUBLIC_SUPABASE_URL = savedUrl;
-    if (savedKey === undefined) delete process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
+    if (savedKey === undefined)
+      delete process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
     else process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY = savedKey;
   }
 });
@@ -507,14 +535,8 @@ test("identidad Supabase devuelve null sin sesión y proyecta solo claims verifi
 });
 
 test("clientes Auth no exponen service role y el proxy usa claims verificados", () => {
-  const browserClient = readFileSync(
-    "lib/supabase/browser-client.ts",
-    "utf8",
-  );
-  const authServer = readFileSync(
-    "lib/supabase/auth-server.ts",
-    "utf8",
-  );
+  const browserClient = readFileSync("lib/supabase/browser-client.ts", "utf8");
+  const authServer = readFileSync("lib/supabase/auth-server.ts", "utf8");
   const proxy = readFileSync("proxy.ts", "utf8");
 
   assert.equal(browserClient.includes("SUPABASE_SERVICE_ROLE_KEY"), false);
@@ -537,7 +559,10 @@ test("rutas administrativas e internas no caen en el renderer público ni el dem
 
   const catchAll = readFileSync("app/[...route]/page.tsx", "utf8");
   const publicRenderer = readFileSync("components/travel-app.tsx", "utf8");
-  const legacyRenderer = readFileSync("components/legacy-travel-app.tsx", "utf8");
+  const legacyRenderer = readFileSync(
+    "components/legacy-travel-app.tsx",
+    "utf8",
+  );
   const proxy = readFileSync("lib/supabase/auth-proxy.ts", "utf8");
   assert.match(catchAll, /isReservedInternalPath\(pathname\)\)notFound\(\)/);
   assert.equal(
@@ -547,7 +572,10 @@ test("rutas administrativas e internas no caen en el renderer público ni el dem
     false,
   );
   assert.match(publicRenderer, /route\.startsWith\("\/demo\/admin"\)\s*\|\|/);
-  assert.match(publicRenderer, /window\.location\.href = `\/demo\/admin\?\$\{next\}`/);
+  assert.match(
+    publicRenderer,
+    /window\.location\.href = `\/demo\/admin\?\$\{next\}`/,
+  );
   assert.match(legacyRenderer, /route\.startsWith\("\/demo\/admin"\)/);
   assert.equal(proxy.includes("NextResponse.rewrite"), false);
   assert.match(proxy, /NextResponse\.next\(\{ request \}\)/);
@@ -611,9 +639,12 @@ test("múltiples membresías exigen selección y el slug autorizado se resuelve"
 
 test("un slug ajeno no revela agencias y devuelve forbidden", async () => {
   const { resolver } = adminAccessFixture({ memberships: [adminMembership()] });
-  assert.deepEqual(await resolver.resolve({ requestedAgencySlug: "crisenix" }), {
+  assert.deepEqual(
+    await resolver.resolve({ requestedAgencySlug: "crisenix" }),
+    {
     status: "forbidden",
-  });
+    },
+  );
 });
 
 test("errores administrativos se sanejan y la consulta queda limitada al usuario", async () => {
@@ -621,8 +652,7 @@ test("errores administrativos se sanejan y la consulta queda limitada al usuario
   await assert.rejects(
     failing.resolver.resolve(),
     (error: unknown) =>
-      error instanceof AdminAgencyAccessError &&
-      !error.message.includes("SQL"),
+      error instanceof AdminAgencyAccessError && !error.message.includes("SQL"),
   );
 
   const source = readFileSync(
@@ -641,7 +671,9 @@ test("errores administrativos se sanejan y la consulta queda limitada al usuario
 });
 
 test("acceso de cliente no consulta cuentas sin una sesión verificada", async () => {
-  const { resolver, queriedUserIds } = customerAccessFixture({ identity: null });
+  const { resolver, queriedUserIds } = customerAccessFixture({
+    identity: null,
+  });
   assert.deepEqual(await resolver.resolve(), { status: "unauthenticated" });
   assert.deepEqual(queriedUserIds, []);
 });
@@ -707,17 +739,23 @@ test("acceso de cliente permanece separado del administrativo y sanea errores", 
   await assert.rejects(
     failing.resolver.resolve(),
     (error: unknown) =>
-      error instanceof CustomerAgencyAccessError && !error.message.includes("SQL"),
+      error instanceof CustomerAgencyAccessError &&
+      !error.message.includes("SQL"),
   );
 
-  const source = readFileSync("lib/customers/customer-access-repository.ts", "utf8");
+  const source = readFileSync(
+    "lib/customers/customer-access-repository.ts",
+    "utf8",
+  );
   assert.match(source, /\.eq\("user_id", userId\)/);
   assert.match(source, /\.eq\("status", "active"\)/);
   assert.equal(source.includes("agency_memberships"), false);
   assert.equal(source.includes("reservation_customer_access"), false);
   assert.equal(source.includes("SUPABASE_SERVICE_ROLE_KEY"), false);
 
-  const access = await customerAccessFixture({ accounts: [customerAccount()] }).resolver.resolve();
+  const access = await customerAccessFixture({
+    accounts: [customerAccount()],
+  }).resolver.resolve();
   assert.equal(JSON.stringify(access).includes("token"), false);
   assert.equal(JSON.stringify(access).includes("cookie"), false);
   assert.equal(JSON.stringify(access).includes("serviceRole"), false);
@@ -731,9 +769,24 @@ test("login administrativo valida credenciales en servidor y limita next a rutas
     }),
     { email: "admin@furiver.test", password: "password-seguro" },
   );
-  assert.equal(validateAdminLoginCredentials({ email: "no-es-correo", password: "password-seguro" }), null);
-  assert.equal(validateAdminLoginCredentials({ email: "admin@furiver.test", password: "corta" }), null);
-  assert.equal(safeAdminNext("/admin/furiver/reservaciones?page=2"), "/admin/furiver/reservaciones?page=2");
+  assert.equal(
+    validateAdminLoginCredentials({
+      email: "no-es-correo",
+      password: "password-seguro",
+    }),
+    null,
+  );
+  assert.equal(
+    validateAdminLoginCredentials({
+      email: "admin@furiver.test",
+      password: "corta",
+    }),
+    null,
+  );
+  assert.equal(
+    safeAdminNext("/admin/furiver/reservaciones?page=2"),
+    "/admin/furiver/reservaciones?page=2",
+  );
   assert.equal(safeAdminNext("https://malicioso.example/admin"), null);
   assert.equal(safeAdminNext("//malicioso.example/admin"), null);
   assert.equal(safeAdminNext("/admin\\malicioso"), null);
@@ -748,11 +801,17 @@ test("login de cliente valida credenciales y limita next exclusivamente a cuenta
     { email: "cliente@furiver.test", password: "password-seguro" },
   );
   assert.equal(
-    validateCustomerLoginCredentials({ email: "no-es-correo", password: "password-seguro" }),
+    validateCustomerLoginCredentials({
+      email: "no-es-correo",
+      password: "password-seguro",
+    }),
     null,
   );
   assert.equal(
-    validateCustomerLoginCredentials({ email: "cliente@furiver.test", password: "corta" }),
+    validateCustomerLoginCredentials({
+      email: "cliente@furiver.test",
+      password: "corta",
+    }),
     null,
   );
   assert.equal(
@@ -767,15 +826,22 @@ test("login de cliente valida credenciales y limita next exclusivamente a cuenta
 });
 
 test("login de cliente distingue Auth de acceso activo y no atrapa redirects", async () => {
-  const credentials = { email: "cliente@furiver.test", password: "password-seguro" };
-  const authorized = await runCustomerLoginFlow({
+  const credentials = {
+    email: "cliente@furiver.test",
+    password: "password-seguro",
+  };
+  const authorized = await runCustomerLoginFlow(
+    {
     async signInWithPassword() {
       return { error: null };
     },
     async resolveAccess() {
       return {
         status: "authorized",
-        identity: { userId: "verified-customer", email: "cliente@furiver.test" },
+          identity: {
+            userId: "verified-customer",
+            email: "cliente@furiver.test",
+          },
         account: {
           customerAccountId: "customer-furiver",
           agencyId: "agency-furiver",
@@ -785,35 +851,45 @@ test("login de cliente distingue Auth de acceso activo y no atrapa redirects", a
         accounts: [],
       };
     },
-  }, credentials);
+    },
+    credentials,
+  );
   assert.equal(authorized.status, "authorized");
   if (authorized.status === "authorized") {
     assert.equal(authorized.access.account.agencySlug, "furiver");
   }
 
-  const authFailed = await runCustomerLoginFlow({
+  const authFailed = await runCustomerLoginFlow(
+    {
     async signInWithPassword() {
       return { error: { code: "invalid_credentials" } };
     },
     async resolveAccess() {
       throw new Error("must not resolve access after failed auth");
     },
-  }, credentials);
+    },
+    credentials,
+  );
   assert.deepEqual(authFailed, { status: "auth_failed" });
 
-  const noAccount = await runCustomerLoginFlow({
+  const noAccount = await runCustomerLoginFlow(
+    {
     async signInWithPassword() {
       return { error: null };
     },
     async resolveAccess() {
       return { status: "forbidden" };
     },
-  }, credentials);
+    },
+    credentials,
+  );
   assert.deepEqual(noAccount, { status: "forbidden" });
 
   const actionsSource = readFileSync("app/cuenta/actions.ts", "utf8");
   assert.match(actionsSource, /resolveCustomerAgencyAccess\(\{\}, auth\)/);
-  assert.ok(actionsSource.indexOf("redirect(") > actionsSource.lastIndexOf("catch"));
+  assert.ok(
+    actionsSource.indexOf("redirect(") > actionsSource.lastIndexOf("catch"),
+  );
 });
 
 test("RLS permite resolver agencias solo para cuentas de cliente activas", () => {
@@ -821,7 +897,10 @@ test("RLS permite resolver agencias solo para cuentas de cliente activas", () =>
     "supabase/migrations/20260801040000_customer_agency_read_policy.sql",
     "utf8",
   );
-  assert.match(migration, /grant select on table public\.agencies to authenticated/i);
+  assert.match(
+    migration,
+    /grant select on table public\.agencies to authenticated/i,
+  );
   assert.match(migration, /agencies_select_active_customer_account/);
   assert.match(migration, /public\.has_customer_agency_access\(id\)/);
   assert.equal(migration.includes("service_role"), false);
@@ -859,8 +938,12 @@ test("listado administrativo sanea filtros y mantiene paginación fija sin expon
     "app/admin/[agencySlug]/reservaciones/page.tsx",
     "utf8",
   );
-  const authorizationIndex = pageSource.indexOf("resolveAdminAgencyAccess({ requestedAgencySlug: agencySlug })");
-  const listingIndex = pageSource.indexOf("createAdminReservationRepository().list");
+  const authorizationIndex = pageSource.indexOf(
+    "resolveAdminAgencyAccess({ requestedAgencySlug: agencySlug })",
+  );
+  const listingIndex = pageSource.indexOf(
+    "createAdminReservationRepository().list",
+  );
   assert.ok(authorizationIndex >= 0 && listingIndex > authorizationIndex);
   assert.match(pageSource, /const PAGE_SIZE = 25/);
   assert.match(pageSource, /limit: PAGE_SIZE/);
@@ -899,8 +982,7 @@ const reservationInput = (
     departure: { id: departure.id, startDate: departure.startDate },
     boarding: {
       boardingOptionId: departure.boardingOptions[0].id,
-      boardingPointId:
-        departure.boardingOptions[0].agencyDeparturePointId,
+      boardingPointId: departure.boardingOptions[0].agencyDeparturePointId,
       pointName: "Punto Centro",
       city: "Ciudad de México",
       meetingTime: "05:20",
@@ -994,12 +1076,14 @@ function finalizedReservationForRepository(idempotencyKey = "repository-key") {
   }).reservation;
 }
 
-function adminReservationRow(input: Readonly<{
+function adminReservationRow(
+  input: Readonly<{
   id: string;
   code: string;
   status: ReservationSnapshot["status"];
   createdAt: string;
-}>): AdminReservationListRow {
+  }>,
+): AdminReservationListRow {
   const snapshot = finalizedReservationForRepository(`admin-${input.id}`);
   return {
     id: input.id,
@@ -1106,7 +1190,9 @@ const reservationServerCommand = (options?: {
 const serverReservationRequest = (
   idempotencyKey = "server-command-key",
 ): ReservationServerCommandInput => {
-  const trip = travels.find((candidate) => candidate.slug === "barrancas-del-cobre")!;
+  const trip = travels.find(
+    (candidate) => candidate.slug === "barrancas-del-cobre",
+  )!;
   const departure = trip.departures.find(
     (candidate) => candidate.boardingOptions.length > 0,
   )!;
@@ -1126,7 +1212,8 @@ const serverReservationRequest = (
 };
 
 const publicReservationBody = () => {
-  const { idempotencyKey: _idempotencyKey, ...body } = serverReservationRequest();
+  const { idempotencyKey: _idempotencyKey, ...body } =
+    serverReservationRequest();
   return body;
 };
 
@@ -1239,15 +1326,34 @@ test("listado administrativo conserva snapshots históricos sin habitaciones", a
   const { rooms: _rooms, ...snapshotWithoutRooms } = historicalSnapshot;
   const historical = { ...historicalSource, snapshot: snapshotWithoutRooms };
   const repository = createAdminReservationListing({
-    agencyResolver: { async findBySlug() { return { id: "agency-furiver-persisted", slug: "furiver", name: "Furiver" }; } },
-    reservationClient: { async list() { return [historical, modern]; } },
+    agencyResolver: {
+      async findBySlug() {
+        return {
+          id: "agency-furiver-persisted",
+          slug: "furiver",
+          name: "Furiver",
+        };
+      },
+    },
+    reservationClient: {
+      async list() {
+        return [historical, modern];
+      },
+    },
   });
 
   const reservations = await repository.list({ agencySlug: "furiver" });
   assert.equal(reservations.length, 2);
-  assert.equal(reservations[0].rooms, modern.snapshot && (modern.snapshot as ReservationSnapshot).rooms);
+  assert.equal(
+    reservations[0].rooms,
+    modern.snapshot && (modern.snapshot as ReservationSnapshot).rooms,
+  );
   assert.equal(reservations[1].rooms, null);
-  assert.deepEqual(reservations[1].occupancy, { adults: 2, minors: 1, totalTravelers: 3 });
+  assert.deepEqual(reservations[1].occupancy, {
+    adults: 2,
+    minors: 1,
+    totalTravelers: 3,
+  });
 });
 
 test("listado administrativo recupera ocupación histórica desde viajeros sin inventar datos", async () => {
@@ -1260,12 +1366,28 @@ test("listado administrativo recupera ocupación histórica desde viajeros sin i
   const snapshot = source.snapshot as ReservationSnapshot;
   const { occupancy: _occupancy, ...snapshotWithoutOccupancy } = snapshot;
   const repository = createAdminReservationListing({
-    agencyResolver: { async findBySlug() { return { id: "agency-furiver-persisted", slug: "furiver", name: "Furiver" }; } },
-    reservationClient: { async list() { return [{ ...source, snapshot: snapshotWithoutOccupancy }]; } },
+    agencyResolver: {
+      async findBySlug() {
+        return {
+          id: "agency-furiver-persisted",
+          slug: "furiver",
+          name: "Furiver",
+        };
+      },
+    },
+    reservationClient: {
+      async list() {
+        return [{ ...source, snapshot: snapshotWithoutOccupancy }];
+      },
+    },
   });
 
   const [reservation] = await repository.list({ agencySlug: "furiver" });
-  assert.deepEqual(reservation.occupancy, { adults: 2, minors: 1, totalTravelers: 3 });
+  assert.deepEqual(reservation.occupancy, {
+    adults: 2,
+    minors: 1,
+    totalTravelers: 3,
+  });
 });
 
 test("listado administrativo marca campos históricos irrecuparables como no disponibles", async () => {
@@ -1276,16 +1398,37 @@ test("listado administrativo marca campos históricos irrecuparables como no dis
     createdAt: "2026-08-02T08:00:00.000Z",
   });
   const snapshot = source.snapshot as ReservationSnapshot;
-  const { rooms: _rooms, occupancy: _occupancy, boarding: _boarding, ...partialSnapshot } = snapshot;
+  const {
+    rooms: _rooms,
+    occupancy: _occupancy,
+    boarding: _boarding,
+    ...partialSnapshot
+  } = snapshot;
   const repository = createAdminReservationListing({
-    agencyResolver: { async findBySlug() { return { id: "agency-furiver-persisted", slug: "furiver", name: "Furiver" }; } },
-    reservationClient: { async list() { return [{ ...source, snapshot: partialSnapshot }]; } },
+    agencyResolver: {
+      async findBySlug() {
+        return {
+          id: "agency-furiver-persisted",
+          slug: "furiver",
+          name: "Furiver",
+        };
+      },
+    },
+    reservationClient: {
+      async list() {
+        return [{ ...source, snapshot: partialSnapshot }];
+      },
+    },
   });
 
   const [reservation] = await repository.list({ agencySlug: "furiver" });
   assert.equal(reservation.rooms, null);
   assert.equal(reservation.boardingPointName, null);
-  assert.deepEqual(reservation.occupancy, { adults: 2, minors: 1, totalTravelers: 3 });
+  assert.deepEqual(reservation.occupancy, {
+    adults: 2,
+    minors: 1,
+    totalTravelers: 3,
+  });
 
   const page = readFileSync(
     "app/admin/[agencySlug]/reservaciones/page.tsx",
@@ -1304,11 +1447,26 @@ test("listado administrativo conserva una página completa de cinco filas", asyn
     }),
   );
   const repository = createAdminReservationListing({
-    agencyResolver: { async findBySlug() { return { id: "agency-furiver-persisted", slug: "furiver", name: "Furiver" }; } },
-    reservationClient: { async list() { return rows; } },
+    agencyResolver: {
+      async findBySlug() {
+        return {
+          id: "agency-furiver-persisted",
+          slug: "furiver",
+          name: "Furiver",
+        };
+      },
+    },
+    reservationClient: {
+      async list() {
+        return rows;
+      },
+    },
   });
 
-  assert.equal((await repository.list({ agencySlug: "furiver", limit: 25 })).length, 5);
+  assert.equal(
+    (await repository.list({ agencySlug: "furiver", limit: 25 })).length,
+    5,
+  );
 });
 
 test("repositorio administrativo entrega not found e internal saneados", async () => {
@@ -1362,129 +1520,335 @@ function adminReservationDetailRow(
 
 function adminReservationTravelerRows() {
   return [
-    { position: 1, traveler_type: "adult", status: "complete", first_name: "Juan", last_name: "Pérez" },
-    { position: 2, traveler_type: "adult", status: "pending", first_name: null, last_name: null },
-    { position: 3, traveler_type: "minor", status: "pending", first_name: null, last_name: null },
+    {
+      position: 1,
+      traveler_type: "adult",
+      status: "complete",
+      first_name: "Juan",
+      last_name: "Pérez",
+    },
+    {
+      position: 2,
+      traveler_type: "adult",
+      status: "pending",
+      first_name: null,
+      last_name: null,
+    },
+    {
+      position: 3,
+      traveler_type: "minor",
+      status: "pending",
+      first_name: null,
+      last_name: null,
+    },
   ] as const;
 }
 
 test("detalle administrativo valida UUID antes de consultar y exige agencia autorizada", async () => {
   let calls = 0;
   const detail = createAdminReservationDetail({
-    reservationClient: { async find() { calls += 1; return null; }, async listTravelers() { return []; } },
+    reservationClient: {
+      async find() {
+        calls += 1;
+        return null;
+      },
+      async listTravelers() {
+        return [];
+      },
+    },
   });
   await assert.rejects(
     detail.find({ agencyId: "agency-furiver", reservationId: "no-es-uuid" }),
-    (error: unknown) => error instanceof AdminReservationDetailError && error.kind === "invalid",
+    (error: unknown) =>
+      error instanceof AdminReservationDetailError && error.kind === "invalid",
   );
   assert.equal(calls, 0);
 
   const requests: Array<{ agencyId: string; reservationId: string }> = [];
   const authorized = createAdminReservationDetail({
-    reservationClient: { async find(input) { requests.push(input); return adminReservationDetailRow(); }, async listTravelers(input) { requests.push(input); return adminReservationTravelerRows(); } },
+    reservationClient: {
+      async find(input) {
+        requests.push(input);
+        return adminReservationDetailRow();
+      },
+      async listTravelers(input) {
+        requests.push(input);
+        return adminReservationTravelerRows();
+      },
+    },
   });
-  await authorized.find({ agencyId: "agency-furiver", reservationId: adminDetailReservationId });
-  assert.deepEqual(requests, [{ agencyId: "agency-furiver", reservationId: adminDetailReservationId }, { agencyId: "agency-furiver", reservationId: adminDetailReservationId }]);
+  await authorized.find({
+    agencyId: "agency-furiver",
+    reservationId: adminDetailReservationId,
+  });
+  assert.deepEqual(requests, [
+    { agencyId: "agency-furiver", reservationId: adminDetailReservationId },
+    { agencyId: "agency-furiver", reservationId: adminDetailReservationId },
+  ]);
 });
 
 test("detalle administrativo proyecta snapshots modernos e históricos de forma segura", async () => {
   const modern = adminReservationDetailRow();
   const modernSnapshot = modern.snapshot as ReservationSnapshot;
-  const detail = createAdminReservationDetail({ reservationClient: { async find() { return modern; }, async listTravelers() { return adminReservationTravelerRows(); } } });
-  const result = await detail.find({ agencyId: "agency-furiver", reservationId: adminDetailReservationId });
-  assert.deepEqual(result.occupancy, { rooms: modernSnapshot.rooms, adults: 2, minors: 1, totalTravelers: 3 });
+  const detail = createAdminReservationDetail({
+    reservationClient: {
+      async find() {
+        return modern;
+      },
+      async listTravelers() {
+        return adminReservationTravelerRows();
+      },
+    },
+  });
+  const result = await detail.find({
+    agencyId: "agency-furiver",
+    reservationId: adminDetailReservationId,
+  });
+  assert.deepEqual(result.occupancy, {
+    rooms: modernSnapshot.rooms,
+    adults: 2,
+    minors: 1,
+    totalTravelers: 3,
+  });
   assert.equal(result.primaryContact, null);
   assert.equal(result.travelerDataStatus, "pending");
-  assert.deepEqual(result.travelers[0], { position: 1, travelerType: "adult", firstName: "Juan", lastName: "Pérez", status: "complete" });
+  assert.deepEqual(result.travelers[0], {
+    position: 1,
+    travelerType: "adult",
+    firstName: "Juan",
+    lastName: "Pérez",
+    status: "complete",
+  });
   assert.equal("snapshot" in result, false);
   assert.equal("idempotencyKey" in result, false);
   assert.equal("agencyId" in result, false);
 
-  const { rooms: _rooms, occupancy: _occupancy, ...historical } = modernSnapshot;
+  const {
+    rooms: _rooms,
+    occupancy: _occupancy,
+    ...historical
+  } = modernSnapshot;
   const historicalDetail = createAdminReservationDetail({
-    reservationClient: { async find() { return adminReservationDetailRow(historical); }, async listTravelers() { return adminReservationTravelerRows(); } },
+    reservationClient: {
+      async find() {
+        return adminReservationDetailRow(historical);
+      },
+      async listTravelers() {
+        return adminReservationTravelerRows();
+      },
+    },
   });
-  const recovered = await historicalDetail.find({ agencyId: "agency-furiver", reservationId: adminDetailReservationId });
-  assert.deepEqual(recovered.occupancy, { rooms: null, adults: 2, minors: 1, totalTravelers: 3 });
+  const recovered = await historicalDetail.find({
+    agencyId: "agency-furiver",
+    reservationId: adminDetailReservationId,
+  });
+  assert.deepEqual(recovered.occupancy, {
+    rooms: null,
+    adults: 2,
+    minors: 1,
+    totalTravelers: 3,
+  });
   assert.equal(recovered.travelers.length, 3);
 });
 
 test("detalle administrativo usa reservation_travelers como fuente canónica y conserva slots pendientes", async () => {
   const snapshot = {
-    ...adminReservationDetailRow().snapshot as ReservationSnapshot,
+    ...(adminReservationDetailRow().snapshot as ReservationSnapshot),
     travelers: {
       adults: 2,
       minors: 1,
       status: "pending",
-      drafts: [{ category: "adult", fullName: "Nombre del snapshot", completionStatus: "complete" }],
+      drafts: [
+        {
+          category: "adult",
+          fullName: "Nombre del snapshot",
+          completionStatus: "complete",
+        },
+      ],
     },
   };
   const rows = [
-    { position: 2, traveler_type: "adult", status: "pending", first_name: null, last_name: null },
-    { position: 3, traveler_type: "minor", status: "pending", first_name: null, last_name: null },
-    { position: 1, traveler_type: "adult", status: "complete", first_name: "Juan Carlos", last_name: "Pérez" },
+    {
+      position: 2,
+      traveler_type: "adult",
+      status: "pending",
+      first_name: null,
+      last_name: null,
+    },
+    {
+      position: 3,
+      traveler_type: "minor",
+      status: "pending",
+      first_name: null,
+      last_name: null,
+    },
+    {
+      position: 1,
+      traveler_type: "adult",
+      status: "complete",
+      first_name: "Juan Carlos",
+      last_name: "Pérez",
+    },
   ] as const;
   const snapshotBeforeRead = JSON.stringify(snapshot);
   const detail = createAdminReservationDetail({
     reservationClient: {
-      async find() { return adminReservationDetailRow(snapshot); },
-      async listTravelers() { return rows; },
+      async find() {
+        return adminReservationDetailRow(snapshot);
+      },
+      async listTravelers() {
+        return rows;
+      },
     },
   });
-  const result = await detail.find({ agencyId: "agency-furiver", reservationId: adminDetailReservationId });
+  const result = await detail.find({
+    agencyId: "agency-furiver",
+    reservationId: adminDetailReservationId,
+  });
   assert.deepEqual(result.travelers, [
-    { position: 1, travelerType: "adult", firstName: "Juan Carlos", lastName: "Pérez", status: "complete" },
-    { position: 2, travelerType: "adult", firstName: null, lastName: null, status: "pending" },
-    { position: 3, travelerType: "minor", firstName: null, lastName: null, status: "pending" },
+    {
+      position: 1,
+      travelerType: "adult",
+      firstName: "Juan Carlos",
+      lastName: "Pérez",
+      status: "complete",
+    },
+    {
+      position: 2,
+      travelerType: "adult",
+      firstName: null,
+      lastName: null,
+      status: "pending",
+    },
+    {
+      position: 3,
+      travelerType: "minor",
+      firstName: null,
+      lastName: null,
+      status: "pending",
+    },
   ]);
-  assert.equal(JSON.stringify(result.travelers).includes("Nombre del snapshot"), false);
+  assert.equal(
+    JSON.stringify(result.travelers).includes("Nombre del snapshot"),
+    false,
+  );
   assert.equal(result.travelerDataStatus, "pending");
   assert.equal(JSON.stringify(snapshot), snapshotBeforeRead);
 
   const malformed = createAdminReservationDetail({
     reservationClient: {
-      async find() { return adminReservationDetailRow(snapshot); },
-      async listTravelers() { return rows.slice(0, 2); },
+      async find() {
+        return adminReservationDetailRow(snapshot);
+      },
+      async listTravelers() {
+        return rows.slice(0, 2);
+      },
     },
   });
-  assert.equal((await malformed.find({ agencyId: "agency-furiver", reservationId: adminDetailReservationId })).travelerDataStatus, "invalid_structure");
+  assert.equal(
+    (
+      await malformed.find({
+        agencyId: "agency-furiver",
+        reservationId: adminDetailReservationId,
+      })
+    ).travelerDataStatus,
+    "invalid_structure",
+  );
 
-  const action = readFileSync("app/cuenta/[agencySlug]/reservaciones/[reservationId]/traveler-actions.ts", "utf8");
-  const adminPage = readFileSync("app/admin/[agencySlug]/reservaciones/[reservationId]/page.tsx", "utf8");
-  assert.match(action, /revalidatePath\(\s*`\/cuenta\/\$\{encodeURIComponent\(requestedAgencySlug\)\}\/reservaciones\/\$\{reservationId\}`/);
-  assert.match(action, /revalidatePath\(\s*`\/admin\/\$\{encodeURIComponent\(requestedAgencySlug\)\}\/reservaciones\/\$\{reservationId\}`/);
+  const action = readFileSync(
+    "app/cuenta/[agencySlug]/reservaciones/[reservationId]/traveler-actions.ts",
+    "utf8",
+  );
+  const adminPage = readFileSync(
+    "app/admin/[agencySlug]/reservaciones/[reservationId]/page.tsx",
+    "utf8",
+  );
+  assert.match(
+    action,
+    /revalidatePath\(\s*`\/cuenta\/\$\{encodeURIComponent\(requestedAgencySlug\)\}\/reservaciones\/\$\{reservationId\}`/,
+  );
+  assert.match(
+    action,
+    /revalidatePath\(\s*`\/admin\/\$\{encodeURIComponent\(requestedAgencySlug\)\}\/reservaciones\/\$\{reservationId\}`/,
+  );
   assert.match(adminPage, /Viajero \$\{traveler\.position\}/);
   assert.match(adminPage, /traveler\.firstName, traveler\.lastName/);
 });
 
 test("detalle administrativo mantiene aislamiento y sanea errores internos", async () => {
-  const isolated = createAdminReservationDetail({ reservationClient: { async find() { return null; }, async listTravelers() { return []; } } });
+  const isolated = createAdminReservationDetail({
+    reservationClient: {
+      async find() {
+        return null;
+      },
+      async listTravelers() {
+        return [];
+      },
+    },
+  });
   await assert.rejects(
-    isolated.find({ agencyId: "agency-crisenix", reservationId: adminDetailReservationId }),
-    (error: unknown) => error instanceof AdminReservationDetailError && error.kind === "not_found",
+    isolated.find({
+      agencyId: "agency-crisenix",
+      reservationId: adminDetailReservationId,
+    }),
+    (error: unknown) =>
+      error instanceof AdminReservationDetailError &&
+      error.kind === "not_found",
   );
-  const failing = createAdminReservationDetail({ reservationClient: { async find() { throw new Error("SQL secret details"); }, async listTravelers() { return []; } } });
+  const failing = createAdminReservationDetail({
+    reservationClient: {
+      async find() {
+        throw new Error("SQL secret details");
+      },
+      async listTravelers() {
+        return [];
+      },
+    },
+  });
   await assert.rejects(
-    failing.find({ agencyId: "agency-furiver", reservationId: adminDetailReservationId }),
-    (error: unknown) => error instanceof AdminReservationDetailError && error.kind === "internal" && !error.message.includes("SQL"),
+    failing.find({
+      agencyId: "agency-furiver",
+      reservationId: adminDetailReservationId,
+    }),
+    (error: unknown) =>
+      error instanceof AdminReservationDetailError &&
+      error.kind === "internal" &&
+      !error.message.includes("SQL"),
   );
 });
 
 test("página de detalle autoriza antes de consultar y repositorio filtra por agencia", () => {
-  const page = readFileSync("app/admin/[agencySlug]/reservaciones/[reservationId]/page.tsx", "utf8");
-  assert.ok(page.indexOf("resolveAdminAgencyAccess") < page.indexOf("createAdminReservationDetailRepository().find"));
+  const page = readFileSync(
+    "app/admin/[agencySlug]/reservaciones/[reservationId]/page.tsx",
+    "utf8",
+  );
+  assert.ok(
+    page.indexOf("resolveAdminAgencyAccess") <
+      page.indexOf("createAdminReservationDetailRepository().find"),
+  );
   assert.equal(page.includes("error.message"), false);
-  const repository = readFileSync("lib/reservations/admin-detail-repository.ts", "utf8");
-  assert.match(repository, /\.eq\("id", reservationId\)[\s\S]*\.eq\("agency_id", agencyId\)/);
-  assert.match(repository, /from\("reservation_travelers"\)[\s\S]*\.eq\("reservation_id", reservationId\)[\s\S]*\.eq\("agency_id", agencyId\)[\s\S]*\.order\("position", \{ ascending: true \}\)/);
+  const repository = readFileSync(
+    "lib/reservations/admin-detail-repository.ts",
+    "utf8",
+  );
+  assert.match(
+    repository,
+    /\.eq\("id", reservationId\)[\s\S]*\.eq\("agency_id", agencyId\)/,
+  );
+  assert.match(
+    repository,
+    /from\("reservation_travelers"\)[\s\S]*\.eq\("reservation_id", reservationId\)[\s\S]*\.eq\("agency_id", agencyId\)[\s\S]*\.order\("position", \{ ascending: true \}\)/,
+  );
 });
 
-function customerReservationListingFixture(input: Readonly<{
+function customerReservationListingFixture(
+  input: Readonly<{
   accounts?: readonly CustomerAgencyAccountRecord[];
   rows?: readonly AdminReservationListRow[];
   total?: number;
   failReservations?: boolean;
-}> = {}) {
+  }> = {},
+) {
   const requests: Array<{
     customerAccountId: string;
     agencyId: string;
@@ -1492,14 +1856,19 @@ function customerReservationListingFixture(input: Readonly<{
     limit: number;
     offset: number;
   }> = [];
-  const access = customerAccessFixture({ accounts: input.accounts ?? [customerAccount()] });
+  const access = customerAccessFixture({
+    accounts: input.accounts ?? [customerAccount()],
+  });
   const lister = createCustomerReservationLister({
     resolveAccess: access.resolver.resolve,
     reservationRepository: {
       async list(request) {
         requests.push(request);
         if (input.failReservations) throw new Error("snapshot SQL details");
-        return { rows: input.rows ?? [], total: input.total ?? (input.rows ?? []).length };
+        return {
+          rows: input.rows ?? [],
+          total: input.total ?? (input.rows ?? []).length,
+        };
       },
     },
   });
@@ -1509,10 +1878,16 @@ function customerReservationListingFixture(input: Readonly<{
 test("mis reservaciones no consulta vínculos sin cuenta activa o con varias cuentas", async () => {
   let repositoryCreated = false;
   const unauthenticated = createCustomerReservationLister({
-    async resolveAccess() { return { status: "unauthenticated" } as const; },
+    async resolveAccess() {
+      return { status: "unauthenticated" } as const;
+    },
     reservationRepository: () => {
       repositoryCreated = true;
-      return { async list() { throw new Error("No debe consultar"); } };
+      return {
+        async list() {
+          throw new Error("No debe consultar");
+        },
+      };
     },
   });
   assert.deepEqual(await unauthenticated.list(), { status: "unauthenticated" });
@@ -1523,7 +1898,15 @@ test("mis reservaciones no consulta vínculos sin cuenta activa o con varias cue
   assert.deepEqual(forbidden.requests, []);
 
   const multiple = customerReservationListingFixture({
-    accounts: [customerAccount(), customerAccount({ customerAccountId: "customer-crisenix", agencyId: "agency-crisenix", agencySlug: "crisenix", agencyName: "Crisenix" })],
+    accounts: [
+      customerAccount(),
+      customerAccount({
+        customerAccountId: "customer-crisenix",
+        agencyId: "agency-crisenix",
+        agencySlug: "crisenix",
+        agencyName: "Crisenix",
+      }),
+    ],
   });
   const result = await multiple.lister.list();
   assert.equal(result.status, "selection_required");
@@ -1531,19 +1914,48 @@ test("mis reservaciones no consulta vínculos sin cuenta activa o con varias cue
 });
 
 test("mis reservaciones filtra por cuenta y agencia autorizadas, pagina y ordena", async () => {
-  const older = adminReservationRow({ id: "customer-old", code: "FT-CUSTOMER-OLD", status: "pending", createdAt: "2026-08-01T08:00:00.000Z" });
-  const newer = adminReservationRow({ id: "customer-new", code: "FT-CUSTOMER-NEW", status: "confirmed", createdAt: "2026-08-02T08:00:00.000Z" });
-  const { lister, requests } = customerReservationListingFixture({ rows: [older, newer], total: 2 });
-  const result = await lister.list({ requestedAgencySlug: "furiver", status: "pending", limit: 999, offset: -3 });
+  const older = adminReservationRow({
+    id: "customer-old",
+    code: "FT-CUSTOMER-OLD",
+    status: "pending",
+    createdAt: "2026-08-01T08:00:00.000Z",
+  });
+  const newer = adminReservationRow({
+    id: "customer-new",
+    code: "FT-CUSTOMER-NEW",
+    status: "confirmed",
+    createdAt: "2026-08-02T08:00:00.000Z",
+  });
+  const { lister, requests } = customerReservationListingFixture({
+    rows: [older, newer],
+    total: 2,
+  });
+  const result = await lister.list({
+    requestedAgencySlug: "furiver",
+    status: "pending",
+    limit: 999,
+    offset: -3,
+  });
 
   assert.equal(result.status, "authorized");
   if (result.status === "authorized") {
     assert.equal(result.total, 2);
     assert.equal(result.limit, 50);
     assert.equal(result.offset, 0);
-    assert.deepEqual(result.items.map((item) => item.reservationCode), ["FT-CUSTOMER-NEW", "FT-CUSTOMER-OLD"]);
+    assert.deepEqual(
+      result.items.map((item) => item.reservationCode),
+      ["FT-CUSTOMER-NEW", "FT-CUSTOMER-OLD"],
+    );
   }
-  assert.deepEqual(requests, [{ customerAccountId: "customer-furiver", agencyId: "agency-furiver", status: "pending", limit: 50, offset: 0 }]);
+  assert.deepEqual(requests, [
+    {
+      customerAccountId: "customer-furiver",
+      agencyId: "agency-furiver",
+      status: "pending",
+      limit: 50,
+      offset: 0,
+    },
+  ]);
 });
 
 test("cliente autorizado proyecta exclusivamente su reservación vinculada", async () => {
@@ -1557,31 +1969,57 @@ test("cliente autorizado proyecta exclusivamente su reservación vinculada", asy
     rows: [linkedReservation],
     total: 1,
   });
-  const result = await lister.list({ requestedAgencySlug: "furiver", limit: 20, offset: 0 });
+  const result = await lister.list({
+    requestedAgencySlug: "furiver",
+    limit: 20,
+    offset: 0,
+  });
 
   assert.equal(result.status, "authorized");
   if (result.status === "authorized") {
     assert.equal(result.total, 1);
-    assert.deepEqual(result.items.map((item) => item.reservationCode), ["FT-004-260801-D01B4E"]);
+    assert.deepEqual(
+      result.items.map((item) => item.reservationCode),
+      ["FT-004-260801-D01B4E"],
+    );
   }
-  assert.deepEqual(requests, [{
+  assert.deepEqual(requests, [
+    {
     customerAccountId: "customer-furiver",
     agencyId: "agency-furiver",
     limit: 20,
     offset: 0,
-  }]);
+    },
+  ]);
 });
 
 test("mis reservaciones conserva snapshots históricos y no expone PII ni datos técnicos", async () => {
-  const source = adminReservationRow({ id: "customer-historical", code: "FT-CUSTOMER-HIST", status: "pending", createdAt: "2026-08-02T08:00:00.000Z" });
+  const source = adminReservationRow({
+    id: "customer-historical",
+    code: "FT-CUSTOMER-HIST",
+    status: "pending",
+    createdAt: "2026-08-02T08:00:00.000Z",
+  });
   const snapshot = source.snapshot as ReservationSnapshot;
-  const { rooms: _rooms, occupancy: _occupancy, boarding: _boarding, ...historical } = snapshot;
-  const { lister } = customerReservationListingFixture({ rows: [{ ...source, snapshot: historical }] });
+  const {
+    rooms: _rooms,
+    occupancy: _occupancy,
+    boarding: _boarding,
+    ...historical
+  } = snapshot;
+  const { lister } = customerReservationListingFixture({
+    rows: [{ ...source, snapshot: historical }],
+  });
   const result = await lister.list({ requestedAgencySlug: "furiver" });
   assert.equal(result.status, "authorized");
   if (result.status === "authorized") {
     const [item] = result.items;
-    assert.deepEqual(item.occupancy, { rooms: null, adults: 2, minors: 1, totalTravelers: 3 });
+    assert.deepEqual(item.occupancy, {
+      rooms: null,
+      adults: 2,
+      minors: 1,
+      totalTravelers: 3,
+    });
     assert.equal(item.trip.boardingPointName, null);
     const serialized = JSON.stringify(item);
     assert.equal(serialized.includes("Dato privado"), false);
@@ -1594,7 +2032,10 @@ test("mis reservaciones conserva snapshots históricos y no expone PII ni datos 
 
 test("mis reservaciones sanea filtros, errores y mantiene la separación de clientes", async () => {
   assert.equal(normalizeCustomerReservationStatus("pending"), "pending");
-  assert.equal(normalizeCustomerReservationStatus("deposit_pending"), undefined);
+  assert.equal(
+    normalizeCustomerReservationStatus("deposit_pending"),
+    undefined,
+  );
   assert.equal(normalizeCustomerReservationLimit(undefined), 20);
   assert.equal(normalizeCustomerReservationLimit(100), 50);
   assert.equal(normalizeCustomerReservationOffset(-1), 0);
@@ -1608,10 +2049,15 @@ test("mis reservaciones sanea filtros, errores y mantiene la separación de clie
   const failing = customerReservationListingFixture({ failReservations: true });
   await assert.rejects(
     failing.lister.list({ requestedAgencySlug: "furiver" }),
-    (error: unknown) => error instanceof CustomerReservationListError && !error.message.includes("SQL"),
+    (error: unknown) =>
+      error instanceof CustomerReservationListError &&
+      !error.message.includes("SQL"),
   );
 
-  const repository = readFileSync("lib/customers/customer-reservations-repository.ts", "utf8");
+  const repository = readFileSync(
+    "lib/customers/customer-reservations-repository.ts",
+    "utf8",
+  );
   assert.match(repository, /\.eq\("customer_account_id", customerAccountId\)/);
   assert.match(repository, /\.eq\("agency_id", agencyId\)/);
   assert.match(repository, /reservation_snapshots\.agency_id", agencyId/);
@@ -1620,12 +2066,14 @@ test("mis reservaciones sanea filtros, errores y mantiene la separación de clie
 
 const customerDetailReservationId = "46a10852-8620-4a59-9187-a21b07ce3f05";
 
-function customerReservationDetailRow(snapshot: unknown = adminReservationRow({
+function customerReservationDetailRow(
+  snapshot: unknown = adminReservationRow({
   id: customerDetailReservationId,
   code: "FT-004-260801-D01B4E",
   status: "pending",
   createdAt: "2026-08-01T08:00:00.000Z",
-}).snapshot) {
+  }).snapshot,
+) {
   return {
     id: customerDetailReservationId,
     reservation_code: "FT-004-260801-D01B4E",
@@ -1636,20 +2084,30 @@ function customerReservationDetailRow(snapshot: unknown = adminReservationRow({
   };
 }
 
-function customerReservationDetailFixture(input: Readonly<{
+function customerReservationDetailFixture(
+  input: Readonly<{
   accounts?: readonly CustomerAgencyAccountRecord[];
   row?: ReturnType<typeof customerReservationDetailRow> | null;
   failRepository?: boolean;
-}> = {}) {
-  const requests: Array<{ customerAccountId: string; agencyId: string; reservationId: string }> = [];
-  const access = customerAccessFixture({ accounts: input.accounts ?? [customerAccount()] });
+  }> = {},
+) {
+  const requests: Array<{
+    customerAccountId: string;
+    agencyId: string;
+    reservationId: string;
+  }> = [];
+  const access = customerAccessFixture({
+    accounts: input.accounts ?? [customerAccount()],
+  });
   const detail = createCustomerReservationDetail({
     resolveAccess: access.resolver.resolve,
     repository: {
       async find(request) {
         requests.push(request);
         if (input.failRepository) throw new Error("SQL detail");
-        return input.row === undefined ? customerReservationDetailRow() : input.row;
+        return input.row === undefined
+          ? customerReservationDetailRow()
+          : input.row;
       },
     },
   });
@@ -1659,22 +2117,41 @@ function customerReservationDetailFixture(input: Readonly<{
 test("detalle de cliente valida UUID antes de consultar y exige una cuenta activa", async () => {
   let repositoryCalls = 0;
   const invalid = createCustomerReservationDetail({
-    async resolveAccess() { return { status: "unauthenticated" } as const; },
-    repository: { async find() { repositoryCalls += 1; return null; } },
+    async resolveAccess() {
+      return { status: "unauthenticated" } as const;
+    },
+    repository: {
+      async find() {
+        repositoryCalls += 1;
+        return null;
+      },
+    },
   });
   assert.deepEqual(
-    await invalid.get({ requestedAgencySlug: "furiver", reservationId: "no-es-uuid" }),
+    await invalid.get({
+      requestedAgencySlug: "furiver",
+      reservationId: "no-es-uuid",
+    }),
     { status: "not_found" },
   );
   assert.equal(repositoryCalls, 0);
   assert.equal(isCustomerReservationUuid(customerDetailReservationId), true);
 
   const unauthenticated = createCustomerReservationDetail({
-    async resolveAccess() { return { status: "unauthenticated" } as const; },
-    repository: { async find() { throw new Error("No debe consultar"); } },
+    async resolveAccess() {
+      return { status: "unauthenticated" } as const;
+    },
+    repository: {
+      async find() {
+        throw new Error("No debe consultar");
+      },
+    },
   });
   assert.deepEqual(
-    await unauthenticated.get({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId }),
+    await unauthenticated.get({
+      requestedAgencySlug: "furiver",
+      reservationId: customerDetailReservationId,
+    }),
     { status: "unauthenticated" },
   );
 });
@@ -1689,60 +2166,95 @@ test("detalle de cliente requiere vínculo por cuenta, agencia y reservación", 
   if (result.status === "authorized") {
     assert.equal(result.reservation.reservationCode, "FT-004-260801-D01B4E");
   }
-  assert.deepEqual(requests, [{
+  assert.deepEqual(requests, [
+    {
     customerAccountId: "customer-furiver",
     agencyId: "agency-furiver",
     reservationId: customerDetailReservationId,
-  }]);
+    },
+  ]);
 
   const absent = customerReservationDetailFixture({ row: null });
   assert.deepEqual(
-    await absent.detail.get({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId }),
+    await absent.detail.get({
+      requestedAgencySlug: "furiver",
+      reservationId: customerDetailReservationId,
+    }),
     { status: "not_found" },
   );
 
   const otherAccount = customerReservationDetailFixture({
     accounts: [customerAccount({ customerAccountId: "another-customer" })],
   });
-  await otherAccount.detail.get({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId });
+  await otherAccount.detail.get({
+    requestedAgencySlug: "furiver",
+    reservationId: customerDetailReservationId,
+  });
   assert.equal(otherAccount.requests[0].customerAccountId, "another-customer");
 });
 
 test("detalle de cliente mantiene aislamiento frente a otras agencias y cuentas inactivas", async () => {
   const otherTenant = customerReservationDetailFixture();
   assert.deepEqual(
-    await otherTenant.detail.get({ requestedAgencySlug: "crisenix", reservationId: customerDetailReservationId }),
+    await otherTenant.detail.get({
+      requestedAgencySlug: "crisenix",
+      reservationId: customerDetailReservationId,
+    }),
     { status: "forbidden" },
   );
   assert.deepEqual(otherTenant.requests, []);
 
   for (const status of ["invited", "suspended"] as const) {
-    const inactive = customerReservationDetailFixture({ accounts: [customerAccount({ status })] });
+    const inactive = customerReservationDetailFixture({
+      accounts: [customerAccount({ status })],
+    });
     assert.deepEqual(
-      await inactive.detail.get({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId }),
+      await inactive.detail.get({
+        requestedAgencySlug: "furiver",
+        reservationId: customerDetailReservationId,
+      }),
       { status: "forbidden" },
     );
   }
 
   const administratorOnly = customerReservationDetailFixture({ accounts: [] });
   assert.deepEqual(
-    await administratorOnly.detail.get({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId }),
+    await administratorOnly.detail.get({
+      requestedAgencySlug: "furiver",
+      reservationId: customerDetailReservationId,
+    }),
     { status: "forbidden" },
   );
 });
 
 test("detalle de cliente proyecta datos modernos, pendientes e históricos sin exponer el snapshot", async () => {
   const modern = customerReservationDetailRow({
-    ...customerReservationDetailRow().snapshot as ReservationSnapshot,
-    primaryContact: { fullName: "Contacto propio", email: "cliente@example.test", phone: "5555555555" },
+    ...(customerReservationDetailRow().snapshot as ReservationSnapshot),
+    primaryContact: {
+      fullName: "Contacto propio",
+      email: "cliente@example.test",
+      phone: "5555555555",
+    },
   });
   const complete = customerReservationDetailFixture({ row: modern });
-  const result = await complete.detail.get({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId });
+  const result = await complete.detail.get({
+    requestedAgencySlug: "furiver",
+    reservationId: customerDetailReservationId,
+  });
   assert.equal(result.status, "authorized");
   if (result.status === "authorized") {
-    assert.deepEqual(result.reservation.occupancy, { rooms: 0, adults: 2, minors: 1, totalTravelers: 3 });
-    assert.equal(result.reservation.primaryContact?.fullName, "Contacto propio");
-    assert.equal(result.reservation.travelers.length, 1);
+    assert.deepEqual(result.reservation.occupancy, {
+      rooms: 0,
+      adults: 2,
+      minors: 1,
+      totalTravelers: 3,
+    });
+    assert.equal(
+      result.reservation.primaryContact?.fullName,
+      "Contacto propio",
+    );
+    assert.equal("travelers" in result.reservation, false);
+    assert.equal("historicalTravelerDrafts" in result.reservation, false);
     assert.equal(result.reservation.travelerDataStatus, "pending");
     assert.equal("snapshot" in result.reservation, false);
     assert.equal("agencyId" in result.reservation, false);
@@ -1751,10 +2263,19 @@ test("detalle de cliente proyecta datos modernos, pendientes e históricos sin e
   }
 
   const source = customerReservationDetailRow().snapshot as ReservationSnapshot;
-  const { rooms: _rooms, occupancy: _occupancy, boarding: _boarding, travelers: _travelers, ...historical } = source;
+  const {
+    rooms: _rooms,
+    occupancy: _occupancy,
+    boarding: _boarding,
+    travelers: _travelers,
+    ...historical
+  } = source;
   const historicalResult = await customerReservationDetailFixture({
     row: customerReservationDetailRow(historical),
-  }).detail.get({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId });
+  }).detail.get({
+    requestedAgencySlug: "furiver",
+    reservationId: customerDetailReservationId,
+  });
   assert.equal(historicalResult.status, "authorized");
   if (historicalResult.status === "authorized") {
     assert.deepEqual(historicalResult.reservation.occupancy, {
@@ -1764,7 +2285,10 @@ test("detalle de cliente proyecta datos modernos, pendientes e históricos sin e
       totalTravelers: null,
     });
     assert.equal(historicalResult.reservation.trip.boardingPointName, null);
-    assert.equal(historicalResult.reservation.travelers.length, 0);
+    assert.equal(
+      "historicalTravelerDrafts" in historicalResult.reservation,
+      false,
+    );
     assert.equal(historicalResult.reservation.primaryContact, null);
   }
 });
@@ -1772,20 +2296,31 @@ test("detalle de cliente proyecta datos modernos, pendientes e históricos sin e
 test("detalle de cliente sanea errores internos y la UI mantiene navegación protegida", async () => {
   const failing = customerReservationDetailFixture({ failRepository: true });
   await assert.rejects(
-    failing.detail.get({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId }),
-    (error: unknown) => error instanceof CustomerReservationDetailError && !error.message.includes("SQL"),
+    failing.detail.get({
+      requestedAgencySlug: "furiver",
+      reservationId: customerDetailReservationId,
+    }),
+    (error: unknown) =>
+      error instanceof CustomerReservationDetailError &&
+      !error.message.includes("SQL"),
   );
 
   assert.equal(
     customerReservationDetailNextStep("pending"),
     "Tu reservación está recibida. Sigue las instrucciones de la agencia para completar tu anticipo.",
   );
-  const listPage = readFileSync("app/cuenta/[agencySlug]/reservaciones/page.tsx", "utf8");
+  const listPage = readFileSync(
+    "app/cuenta/[agencySlug]/reservaciones/page.tsx",
+    "utf8",
+  );
   const detailPage = readFileSync(
     "app/cuenta/[agencySlug]/reservaciones/[reservationId]/page.tsx",
     "utf8",
   );
-  const repository = readFileSync("lib/customers/customer-reservation-detail-repository.ts", "utf8");
+  const repository = readFileSync(
+    "lib/customers/customer-reservation-detail-repository.ts",
+    "utf8",
+  );
   assert.match(listPage, /Ver reservación/);
   assert.match(detailPage, /Volver a Mis reservaciones/);
   assert.equal(detailPage.includes("resolveCustomerAgencyAccess"), false);
@@ -1795,29 +2330,42 @@ test("detalle de cliente sanea errores internos y la UI mantiene navegación pro
   assert.match(repository, /reservation_snapshots\.agency_id", agencyId/);
 });
 
-function travelerSlotFixture(input: Readonly<{
+function travelerSlotFixture(
+  input: Readonly<{
   accounts?: readonly CustomerAgencyAccountRecord[];
   row?: ReturnType<typeof customerReservationDetailRow> | null;
   slots?: readonly ReservationTravelerSlotRow[];
   failRepository?: boolean;
-}> = {}) {
-  const reads: Array<{ customerAccountId: string; agencyId: string; reservationId: string }> = [];
-  const inserts: Array<readonly { position: number; travelerType: "adult" | "minor" }[]> = [];
+  }> = {},
+) {
+  const reads: Array<{
+    customerAccountId: string;
+    agencyId: string;
+    reservationId: string;
+  }> = [];
+  const inserts: Array<
+    readonly { position: number; travelerType: "adult" | "minor" }[]
+  > = [];
   const slotRows = [...(input.slots ?? [])];
-  const access = customerAccessFixture({ accounts: input.accounts ?? [customerAccount()] });
+  const access = customerAccessFixture({
+    accounts: input.accounts ?? [customerAccount()],
+  });
   const ensurer = createReservationTravelerSlotEnsurer({
     resolveAccess: access.resolver.resolve,
     repository: {
       async findAuthorizedReservation(request) {
         reads.push(request);
         if (input.failRepository) throw new Error("SQL traveler details");
-        const row = input.row === undefined ? customerReservationDetailRow() : input.row;
+        const row =
+          input.row === undefined ? customerReservationDetailRow() : input.row;
         return row ? { snapshot: row, slots: slotRows } : null;
       },
       async insertMissing(request) {
         inserts.push(request.slots);
         for (const slot of request.slots) {
-          if (!slotRows.some((existing) => existing.position === slot.position)) {
+          if (
+            !slotRows.some((existing) => existing.position === slot.position)
+          ) {
             slotRows.push({
               id: `slot-${slot.position}`,
               position: slot.position,
@@ -1835,49 +2383,83 @@ function travelerSlotFixture(input: Readonly<{
 test("slots operativos validan UUID y autorización antes de cualquier lectura o escritura", async () => {
   let repositoryCreated = false;
   const invalid = createReservationTravelerSlotEnsurer({
-    async resolveAccess() { return { status: "unauthenticated" } as const; },
+    async resolveAccess() {
+      return { status: "unauthenticated" } as const;
+    },
     repository: () => {
       repositoryCreated = true;
-      return { async findAuthorizedReservation() { throw new Error("No debe consultar"); }, async insertMissing() {} };
+      return {
+        async findAuthorizedReservation() {
+          throw new Error("No debe consultar");
+        },
+        async insertMissing() {},
+      };
     },
   });
   assert.deepEqual(
-    await invalid.ensure({ requestedAgencySlug: "furiver", reservationId: "no-es-uuid" }),
+    await invalid.ensure({
+      requestedAgencySlug: "furiver",
+      reservationId: "no-es-uuid",
+    }),
     { status: "not_found" },
   );
   assert.equal(repositoryCreated, false);
 
   const unauthenticated = createReservationTravelerSlotEnsurer({
-    async resolveAccess() { return { status: "unauthenticated" } as const; },
-    repository: { async findAuthorizedReservation() { throw new Error("No debe consultar"); }, async insertMissing() {} },
+    async resolveAccess() {
+      return { status: "unauthenticated" } as const;
+    },
+    repository: {
+      async findAuthorizedReservation() {
+        throw new Error("No debe consultar");
+      },
+      async insertMissing() {},
+    },
   });
   assert.deepEqual(
-    await unauthenticated.ensure({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId }),
+    await unauthenticated.ensure({
+      requestedAgencySlug: "furiver",
+      reservationId: customerDetailReservationId,
+    }),
     { status: "unauthenticated" },
   );
 
   const forbidden = travelerSlotFixture();
   assert.deepEqual(
-    await forbidden.ensurer.ensure({ requestedAgencySlug: "crisenix", reservationId: customerDetailReservationId }),
+    await forbidden.ensurer.ensure({
+      requestedAgencySlug: "crisenix",
+      reservationId: customerDetailReservationId,
+    }),
     { status: "forbidden" },
   );
   assert.deepEqual(forbidden.reads, []);
 
   const notLinked = travelerSlotFixture({ row: null });
   assert.deepEqual(
-    await notLinked.ensurer.ensure({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId }),
+    await notLinked.ensurer.ensure({
+      requestedAgencySlug: "furiver",
+      reservationId: customerDetailReservationId,
+    }),
     { status: "not_found" },
   );
 
   const otherCustomer = travelerSlotFixture({
     accounts: [customerAccount({ customerAccountId: "another-customer" })],
   });
-  await otherCustomer.ensurer.ensure({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId });
+  await otherCustomer.ensurer.ensure({
+    requestedAgencySlug: "furiver",
+    reservationId: customerDetailReservationId,
+  });
   assert.equal(otherCustomer.reads[0].customerAccountId, "another-customer");
 
-  const suspended = travelerSlotFixture({ accounts: [customerAccount({ status: "suspended" })] });
+  const suspended = travelerSlotFixture({
+    accounts: [customerAccount({ status: "suspended" })],
+  });
   assert.deepEqual(
-    await suspended.ensurer.ensure({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId }),
+    await suspended.ensurer.ensure({
+      requestedAgencySlug: "furiver",
+      reservationId: customerDetailReservationId,
+    }),
     { status: "forbidden" },
   );
   assert.deepEqual(suspended.reads, []);
@@ -1902,11 +2484,18 @@ test("slots operativos derivan adultos y menores del snapshot, de forma determin
   });
   assert.equal(first.status, "ready");
   if (first.status === "ready") {
-    assert.deepEqual(first.slots.map(({ position, travelerType, status }) => ({ position, travelerType, status })), [
+    assert.deepEqual(
+      first.slots.map(({ position, travelerType, status }) => ({
+        position,
+        travelerType,
+        status,
+      })),
+      [
       { position: 1, travelerType: "adult", status: "pending" },
       { position: 2, travelerType: "adult", status: "pending" },
       { position: 3, travelerType: "minor", status: "pending" },
-    ]);
+      ],
+    );
     assert.equal(JSON.stringify(first).includes("agencyId"), false);
     assert.equal(JSON.stringify(first).includes("customerAccountId"), false);
     assert.equal(JSON.stringify(first).includes("snapshot"), false);
@@ -1927,7 +2516,14 @@ test("slots operativos derivan adultos y menores del snapshot, de forma determin
 
 test("slots operativos completan solo posiciones faltantes y nunca sobrescriben slots existentes", async () => {
   const fixture = travelerSlotFixture({
-    slots: [{ id: "existing-adult", position: 1, traveler_type: "adult", status: "complete" }],
+    slots: [
+      {
+        id: "existing-adult",
+        position: 1,
+        traveler_type: "adult",
+        status: "complete",
+      },
+    ],
   });
   const result = await fixture.ensurer.ensure({
     requestedAgencySlug: "furiver",
@@ -1938,28 +2534,49 @@ test("slots operativos completan solo posiciones faltantes y nunca sobrescriben 
     assert.equal(result.slots[0].id, "existing-adult");
     assert.equal(result.slots[0].status, "complete");
   }
-  assert.deepEqual(fixture.inserts, [[
+  assert.deepEqual(fixture.inserts, [
+    [
     { position: 2, travelerType: "adult" },
     { position: 3, travelerType: "minor" },
-  ]]);
+    ],
+  ]);
 });
 
 test("slots operativos rechazan estructuras ambiguas o incompatibles sin escribir", async () => {
   const source = customerReservationDetailRow().snapshot as ReservationSnapshot;
   const frozenSource = JSON.stringify(source);
-  const { occupancy: _occupancy, travelers: _travelers, ...ambiguousSnapshot } = source;
-  const ambiguous = travelerSlotFixture({ row: customerReservationDetailRow(ambiguousSnapshot) });
+  const {
+    occupancy: _occupancy,
+    travelers: _travelers,
+    ...ambiguousSnapshot
+  } = source;
+  const ambiguous = travelerSlotFixture({
+    row: customerReservationDetailRow(ambiguousSnapshot),
+  });
   assert.deepEqual(
-    await ambiguous.ensurer.ensure({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId }),
+    await ambiguous.ensurer.ensure({
+      requestedAgencySlug: "furiver",
+      reservationId: customerDetailReservationId,
+    }),
     { status: "invalid_structure" },
   );
   assert.deepEqual(ambiguous.inserts, []);
 
   const incompatible = travelerSlotFixture({
-    slots: [{ id: "wrong-type", position: 1, traveler_type: "minor", status: "pending" }],
+    slots: [
+      {
+        id: "wrong-type",
+        position: 1,
+        traveler_type: "minor",
+        status: "pending",
+      },
+    ],
   });
   assert.deepEqual(
-    await incompatible.ensurer.ensure({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId }),
+    await incompatible.ensurer.ensure({
+      requestedAgencySlug: "furiver",
+      reservationId: customerDetailReservationId,
+    }),
     { status: "invalid_structure" },
   );
   assert.deepEqual(incompatible.inserts, []);
@@ -1973,57 +2590,603 @@ test("slots operativos rechazan estructuras ambiguas o incompatibles sin escribi
 
   const failing = travelerSlotFixture({ failRepository: true });
   await assert.rejects(
-    failing.ensurer.ensure({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId }),
-    (error: unknown) => error instanceof TravelerSlotsError && !error.message.includes("SQL"),
+    failing.ensurer.ensure({
+      requestedAgencySlug: "furiver",
+      reservationId: customerDetailReservationId,
+    }),
+    (error: unknown) =>
+      error instanceof TravelerSlotsError && !error.message.includes("SQL"),
   );
-  const repository = readFileSync("lib/travelers/traveler-slots-repository.ts", "utf8");
+  const repository = readFileSync(
+    "lib/travelers/traveler-slots-repository.ts",
+    "utf8",
+  );
   assert.match(repository, /\.eq\("customer_account_id", customerAccountId\)/);
   assert.match(repository, /\.eq\("agency_id", agencyId\)/);
   assert.match(repository, /\.eq\("reservation_id", reservationId\)/);
-  assert.match(repository, /onConflict: "reservation_id,position", ignoreDuplicates: true/);
+  assert.match(
+    repository,
+    /onConflict: "reservation_id,position", ignoreDuplicates: true/,
+  );
   assert.equal(repository.includes("first_name"), false);
 });
 
-test("detalle de cliente autoriza slots antes de delegar la captura de PII al formulario", () => {
+test("detalle de cliente lee viajeros canónicos sin materializar durante GET", () => {
   const page = readFileSync(
     "app/cuenta/[agencySlug]/reservaciones/[reservationId]/page.tsx",
     "utf8",
   );
   const detailIndex = page.indexOf("getCustomerReservationDetail({");
-  const slotsIndex = page.indexOf("ensureReservationTravelerSlots({");
-  assert.ok(detailIndex >= 0 && slotsIndex > detailIndex);
-  assert.match(page, /Viajero \{slot\.position\}/);
-  assert.match(page, /slot\.travelerType === "adult" \? "Adulto" : "Menor"/);
-  assert.match(page, /slot\.status === "complete" \? "Datos completos" : "Datos pendientes"/);
+  const travelerReadIndex = page.indexOf("getReservationTravelerData({");
+  assert.ok(detailIndex >= 0 && travelerReadIndex > detailIndex);
+  assert.equal(page.includes("ensureReservationTravelerSlots"), false);
+  assert.match(page, /Viajero \{traveler\.position\}/);
+  assert.match(
+    page,
+    /traveler\.travelerType === "adult" \? "Adulto" : "Menor"/,
+  );
+  assert.match(
+    page,
+    /traveler\.status === "complete" \? "Datos completos" : "Datos pendientes"/,
+  );
   assert.match(page, /Datos de viajeros pendientes de completar/);
   assert.match(page, /Datos de viajeros completos/);
-  assert.match(page, /No fue posible preparar los datos de viajeros de esta reservación/);
+  assert.match(
+    page,
+    /No fue posible preparar los datos de viajeros de esta reservación/,
+  );
+  assert.equal(page.includes("reservation.historicalTravelerDrafts"), false);
   assert.equal(page.includes("reservation.travelers"), false);
   assert.equal(page.includes("traveler.fullName"), false);
-  assert.equal(page.includes("slot.firstName"), false);
-  assert.equal(page.includes("slot.lastName"), false);
-  assert.equal(page.includes("slot.birthDate"), false);
   assert.match(page, /getReservationTravelerData/);
   assert.match(page, /<TravelerDataForm/);
+  assert.match(page, /travelerId=\{traveler\.travelerId\}/);
 
   const styles = readFileSync("app/cuenta/cuenta.module.css", "utf8");
-  assert.match(styles, /\.travelerSlotGrid\{display:grid;grid-template-columns:repeat\(3,minmax\(0,1fr\)\)/);
-  assert.match(styles, /@media\(max-width:760px\)\{\.travelerSlotGrid\{grid-template-columns:1fr\}\}/);
+  assert.match(
+    styles,
+    /\.travelerSlotGrid\{display:grid;grid-template-columns:repeat\(3,minmax\(0,1fr\)\)/,
+  );
+  assert.match(
+    styles,
+    /@media\(max-width:760px\)\{\.travelerSlotGrid\{grid-template-columns:1fr\}\}/,
+  );
 });
 
-function travelerDataFixture(input: Readonly<{
+test("materialización ignora draft.id y aísla dos reservaciones del mismo tour y salida", async () => {
+  const reservationA = "aa110852-8620-4a59-9187-a21b07ce3f05";
+  const reservationB = "bb110852-8620-4a59-9187-a21b07ce3f05";
+  const agencyId = "cc110852-8620-4a59-9187-a21b07ce3f05";
+  const snapshot = (
+    reservationId: string,
+    fullName: string,
+  ): ReservationSnapshot => {
+    const base = finalizedReservationForRepository(
+      `travelers-${reservationId}`,
+    );
+    return {
+      ...base,
+      id: reservationId,
+      occupancy: { adults: 1, minors: 0, totalTravelers: 1 },
+      travelers: {
+        status: "complete",
+        adults: 1,
+        minors: 0,
+        drafts: [
+          {
+            id: "trip-4-trip-4-dep-2-adult-1",
+            category: "adult",
+            sequence: 1,
+            fullName,
+            birthDate: "1992-01-25",
+            completionStatus: "complete",
+          },
+        ],
+      },
+    };
+  };
+  const snapshotA = snapshot(reservationA, "Alice Example");
+  const snapshotB = snapshot(reservationB, "Bob Example");
+  const rows = new Map<string, ReservationTravelerDataRow[]>();
+  const materializer = createReservationTravelerMaterializer({
+    repository: {
+      async insertMissing(input) {
+        if (rows.has(input.reservationId)) return;
+        rows.set(
+          input.reservationId,
+          input.travelers.map((traveler, index) => ({
+            id:
+              input.reservationId === reservationA
+                ? `1${index}110852-8620-4a59-9187-a21b07ce3f05`
+                : `2${index}110852-8620-4a59-9187-a21b07ce3f05`,
+            position: traveler.position,
+            traveler_type: traveler.travelerType,
+            status: traveler.status,
+            first_name: traveler.firstName,
+            last_name: traveler.lastName,
+            birth_date: traveler.birthDate,
+          })),
+        );
+      },
+    },
+  });
+  const frozenA = JSON.stringify(snapshotA);
+  await materializer.materialize({
+    agencyId,
+    reservationId: reservationA,
+    snapshot: snapshotA,
+  });
+  await materializer.materialize({
+    agencyId,
+    reservationId: reservationB,
+    snapshot: snapshotB,
+  });
+
+  assert.equal(rows.get(reservationA)?.[0]?.first_name, "Alice");
+  assert.equal(rows.get(reservationB)?.[0]?.first_name, "Bob");
+  assert.notEqual(
+    rows.get(reservationA)?.[0]?.id,
+    rows.get(reservationB)?.[0]?.id,
+  );
+  assert.equal(JSON.stringify(snapshotA), frozenA);
+  assert.deepEqual(projectReservationTravelerMaterialization(snapshotA)[0], {
+    position: 1,
+    travelerType: "adult",
+    firstName: "Alice",
+    lastName: "Example",
+    birthDate: "1992-01-25",
+    status: "complete",
+  });
+
+  const service = createReservationTravelerDataService({
+    resolveAccess: customerAccessFixture({
+      accounts: [customerAccount({ agencyId })],
+    }).resolver.resolve,
+    repository: {
+      async listAuthorized(input) {
+        return rows.get(input.reservationId) ?? null;
+      },
+      async updateAuthorized(input) {
+        const reservationRows = rows.get(input.reservationId);
+        const row = reservationRows?.find(
+          (candidate) =>
+            candidate.id === input.travelerId &&
+            candidate.position === input.position,
+        );
+        if (!row) return null;
+        const updated = {
+          ...row,
+          first_name: input.firstName,
+          last_name: input.lastName,
+          birth_date: input.birthDate,
+          status: "complete",
+        };
+        reservationRows![reservationRows!.indexOf(row)] = updated;
+        return updated;
+      },
+    },
+  });
+  const travelerAId = rows.get(reservationA)![0].id;
+  const travelerBId = rows.get(reservationB)![0].id;
+  assert.equal(
+    (
+      await service.save({
+        requestedAgencySlug: "furiver",
+        reservationId: reservationB,
+        travelerId: travelerAId,
+        position: 1,
+        firstName: "Intruso",
+        lastName: "Cross",
+        birthDate: "1990-01-01",
+      })
+    ).status,
+    "not_found",
+  );
+  assert.equal(rows.get(reservationA)?.[0]?.first_name, "Alice");
+  assert.equal(rows.get(reservationB)?.[0]?.first_name, "Bob");
+  assert.equal(
+    (
+      await service.save({
+        requestedAgencySlug: "furiver",
+        reservationId: reservationB,
+        travelerId: travelerBId,
+        position: 1,
+        firstName: "Robert",
+        lastName: "Example",
+        birthDate: "1992-01-25",
+      })
+    ).status,
+    "saved",
+  );
+  assert.equal(rows.get(reservationB)?.[0]?.first_name, "Robert");
+  assert.equal(rows.get(reservationA)?.[0]?.first_name, "Alice");
+});
+
+test("materialización crea slots pending vacíos y forma parte del comando de creación", () => {
+  const base = finalizedReservationForRepository(
+    "pending-traveler-materialization",
+  );
+  const pending = {
+    ...base,
+    id: customerDetailReservationId,
+    travelers: {
+      status: "pending" as const,
+      adults: 2,
+      minors: 1,
+      drafts: [],
+    },
+  };
+  assert.deepEqual(projectReservationTravelerMaterialization(pending), [
+    {
+      position: 1,
+      travelerType: "adult",
+      firstName: null,
+      lastName: null,
+      birthDate: null,
+      status: "pending",
+    },
+    {
+      position: 2,
+      travelerType: "adult",
+      firstName: null,
+      lastName: null,
+      birthDate: null,
+      status: "pending",
+    },
+    {
+      position: 3,
+      travelerType: "minor",
+      firstName: null,
+      lastName: null,
+      birthDate: null,
+      status: "pending",
+    },
+  ]);
+
+  const command = readFileSync("lib/reservations/server-command.ts", "utf8");
+  const persisted = command.indexOf("await atomicPersistence.persist(");
+  const materialized = command.indexOf(
+    "await travelerMaterialization.materializeReservationTravelers(",
+  );
+  assert.ok(persisted >= 0 && materialized > persisted);
+  assert.match(command, /reservationId: persisted\.reservation\.id/);
+});
+
+test("reconciliación histórica usa sólo drafts de la misma reservación y jamás sobrescribe datos canónicos", () => {
+  const agencyId = "cc110852-8620-4a59-9187-a21b07ce3f05";
+  const reservationA = "aa110852-8620-4a59-9187-a21b07ce3f05";
+  const reservationB = "bb110852-8620-4a59-9187-a21b07ce3f05";
+  const snapshot = (
+    reservationId: string,
+    fullName: string,
+  ): ReservationSnapshot => {
+    const base = finalizedReservationForRepository(
+      `reconcile-${reservationId}`,
+    );
+    return {
+      ...base,
+      id: reservationId,
+      occupancy: { adults: 1, minors: 0, totalTravelers: 1 },
+      travelers: {
+        status: "complete",
+        adults: 1,
+        minors: 0,
+        drafts: [
+          {
+            // This collision is deliberately harmless: draft.id is ignored.
+            id: "trip-4-trip-4-dep-2-adult-1",
+            category: "adult",
+            sequence: 1,
+            fullName,
+            birthDate: "1992-01-25",
+            completionStatus: "complete",
+          },
+        ],
+      },
+    };
+  };
+  const reservation = (
+    reservationId: string,
+    code: string,
+    fullName: string,
+  ) => ({
+    reservationId,
+    agencyId,
+    reservationCode: code,
+    snapshot: snapshot(reservationId, fullName),
+  });
+  const emptyRow = (
+    reservationId: string,
+  ): HistoricalReservationTravelerRow => ({
+    id: `${reservationId.slice(0, 2)}110852-8620-4a59-9187-a21b07ce3f05`,
+    agency_id: agencyId,
+    reservation_id: reservationId,
+    position: 1,
+    traveler_type: "adult",
+    first_name: null,
+    last_name: null,
+    birth_date: null,
+    status: "pending",
+  });
+
+  const planA = planReservationTravelerReconciliation({
+    reservation: reservation(reservationA, "FT-A", "Alice Example"),
+    travelers: [],
+  });
+  const planB = planReservationTravelerReconciliation({
+    reservation: reservation(reservationB, "FT-B", "Bob Example"),
+    travelers: [emptyRow(reservationB)],
+  });
+  assert.deepEqual(planA, {
+    status: "candidate",
+    missingSlots: 1,
+    emptySlots: 0,
+    pendingWithoutSourceSlots: 0,
+    preservedSlots: 0,
+  });
+  assert.deepEqual(planB, {
+    status: "candidate",
+    missingSlots: 0,
+    emptySlots: 1,
+    pendingWithoutSourceSlots: 0,
+    preservedSlots: 0,
+  });
+
+  const preserved = planReservationTravelerReconciliation({
+    reservation: reservation(reservationB, "FT-B", "Alice Example"),
+    travelers: [
+      {
+        ...emptyRow(reservationB),
+        first_name: "Charlie",
+        last_name: "Canonical",
+        birth_date: "1990-01-01",
+        status: "complete",
+      },
+    ],
+  });
+  assert.deepEqual(preserved, {
+    status: "no_action",
+    missingSlots: 0,
+    emptySlots: 0,
+    pendingWithoutSourceSlots: 0,
+    preservedSlots: 1,
+  });
+  assert.equal(
+    JSON.stringify(snapshot(reservationA, "Alice Example")).includes(
+      "Bob Example",
+    ),
+    false,
+  );
+});
+
+test("draft pending vacío no convierte un slot canonical vacío en write de reconciliación", () => {
+  const agencyId = "cc110852-8620-4a59-9187-a21b07ce3f05";
+  const reservationId = "dd110852-8620-4a59-9187-a21b07ce3f05";
+  const base = finalizedReservationForRepository("reconcile-empty-pending");
+  const snapshot: ReservationSnapshot = {
+    ...base,
+    id: reservationId,
+    occupancy: { adults: 2, minors: 0, totalTravelers: 2 },
+    travelers: {
+      status: "pending",
+      adults: 2,
+      minors: 0,
+      drafts: [
+        {
+          id: "trip-4-trip-4-dep-2-adult-1",
+          category: "adult",
+          sequence: 1,
+          fullName: "",
+          birthDate: undefined,
+          completionStatus: "pending",
+        },
+        {
+          id: "trip-4-trip-4-dep-2-adult-2",
+          category: "adult",
+          sequence: 2,
+          fullName: "",
+          birthDate: undefined,
+          completionStatus: "pending",
+        },
+      ],
+    },
+  };
+  const emptyRow = (position: number): HistoricalReservationTravelerRow => ({
+    id: `${position}d110852-8620-4a59-9187-a21b07ce3f05`,
+    agency_id: agencyId,
+    reservation_id: reservationId,
+    position,
+    traveler_type: "adult",
+    first_name: null,
+    last_name: null,
+    birth_date: null,
+    status: "pending",
+  });
+  const input = {
+    reservation: {
+      reservationId,
+      agencyId,
+      reservationCode: "FT-PENDING",
+      snapshot,
+    },
+    travelers: [emptyRow(1), emptyRow(2)],
+  };
+
+  const plan = planReservationTravelerReconciliation(input);
+  assert.deepEqual(plan, {
+    status: "no_action",
+    missingSlots: 0,
+    emptySlots: 0,
+    pendingWithoutSourceSlots: 2,
+    preservedSlots: 0,
+  });
+  assert.deepEqual(planReservationTravelerReconciliation(input), plan);
+  assert.equal(
+    hasMaterializableTravelerData({
+      position: 1,
+      travelerType: "adult",
+      firstName: null,
+      lastName: null,
+      birthDate: null,
+      status: "pending",
+    }),
+    false,
+  );
+  assert.equal(
+    hasMaterializableTravelerData({
+      position: 1,
+      travelerType: "adult",
+      firstName: "Angel",
+      lastName: "Fuentes",
+      birthDate: "1992-01-25",
+      status: "complete",
+    }),
+    true,
+  );
+});
+
+test("herramienta de reconciliación de viajeros es dry-run por defecto y delega toda escritura a la RPC tenant-safe", () => {
+  assert.equal(parseReservationTravelerReconciliationArgs([]), "dry-run");
+  assert.equal(
+    parseReservationTravelerReconciliationArgs([
+      `--confirm=${RESERVATION_TRAVELER_RECONCILIATION_CONFIRMATION}`,
+    ]),
+    "confirmed",
+  );
+  assert.throws(() =>
+    parseReservationTravelerReconciliationArgs(["--confirm=force"]),
+  );
+
+  const script = readFileSync(
+    "scripts/reconcile-reservation-travelers.ts",
+    "utf8",
+  );
+  const migration = readFileSync(
+    "supabase/migrations/20260801290000_reconcile_reservation_travelers_noop_guard.sql",
+    "utf8",
+  );
+  assert.match(script, /preflightRequiredTables/);
+  assert.match(script, /select\("\*", \{ count: "exact", head: true \}\)/);
+  assert.match(script, /reconcile_reservation_travelers_atomic/);
+  assert.doesNotMatch(
+    script,
+    /\.from\("reservation_travelers"\)\.(insert|update|delete)/,
+  );
+  assert.match(
+    migration,
+    /create or replace function public\.reconcile_reservation_travelers_atomic/,
+  );
+  assert.match(migration, /security definer/i);
+  assert.match(migration, /set search_path = public, pg_temp/i);
+  assert.match(
+    migration,
+    /reservation\.id = target_reservation_id[\s\S]*reservation\.agency_id = target_agency_id[\s\S]*for update/i,
+  );
+  assert.match(
+    migration,
+    /traveler\.agency_id = target_agency_id[\s\S]*traveler\.reservation_id = target_reservation_id[\s\S]*traveler\.position = traveler_position/i,
+  );
+  assert.match(
+    migration,
+    /status = 'pending'[\s\S]*first_name is null[\s\S]*last_name is null[\s\S]*birth_date is null/i,
+  );
+  assert.match(
+    migration,
+    /first_name_value is null[\s\S]*last_name_value is null[\s\S]*birth_date_value is null[\s\S]*traveler_status = 'pending'[\s\S]*intentionally do not update/i,
+  );
+  assert.match(script, /Slots pendientes sin datos fuente/);
+  assert.match(migration, /from public, anon, authenticated/i);
+  assert.match(migration, /to service_role/i);
+  assert.doesNotMatch(migration, /draft\s*->>\s*'id'/i);
+});
+
+test("cada intento Lavella usa drafts locales distintos y limpia el carrito al confirmar", () => {
+  const scopeA = createTravelerDraftAttemptScope(
+    "trip-4",
+    "trip-4-dep-2",
+    "attempt-a",
+  );
+  const scopeB = createTravelerDraftAttemptScope(
+    "trip-4",
+    "trip-4-dep-2",
+    "attempt-b",
+  );
+  const draftA = createTravelerDrafts(1, 0, scopeA)[0];
+  const draftB = createTravelerDrafts(1, 0, scopeB)[0];
+  assert.notEqual(draftA.id, draftB.id);
+  assert.equal(isTravelerDraftAttemptScoped(draftA.id), true);
+  assert.equal(
+    isTravelerDraftAttemptScoped("trip-4-trip-4-dep-2-adult-1"),
+    false,
+  );
+
+  const panel = readFileSync(
+    "components/themes/lavella/lavella-booking-panel.tsx",
+    "utf8",
+  );
+  assert.match(
+    panel,
+    /createTravelerDraftAttemptScope\(trip\.id, departure\.id\)/,
+  );
+  assert.equal(panel.includes("previousDrafts"), false);
+  const checkout = readFileSync("components/legacy-travel-app.tsx", "utf8");
+  assert.match(checkout, /hasUnscopedLavellaTravelerData/);
+  assert.match(checkout, /travelerDataStatus: "pending"/);
+  assert.match(checkout, /localStorage\.removeItem\("fu-travel-demo-cart"\)/);
+  assert.match(
+    checkout,
+    /localStorage\.removeItem\("fu-travel-booking-draft"\)/,
+  );
+});
+
+function travelerDataFixture(
+  input: Readonly<{
   accounts?: readonly CustomerAgencyAccountRecord[];
   linked?: boolean;
   rows?: readonly ReservationTravelerDataRow[];
   failRepository?: boolean;
-}> = {}) {
-  const rows = [...(input.rows ?? [
-    { position: 1, traveler_type: "adult", status: "pending", first_name: null, last_name: null, birth_date: null },
-    { position: 2, traveler_type: "adult", status: "complete", first_name: "Ana", last_name: "Pérez", birth_date: "1990-02-03" },
-    { position: 3, traveler_type: "minor", status: "pending", first_name: null, last_name: null, birth_date: null },
-  ])];
+  }> = {},
+) {
+  const travelerIds = [
+    "11a10852-8620-4a59-9187-a21b07ce3f05",
+    "22a10852-8620-4a59-9187-a21b07ce3f05",
+    "33a10852-8620-4a59-9187-a21b07ce3f05",
+  ];
+  const rows = [
+    ...(input.rows ?? [
+      {
+        id: travelerIds[0],
+        position: 1,
+        traveler_type: "adult",
+        status: "pending",
+        first_name: null,
+        last_name: null,
+        birth_date: null,
+      },
+      {
+        id: travelerIds[1],
+        position: 2,
+        traveler_type: "adult",
+        status: "complete",
+        first_name: "Ana",
+        last_name: "Pérez",
+        birth_date: "1990-02-03",
+      },
+      {
+        id: travelerIds[2],
+        position: 3,
+        traveler_type: "minor",
+        status: "pending",
+        first_name: null,
+        last_name: null,
+        birth_date: null,
+      },
+    ]),
+  ];
   const requests: Array<Record<string, unknown>> = [];
-  const access = customerAccessFixture({ accounts: input.accounts ?? [customerAccount()] });
+  const access = customerAccessFixture({
+    accounts: input.accounts ?? [customerAccount()],
+  });
   const service = createReservationTravelerDataService({
     resolveAccess: access.resolver.resolve,
     repository: {
@@ -2036,7 +3199,10 @@ function travelerDataFixture(input: Readonly<{
         requests.push({ kind: "update", ...request });
         if (input.failRepository) throw new Error("SQL traveler PII");
         if (input.linked === false) return null;
-        const index = rows.findIndex((row) => row.position === request.position);
+        const index = rows.findIndex(
+          (row) =>
+            row.id === request.travelerId && row.position === request.position,
+        );
         if (index < 0) return null;
         const existing = rows[index];
         const updated: ReservationTravelerDataRow = {
@@ -2057,32 +3223,58 @@ function travelerDataFixture(input: Readonly<{
 test("datos operativos de viajeros se leen solo después de autorización y sin IDs internos", async () => {
   let repositoryCreated = false;
   const unauthenticated = createReservationTravelerDataService({
-    async resolveAccess() { return { status: "unauthenticated" } as const; },
+    async resolveAccess() {
+      return { status: "unauthenticated" } as const;
+    },
     repository: () => {
       repositoryCreated = true;
-      return { async listAuthorized() { throw new Error("No debe leer PII"); }, async updateAuthorized() { throw new Error("No debe escribir PII"); } };
+      return {
+        async listAuthorized() {
+          throw new Error("No debe leer PII");
+        },
+        async updateAuthorized() {
+          throw new Error("No debe escribir PII");
+        },
+      };
     },
   });
   assert.deepEqual(
-    await unauthenticated.get({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId }),
+    await unauthenticated.get({
+      requestedAgencySlug: "furiver",
+      reservationId: customerDetailReservationId,
+    }),
     { status: "unauthenticated" },
   );
   assert.equal(repositoryCreated, false);
 
   const invalid = travelerDataFixture();
   assert.deepEqual(
-    await invalid.service.get({ requestedAgencySlug: "furiver", reservationId: "no-es-uuid" }),
+    await invalid.service.get({
+      requestedAgencySlug: "furiver",
+      reservationId: "no-es-uuid",
+    }),
     { status: "not_found" },
   );
   assert.deepEqual(invalid.requests, []);
 
   const fixture = travelerDataFixture();
-  const result = await fixture.service.get({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId });
+  const result = await fixture.service.get({
+    requestedAgencySlug: "furiver",
+    reservationId: customerDetailReservationId,
+  });
   assert.equal(result.status, "authorized");
   if (result.status === "authorized") {
-    assert.deepEqual(result.travelers.map((traveler) => [traveler.position, traveler.travelerType]), [
-      [1, "adult"], [2, "adult"], [3, "minor"],
-    ]);
+    assert.deepEqual(
+      result.travelers.map((traveler) => [
+        traveler.position,
+        traveler.travelerType,
+      ]),
+      [
+        [1, "adult"],
+        [2, "adult"],
+        [3, "minor"],
+      ],
+    );
     const serialized = JSON.stringify(result);
     assert.equal(serialized.includes("agencyId"), false);
     assert.equal(serialized.includes("customerAccountId"), false);
@@ -2100,13 +3292,19 @@ test("datos operativos de viajeros se leen solo después de autorización y sin 
 test("datos operativos aíslan reservaciones, cuentas y agencias ajenas", async () => {
   const unlinked = travelerDataFixture({ linked: false });
   assert.deepEqual(
-    await unlinked.service.get({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId }),
+    await unlinked.service.get({
+      requestedAgencySlug: "furiver",
+      reservationId: customerDetailReservationId,
+    }),
     { status: "not_found" },
   );
 
   const otherAgency = travelerDataFixture();
   assert.deepEqual(
-    await otherAgency.service.get({ requestedAgencySlug: "crisenix", reservationId: customerDetailReservationId }),
+    await otherAgency.service.get({
+      requestedAgencySlug: "crisenix",
+      reservationId: customerDetailReservationId,
+    }),
     { status: "forbidden" },
   );
   assert.deepEqual(otherAgency.requests, []);
@@ -2114,25 +3312,84 @@ test("datos operativos aíslan reservaciones, cuentas y agencias ajenas", async 
   const otherCustomer = travelerDataFixture({
     accounts: [customerAccount({ customerAccountId: "another-customer" })],
   });
-  await otherCustomer.service.get({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId });
+  await otherCustomer.service.get({
+    requestedAgencySlug: "furiver",
+    reservationId: customerDetailReservationId,
+  });
   assert.equal(otherCustomer.requests[0].customerAccountId, "another-customer");
 
-  const suspended = travelerDataFixture({ accounts: [customerAccount({ status: "suspended" })] });
+  const suspended = travelerDataFixture({
+    accounts: [customerAccount({ status: "suspended" })],
+  });
   assert.deepEqual(
-    await suspended.service.get({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId }),
+    await suspended.service.get({
+      requestedAgencySlug: "furiver",
+      reservationId: customerDetailReservationId,
+    }),
     { status: "forbidden" },
   );
   assert.deepEqual(suspended.requests, []);
 });
 
 test("datos de viajeros validan, normalizan y actualizan solo las columnas permitidas", async () => {
-  assert.ok("errors" in validateReservationTravelerData({ position: 1, firstName: "", lastName: "Pérez", birthDate: "1990-01-01" }));
-  assert.ok("errors" in validateReservationTravelerData({ position: 1, firstName: "Ana", lastName: "", birthDate: "1990-01-01" }));
-  assert.ok("errors" in validateReservationTravelerData({ position: 1, firstName: "Ana", lastName: "Pérez", birthDate: "fecha" }));
-  assert.ok("errors" in validateReservationTravelerData({ position: 1, firstName: "Ana", lastName: "Pérez", birthDate: "2999-01-01" }));
+  const travelerId = "11a10852-8620-4a59-9187-a21b07ce3f05";
+  assert.ok(
+    "errors" in
+      validateReservationTravelerData({
+        travelerId,
+        position: 1,
+        firstName: "",
+        lastName: "Pérez",
+        birthDate: "1990-01-01",
+      }),
+  );
+  assert.ok(
+    "errors" in
+      validateReservationTravelerData({
+        travelerId,
+        position: 1,
+        firstName: "Ana",
+        lastName: "",
+        birthDate: "1990-01-01",
+      }),
+  );
+  assert.ok(
+    "errors" in
+      validateReservationTravelerData({
+        travelerId,
+        position: 1,
+        firstName: "Ana",
+        lastName: "Pérez",
+        birthDate: "fecha",
+      }),
+  );
+  assert.ok(
+    "errors" in
+      validateReservationTravelerData({
+        travelerId,
+        position: 1,
+        firstName: "Ana",
+        lastName: "Pérez",
+        birthDate: "2999-01-01",
+      }),
+  );
   assert.deepEqual(
-    validateReservationTravelerData({ position: 1, firstName: "  Ana  ", lastName: "  Pérez  ", birthDate: "1990-01-01" }),
-    { value: { position: 1, firstName: "Ana", lastName: "Pérez", birthDate: "1990-01-01" } },
+    validateReservationTravelerData({
+      travelerId,
+      position: 1,
+      firstName: "  Ana  ",
+      lastName: "  Pérez  ",
+      birthDate: "1990-01-01",
+    }),
+    {
+      value: {
+        travelerId,
+        position: 1,
+        firstName: "Ana",
+        lastName: "Pérez",
+        birthDate: "1990-01-01",
+      },
+    },
   );
 
   const fixture = travelerDataFixture();
@@ -2140,6 +3397,7 @@ test("datos de viajeros validan, normalizan y actualizan solo las columnas permi
   const saved = await fixture.service.save({
     requestedAgencySlug: "furiver",
     reservationId: customerDetailReservationId,
+    travelerId,
     position: 1,
     firstName: "  Sofía ",
     lastName: "  Rivera ",
@@ -2148,6 +3406,7 @@ test("datos de viajeros validan, normalizan y actualizan solo las columnas permi
   assert.equal(saved.status, "saved");
   if (saved.status === "saved") {
     assert.deepEqual(saved.traveler, {
+      travelerId,
       position: 1,
       travelerType: "adult",
       status: "complete",
@@ -2160,12 +3419,18 @@ test("datos de viajeros validan, normalizan y actualizan solo las columnas permi
   assert.equal(fixture.rows[0].position, 1);
   assert.ok(fixture.requests.some((request) => request.kind === "update"));
   assert.equal("agencyId" in fixture.rows[0], false);
-  const reloaded = await fixture.service.get({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId });
+  const reloaded = await fixture.service.get({
+    requestedAgencySlug: "furiver",
+    reservationId: customerDetailReservationId,
+  });
   assert.equal(reloaded.status, "authorized");
   if (reloaded.status === "authorized") {
     assert.equal(reloaded.travelers[0].firstName, "Sofía");
     assert.equal(reloaded.travelers[0].status, "complete");
-    assert.equal(reloaded.travelers.some((traveler) => traveler.status === "pending"), true);
+    assert.equal(
+      reloaded.travelers.some((traveler) => traveler.status === "pending"),
+      true,
+    );
   }
 });
 
@@ -2173,32 +3438,53 @@ test("repositorio de datos de viajeros conserva el alcance y sanea errores", asy
   const missingSlot = travelerDataFixture({ rows: [] });
   assert.deepEqual(
     await missingSlot.service.save({
-      requestedAgencySlug: "furiver", reservationId: customerDetailReservationId, position: 1,
-      firstName: "Ana", lastName: "Pérez", birthDate: "1990-01-01",
+      requestedAgencySlug: "furiver",
+      reservationId: customerDetailReservationId,
+      position: 1,
+      travelerId: "11a10852-8620-4a59-9187-a21b07ce3f05",
+      firstName: "Ana",
+      lastName: "Pérez",
+      birthDate: "1990-01-01",
     }),
     { status: "not_found" },
   );
   const failing = travelerDataFixture({ failRepository: true });
   await assert.rejects(
-    failing.service.get({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId }),
-    (error: unknown) => error instanceof TravelerDataError && !error.message.includes("SQL"),
+    failing.service.get({
+      requestedAgencySlug: "furiver",
+      reservationId: customerDetailReservationId,
+    }),
+    (error: unknown) =>
+      error instanceof TravelerDataError && !error.message.includes("SQL"),
   );
-  const repository = readFileSync("lib/travelers/traveler-data-repository.ts", "utf8");
-  assert.match(repository, /\.eq\("customer_account_id", input\.customerAccountId\)/);
+  const repository = readFileSync(
+    "lib/travelers/traveler-data-repository.ts",
+    "utf8",
+  );
+  assert.match(
+    repository,
+    /\.eq\("customer_account_id", input\.customerAccountId\)/,
+  );
   assert.match(repository, /\.eq\("agency_id", input\.agencyId\)/);
   assert.match(repository, /\.eq\("reservation_id", input\.reservationId\)/);
+  assert.match(repository, /\.eq\("id", input\.travelerId\)/);
   assert.match(repository, /\.eq\("position", input\.position\)/);
-  assert.match(repository, /\.update\(\{[\s\S]*first_name:[\s\S]*last_name:[\s\S]*birth_date:[\s\S]*status: "complete"/);
+  assert.match(
+    repository,
+    /\.update\(\{[\s\S]*first_name:[\s\S]*last_name:[\s\S]*birth_date:[\s\S]*status: "complete"/,
+  );
   assert.equal(repository.includes("traveler_type:"), false);
 });
 
-function financialReservationRow(input: Readonly<{
+function financialReservationRow(
+  input: Readonly<{
   total?: number;
   depositPercent?: number | null;
   depositRequired?: number | null;
   currency?: "MXN" | "USD";
   snapshot?: unknown;
-}> = {}) {
+  }> = {},
+) {
   const source = customerReservationDetailRow();
   const snapshot = source.snapshot as ReservationSnapshot;
   return {
@@ -2207,21 +3493,31 @@ function financialReservationRow(input: Readonly<{
     snapshot: input.snapshot ?? {
       ...snapshot,
       total: input.total ?? 47817,
-      depositPercent: input.depositPercent === undefined ? 20 : input.depositPercent,
-      depositAmount: input.depositRequired === undefined ? 9563.4 : input.depositRequired,
+      depositPercent:
+        input.depositPercent === undefined ? 20 : input.depositPercent,
+      depositAmount:
+        input.depositRequired === undefined ? 9563.4 : input.depositRequired,
     },
   };
 }
 
-function financialSummaryFixture(input: Readonly<{
+function financialSummaryFixture(
+  input: Readonly<{
   accounts?: readonly CustomerAgencyAccountRecord[];
   linked?: boolean;
   row?: ReturnType<typeof financialReservationRow>;
   payments?: readonly ReservationPaymentFinancialRow[];
   failRepository?: boolean;
-}> = {}) {
-  const requests: Array<{ customerAccountId: string; agencyId: string; reservationId: string }> = [];
-  const access = customerAccessFixture({ accounts: input.accounts ?? [customerAccount()] });
+  }> = {},
+) {
+  const requests: Array<{
+    customerAccountId: string;
+    agencyId: string;
+    reservationId: string;
+  }> = [];
+  const access = customerAccessFixture({
+    accounts: input.accounts ?? [customerAccount()],
+  });
   const service = createReservationFinancialSummaryService({
     resolveAccess: access.resolver.resolve,
     repository: {
@@ -2230,7 +3526,10 @@ function financialSummaryFixture(input: Readonly<{
         if (input.failRepository) throw new Error("SQL payment references");
         return input.linked === false
           ? null
-          : { snapshot: input.row ?? financialReservationRow(), payments: input.payments ?? [] };
+          : {
+              snapshot: input.row ?? financialReservationRow(),
+              payments: input.payments ?? [],
+            };
       },
     },
   });
@@ -2239,12 +3538,25 @@ function financialSummaryFixture(input: Readonly<{
 
 test("resumen financiero calcula el contrato en centavos y solo pagos confirmados reducen saldo", () => {
   const base = financialReservationRow();
-  const noPayments = calculateReservationFinancialSummary({ snapshot: base, payments: [] });
+  const noPayments = calculateReservationFinancialSummary({
+    snapshot: base,
+    payments: [],
+  });
   assert.deepEqual(noPayments, {
     currency: "MXN",
     contract: { total: 47817, depositPercent: 20, depositRequired: 9563.4 },
-    payments: { confirmedTotal: 0, pendingTotal: 0, cancelledTotal: 0, confirmedCount: 0 },
-    balance: { remaining: 47817, paidPercent: 0, depositCovered: false, fullyPaid: false },
+    payments: {
+      confirmedTotal: 0,
+      pendingTotal: 0,
+      cancelledTotal: 0,
+      confirmedCount: 0,
+    },
+    balance: {
+      remaining: 47817,
+      paidPercent: 0,
+      depositCovered: false,
+      fullyPaid: false,
+    },
   });
 
   const deposit = calculateReservationFinancialSummary({
@@ -2259,7 +3571,12 @@ test("resumen financiero calcula el contrato en centavos y solo pagos confirmado
     snapshot: base,
     payments: [{ amount: 5000, currency: "MXN", status: "confirmed" }],
   });
-  assert.deepEqual(partial?.balance, { remaining: 42817, paidPercent: 10.46, depositCovered: false, fullyPaid: false });
+  assert.deepEqual(partial?.balance, {
+    remaining: 42817,
+    paidPercent: 10.46,
+    depositCovered: false,
+    fullyPaid: false,
+  });
 
   const mixedStatuses = calculateReservationFinancialSummary({
     snapshot: base,
@@ -2270,14 +3587,24 @@ test("resumen financiero calcula el contrato en centavos y solo pagos confirmado
       { amount: 2000, currency: "MXN", status: "cancelled" },
     ],
   });
-  assert.deepEqual(mixedStatuses?.payments, { confirmedTotal: 15000, pendingTotal: 3000, cancelledTotal: 2000, confirmedCount: 2 });
+  assert.deepEqual(mixedStatuses?.payments, {
+    confirmedTotal: 15000,
+    pendingTotal: 3000,
+    cancelledTotal: 2000,
+    confirmedCount: 2,
+  });
   assert.equal(mixedStatuses?.balance.remaining, 32817);
 
   const total = calculateReservationFinancialSummary({
     snapshot: base,
     payments: [{ amount: 47817, currency: "MXN", status: "confirmed" }],
   });
-  assert.deepEqual(total?.balance, { remaining: 0, paidPercent: 100, depositCovered: true, fullyPaid: true });
+  assert.deepEqual(total?.balance, {
+    remaining: 0,
+    paidPercent: 100,
+    depositCovered: true,
+    fullyPaid: true,
+  });
 
   const overpaid = calculateReservationFinancialSummary({
     snapshot: base,
@@ -2291,69 +3618,118 @@ test("resumen financiero calcula el contrato en centavos y solo pagos confirmado
 test("resumen financiero conserva históricos y rechaza moneda o contrato incompatibles", () => {
   const base = financialReservationRow();
   const historicalSnapshot = base.snapshot as ReservationSnapshot;
-  const { depositPercent: _depositPercent, depositAmount: _depositAmount, ...withoutDeposit } = historicalSnapshot;
+  const {
+    depositPercent: _depositPercent,
+    depositAmount: _depositAmount,
+    ...withoutDeposit
+  } = historicalSnapshot;
   const historical = calculateReservationFinancialSummary({
     snapshot: financialReservationRow({ snapshot: withoutDeposit }),
     payments: [],
   });
-  assert.deepEqual(historical?.contract, { total: 47817, depositPercent: null, depositRequired: null });
+  assert.deepEqual(historical?.contract, {
+    total: 47817,
+    depositPercent: null,
+    depositRequired: null,
+  });
   assert.equal(historical?.balance.depositCovered, null);
 
-  assert.equal(calculateReservationFinancialSummary({
+  assert.equal(
+    calculateReservationFinancialSummary({
     snapshot: base,
     payments: [{ amount: 10, currency: "USD", status: "confirmed" }],
-  }), null);
-  assert.equal(calculateReservationFinancialSummary({
+    }),
+    null,
+  );
+  assert.equal(
+    calculateReservationFinancialSummary({
     snapshot: financialReservationRow({ total: 0 }),
     payments: [],
-  }), null);
+    }),
+    null,
+  );
   const immutable = JSON.stringify(base.snapshot);
   calculateReservationFinancialSummary({ snapshot: base, payments: [] });
   assert.equal(JSON.stringify(base.snapshot), immutable);
 });
 
 test("saldo reportable para transferencias reserva pending sin alterar el saldo financiero", () => {
-  const snapshot = financialReservationRow({ total: 10000, depositPercent: 20, depositRequired: 2000 });
-  const partial = calculateCustomerTransferReportability({ snapshot, payments: [
+  const snapshot = financialReservationRow({
+    total: 10000,
+    depositPercent: 20,
+    depositRequired: 2000,
+  });
+  const partial = calculateCustomerTransferReportability({
+    snapshot,
+    payments: [
     { amount: 4000, currency: "MXN", status: "confirmed" },
     { amount: 2000, currency: "MXN", status: "pending" },
     { amount: 1000, currency: "MXN", status: "cancelled" },
-  ] });
-  assert.deepEqual(partial, { currency: "MXN", contractTotalCents: 1000000, confirmedPaymentCents: 400000, relevantPendingPaymentCents: 200000, remainingBalanceCents: 600000, reportableRemainingCents: 400000 });
-  const pendingCoversRest = calculateCustomerTransferReportability({ snapshot, payments: [
+    ],
+  });
+  assert.deepEqual(partial, {
+    currency: "MXN",
+    contractTotalCents: 1000000,
+    confirmedPaymentCents: 400000,
+    relevantPendingPaymentCents: 200000,
+    remainingBalanceCents: 600000,
+    reportableRemainingCents: 400000,
+  });
+  const pendingCoversRest = calculateCustomerTransferReportability({
+    snapshot,
+    payments: [
     { amount: 7000, currency: "MXN", status: "confirmed" },
     { amount: 3000, currency: "MXN", status: "pending" },
-  ] });
+    ],
+  });
   assert.equal(pendingCoversRest?.remainingBalanceCents, 300000);
   assert.equal(pendingCoversRest?.reportableRemainingCents, 0);
-  const paid = calculateCustomerTransferReportability({ snapshot, payments: [{ amount: 11000, currency: "MXN", status: "confirmed" }] });
+  const paid = calculateCustomerTransferReportability({
+    snapshot,
+    payments: [{ amount: 11000, currency: "MXN", status: "confirmed" }],
+  });
   assert.equal(paid?.reportableRemainingCents, 0);
 });
 
 test("resumen financiero autoriza antes de consultar pagos y mantiene aislamiento de cliente", async () => {
   let repositoryCreated = false;
   const unauthenticated = createReservationFinancialSummaryService({
-    async resolveAccess() { return { status: "unauthenticated" } as const; },
+    async resolveAccess() {
+      return { status: "unauthenticated" } as const;
+    },
     repository: () => {
       repositoryCreated = true;
-      return { async findAuthorized() { throw new Error("No debe consultar pagos"); } };
+      return {
+        async findAuthorized() {
+          throw new Error("No debe consultar pagos");
+        },
+      };
     },
   });
   assert.deepEqual(
-    await unauthenticated.get({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId }),
+    await unauthenticated.get({
+      requestedAgencySlug: "furiver",
+      reservationId: customerDetailReservationId,
+    }),
     { status: "unauthenticated" },
   );
   assert.equal(repositoryCreated, false);
 
   const invalid = financialSummaryFixture();
   assert.deepEqual(
-    await invalid.service.get({ requestedAgencySlug: "furiver", reservationId: "no-es-uuid" }),
+    await invalid.service.get({
+      requestedAgencySlug: "furiver",
+      reservationId: "no-es-uuid",
+    }),
     { status: "not_found" },
   );
   assert.deepEqual(invalid.requests, []);
 
   const linked = financialSummaryFixture();
-  const result = await linked.service.get({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId });
+  const result = await linked.service.get({
+    requestedAgencySlug: "furiver",
+    reservationId: customerDetailReservationId,
+  });
   assert.equal(result.status, "authorized");
   if (result.status === "authorized") {
     const serialized = JSON.stringify(result.summary);
@@ -2362,22 +3738,39 @@ test("resumen financiero autoriza antes de consultar pagos y mantiene aislamient
     assert.equal(serialized.includes("snapshot"), false);
     assert.equal(serialized.includes("reference"), false);
   }
-  assert.deepEqual(linked.requests, [{ customerAccountId: "customer-furiver", agencyId: "agency-furiver", reservationId: customerDetailReservationId }]);
+  assert.deepEqual(linked.requests, [
+    {
+      customerAccountId: "customer-furiver",
+      agencyId: "agency-furiver",
+      reservationId: customerDetailReservationId,
+    },
+  ]);
 
   const unlinked = financialSummaryFixture({ linked: false });
   assert.deepEqual(
-    await unlinked.service.get({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId }),
+    await unlinked.service.get({
+      requestedAgencySlug: "furiver",
+      reservationId: customerDetailReservationId,
+    }),
     { status: "not_found" },
   );
   const crisenix = financialSummaryFixture();
   assert.deepEqual(
-    await crisenix.service.get({ requestedAgencySlug: "crisenix", reservationId: customerDetailReservationId }),
+    await crisenix.service.get({
+      requestedAgencySlug: "crisenix",
+      reservationId: customerDetailReservationId,
+    }),
     { status: "forbidden" },
   );
   assert.deepEqual(crisenix.requests, []);
-  const suspended = financialSummaryFixture({ accounts: [customerAccount({ status: "suspended" })] });
+  const suspended = financialSummaryFixture({
+    accounts: [customerAccount({ status: "suspended" })],
+  });
   assert.deepEqual(
-    await suspended.service.get({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId }),
+    await suspended.service.get({
+      requestedAgencySlug: "furiver",
+      reservationId: customerDetailReservationId,
+    }),
     { status: "forbidden" },
   );
 });
@@ -2385,19 +3778,33 @@ test("resumen financiero autoriza antes de consultar pagos y mantiene aislamient
 test("repositorio financiero limita pagos por vínculo, agencia y reservación sin exponer referencias", async () => {
   const failing = financialSummaryFixture({ failRepository: true });
   await assert.rejects(
-    failing.service.get({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId }),
-    (error: unknown) => error instanceof ReservationFinancialError && !error.message.includes("SQL"),
+    failing.service.get({
+      requestedAgencySlug: "furiver",
+      reservationId: customerDetailReservationId,
+    }),
+    (error: unknown) =>
+      error instanceof ReservationFinancialError &&
+      !error.message.includes("SQL"),
   );
-  const repository = readFileSync("lib/payments/reservation-financial-repository.ts", "utf8");
+  const repository = readFileSync(
+    "lib/payments/reservation-financial-repository.ts",
+    "utf8",
+  );
   assert.match(repository, /\.eq\("customer_account_id", customerAccountId\)/);
   assert.match(repository, /\.eq\("agency_id", agencyId\)/);
   assert.match(repository, /\.eq\("reservation_id", reservationId\)/);
-  assert.match(repository, /\.from\("reservation_payments"\)[\s\S]*\.eq\("reservation_id", reservationId\)[\s\S]*\.eq\("agency_id", agencyId\)/);
+  assert.match(
+    repository,
+    /\.from\("reservation_payments"\)[\s\S]*\.eq\("reservation_id", reservationId\)[\s\S]*\.eq\("agency_id", agencyId\)/,
+  );
   assert.equal(repository.includes("reference"), false);
 });
 
 test("detalle de cliente presenta el resumen financiero servidor sin tratar el anticipo contractual como pago", () => {
-  const page = readFileSync("app/cuenta/[agencySlug]/reservaciones/[reservationId]/page.tsx", "utf8");
+  const page = readFileSync(
+    "app/cuenta/[agencySlug]/reservaciones/[reservationId]/page.tsx",
+    "utf8",
+  );
   const authorizationIndex = page.indexOf("getCustomerReservationDetail({");
   const financialIndex = page.indexOf("getReservationFinancialSummary({");
   assert.ok(authorizationIndex >= 0);
@@ -2412,7 +3819,10 @@ test("detalle de cliente presenta el resumen financiero servidor sin tratar el a
   assert.match(page, /financialSummary\.balance\.fullyPaid/);
   assert.match(page, /financialSummary\.balance\.depositCovered === true/);
   assert.match(page, /financialSummary\.balance\.depositCovered === false/);
-  assert.match(page, /No fue posible calcular el estado financiero de esta reservación/);
+  assert.match(
+    page,
+    /No fue posible calcular el estado financiero de esta reservación/,
+  );
   assert.match(page, /financialRemaining/);
 
   assert.equal(page.includes("reservation.amounts.remainingAmount"), false);
@@ -2423,7 +3833,9 @@ test("detalle de cliente presenta el resumen financiero servidor sin tratar el a
   assert.equal(page.includes("reference"), false);
 });
 
-function manualPaymentStored(payment: ManualPaymentInsert): ManualPaymentStoredRow {
+function manualPaymentStored(
+  payment: ManualPaymentInsert,
+): ManualPaymentStoredRow {
   return {
     id: adminPaymentId,
     reservationId: payment.reservationId,
@@ -2439,21 +3851,30 @@ function manualPaymentStored(payment: ManualPaymentInsert): ManualPaymentStoredR
   };
 }
 
-function manualPaymentFixture(input: Readonly<{
+function manualPaymentFixture(
+  input: Readonly<{
   identity?: { userId: string; email: string | null } | null;
   memberships?: readonly AdminAgencyMembershipRecord[];
   reservation?: ReturnType<typeof customerReservationDetailRow> | null;
   failRepository?: boolean;
-  afterConfirmedPayment?: (input: Readonly<{
+    afterConfirmedPayment?: (
+      input: Readonly<{
     requestedAgencySlug: string | undefined;
     reservationId: string;
     paymentId: string;
-  }>) => Promise<"ready" | "existing" | "revoked" | "document_error" | "not_applicable">;
-}> = {}) {
+      }>,
+    ) => Promise<
+      "ready" | "existing" | "revoked" | "document_error" | "not_applicable"
+    >;
+  }> = {},
+) {
   const rows: ManualPaymentStoredRow[] = [];
   const byIdempotency = new Map<string, ManualPaymentStoredRow>();
   const writes: ManualPaymentInsert[] = [];
-  const reservationRequests: Array<{ agencyId: string; reservationId: string }> = [];
+  const reservationRequests: Array<{
+    agencyId: string;
+    reservationId: string;
+  }> = [];
   const access = adminAccessFixture({
     identity: input.identity,
     memberships: input.memberships ?? [adminMembership()],
@@ -2465,7 +3886,9 @@ function manualPaymentFixture(input: Readonly<{
       async findReservation(request) {
         reservationRequests.push(request);
         if (input.failRepository) throw new Error("SQL snapshot details");
-        return input.reservation === undefined ? customerReservationDetailRow() : input.reservation;
+        return input.reservation === undefined
+          ? customerReservationDetailRow()
+          : input.reservation;
       },
       async findByIdempotencyKey({ agencyId, idempotencyKey }) {
         const row = byIdempotency.get(`${agencyId}:${idempotencyKey}`);
@@ -2474,7 +3897,10 @@ function manualPaymentFixture(input: Readonly<{
       async createAtomic({ payment }) {
         const key = `${payment.agencyId}:${payment.idempotencyKey}`;
         if (byIdempotency.has(key)) {
-          return { status: "existing" as const, payment: byIdempotency.get(key) as ManualPaymentStoredRow };
+          return {
+            status: "existing" as const,
+            payment: byIdempotency.get(key) as ManualPaymentStoredRow,
+          };
         }
         const row = manualPaymentStored(payment);
         writes.push(payment);
@@ -2505,37 +3931,60 @@ function manualPaymentInput(input: Partial<Record<string, unknown>> = {}) {
 test("pago manual autoriza a administradores antes de consultar o escribir", async () => {
   let queried = false;
   const unauthenticated = createManualReservationPaymentService({
-    async resolveAccess() { return { status: "unauthenticated" } as const; },
+    async resolveAccess() {
+      return { status: "unauthenticated" } as const;
+    },
     repository: {
-      async findReservation() { queried = true; return null; },
-      async findByIdempotencyKey() { queried = true; return null; },
-      async createAtomic() { queried = true; throw new Error("No debe escribir"); },
+      async findReservation() {
+        queried = true;
+        return null;
+      },
+      async findByIdempotencyKey() {
+        queried = true;
+        return null;
+      },
+      async createAtomic() {
+        queried = true;
+        throw new Error("No debe escribir");
+      },
     },
   });
-  assert.deepEqual(await unauthenticated.create(manualPaymentInput()), { status: "unauthenticated" });
+  assert.deepEqual(await unauthenticated.create(manualPaymentInput()), {
+    status: "unauthenticated",
+  });
   assert.equal(queried, false);
 
   const customerOnly = manualPaymentFixture({ memberships: [] });
-  assert.deepEqual(await customerOnly.service.create(manualPaymentInput()), { status: "forbidden" });
+  assert.deepEqual(await customerOnly.service.create(manualPaymentInput()), {
+    status: "forbidden",
+  });
   assert.deepEqual(customerOnly.reservationRequests, []);
   assert.equal(customerOnly.writes.length, 0);
 
   const invalidUuid = manualPaymentFixture();
-  const result = await invalidUuid.service.create(manualPaymentInput({ reservationId: "not-a-uuid" }));
+  const result = await invalidUuid.service.create(
+    manualPaymentInput({ reservationId: "not-a-uuid" }),
+  );
   assert.equal(result.status, "invalid_input");
   assert.deepEqual(invalidUuid.reservationRequests, []);
 
   const crossTenant = manualPaymentFixture();
   assert.deepEqual(
-    await crossTenant.service.create(manualPaymentInput({ requestedAgencySlug: "crisenix" })),
+    await crossTenant.service.create(
+      manualPaymentInput({ requestedAgencySlug: "crisenix" }),
+    ),
     { status: "forbidden" },
   );
   assert.deepEqual(crossTenant.reservationRequests, []);
 
   const crisenixAdmin = manualPaymentFixture({
-    memberships: [adminMembership({ agencyId: "agency-crisenix", agencySlug: "crisenix" })],
+    memberships: [
+      adminMembership({ agencyId: "agency-crisenix", agencySlug: "crisenix" }),
+    ],
   });
-  assert.deepEqual(await crisenixAdmin.service.create(manualPaymentInput()), { status: "forbidden" });
+  assert.deepEqual(await crisenixAdmin.service.create(manualPaymentInput()), {
+    status: "forbidden",
+  });
   assert.deepEqual(crisenixAdmin.reservationRequests, []);
 });
 
@@ -2551,7 +4000,9 @@ test("pago manual valida importe, método, estado, fecha, referencia e idempoten
     ["idempotencyKey", "not-a-uuid"],
   ] as const) {
     const fixture = manualPaymentFixture();
-    const result = await fixture.service.create(manualPaymentInput({ [field]: value }));
+    const result = await fixture.service.create(
+      manualPaymentInput({ [field]: value }),
+    );
     assert.equal(result.status, "invalid_input");
     if (result.status === "invalid_input") assert.ok(result.fieldErrors[field]);
     assert.equal(fixture.writes.length, 0);
@@ -2560,11 +4011,14 @@ test("pago manual valida importe, método, estado, fecha, referencia e idempoten
   const trimmed = manualPaymentFixture();
   const created = await trimmed.service.create(manualPaymentInput());
   assert.equal(created.status, "created");
-  if (created.status === "created") assert.equal(created.payment.reference, "QA-TRANSFER-01");
+  if (created.status === "created")
+    assert.equal(created.payment.reference, "QA-TRANSFER-01");
   assert.equal(trimmed.writes[0].reference, "QA-TRANSFER-01");
 
   const emptyReference = manualPaymentFixture();
-  const empty = await emptyReference.service.create(manualPaymentInput({ reference: "   " }));
+  const empty = await emptyReference.service.create(
+    manualPaymentInput({ reference: "   " }),
+  );
   assert.equal(empty.status, "created");
   if (empty.status === "created") assert.equal(empty.payment.reference, null);
   assert.equal(emptyReference.writes[0].reference, null);
@@ -2583,9 +4037,13 @@ test("pago manual deriva contrato, actor y receipt seguro sin tocar el snapshot"
   };
   const fixture = manualPaymentFixture({ reservation: contractRow });
   const before = JSON.stringify(contractRow.snapshot);
-  const created = await fixture.service.create(manualPaymentInput({ initialStatus: "pending" }));
+  const created = await fixture.service.create(
+    manualPaymentInput({ initialStatus: "pending" }),
+  );
   assert.equal(created.status, "created");
-  assert.deepEqual(fixture.reservationRequests, [{ agencyId: "agency-furiver", reservationId: customerDetailReservationId }]);
+  assert.deepEqual(fixture.reservationRequests, [
+    { agencyId: "agency-furiver", reservationId: customerDetailReservationId },
+  ]);
   assert.equal(fixture.writes[0].currency, "MXN");
   assert.equal(fixture.writes[0].createdByUserId, "user-verified");
   assert.equal(fixture.writes[0].source, "manual");
@@ -2601,7 +4059,11 @@ test("pago manual deriva contrato, actor y receipt seguro sin tocar el snapshot"
 
   const pendingSummary = calculateReservationFinancialSummary({
     snapshot: contractRow,
-    payments: fixture.rows.map(({ amount, currency, status }) => ({ amount, currency, status })),
+    payments: fixture.rows.map(({ amount, currency, status }) => ({
+      amount,
+      currency,
+      status,
+    })),
   });
   assert.equal(pendingSummary?.balance.remaining, 47817);
 
@@ -2609,7 +4071,11 @@ test("pago manual deriva contrato, actor y receipt seguro sin tocar el snapshot"
   await confirmed.service.create(manualPaymentInput());
   const confirmedSummary = calculateReservationFinancialSummary({
     snapshot: contractRow,
-    payments: confirmed.rows.map(({ amount, currency, status }) => ({ amount, currency, status })),
+    payments: confirmed.rows.map(({ amount, currency, status }) => ({
+      amount,
+      currency,
+      status,
+    })),
   });
   assert.equal(confirmedSummary?.balance.remaining, 38253.6);
 });
@@ -2621,77 +4087,199 @@ test("pago manual es idempotente ante reintentos, conflicto y concurrencia", asy
     fixture.service.create(input),
     fixture.service.create(input),
   ]);
-  assert.deepEqual([first.status, second.status].sort(), ["already_exists", "created"]);
+  assert.deepEqual([first.status, second.status].sort(), [
+    "already_exists",
+    "created",
+  ]);
   assert.equal(fixture.rows.length, 1);
   assert.equal(fixture.writes.length, 1);
 
-  const changed = await fixture.service.create(manualPaymentInput({ amount: "9000.00" }));
+  const changed = await fixture.service.create(
+    manualPaymentInput({ amount: "9000.00" }),
+  );
   assert.deepEqual(changed, { status: "idempotency_conflict" });
   assert.equal(fixture.rows.length, 1);
 
   const missing = manualPaymentFixture({ reservation: null });
-  assert.deepEqual(await missing.service.create(manualPaymentInput()), { status: "not_found" });
+  assert.deepEqual(await missing.service.create(manualPaymentInput()), {
+    status: "not_found",
+  });
   assert.equal(missing.writes.length, 0);
 
   const failing = manualPaymentFixture({ failRepository: true });
   await assert.rejects(
     failing.service.create(manualPaymentInput()),
-    (error: unknown) => error instanceof ManualPaymentError && !error.message.includes("SQL"),
+    (error: unknown) =>
+      error instanceof ManualPaymentError && !error.message.includes("SQL"),
   );
 
-  const repository = readFileSync("lib/payments/manual-payment-repository.ts", "utf8");
-  assert.match(repository, /\.eq\("id", reservationId\)[\s\S]*\.eq\("agency_id", agencyId\)/);
-  assert.match(repository, /\.eq\("agency_id", agencyId\)[\s\S]*\.eq\("idempotency_key", idempotencyKey\)/);
+  const repository = readFileSync(
+    "lib/payments/manual-payment-repository.ts",
+    "utf8",
+  );
+  assert.match(
+    repository,
+    /\.eq\("id", reservationId\)[\s\S]*\.eq\("agency_id", agencyId\)/,
+  );
+  assert.match(
+    repository,
+    /\.eq\("agency_id", agencyId\)[\s\S]*\.eq\("idempotency_key", idempotencyKey\)/,
+  );
   assert.match(repository, /\.rpc\("create_manual_reservation_payment_atomic"/);
-  assert.match(repository, /target_created_by_user_id: payment\.createdByUserId/);
+  assert.match(
+    repository,
+    /target_created_by_user_id: payment\.createdByUserId/,
+  );
   assert.match(repository, /target_status: payment\.status/);
 });
 
 test("capacidad atómica administrativa limita pending y confirmed sin alterar pagos históricos", async () => {
   const access = adminAccessFixture({ memberships: [adminMembership()] });
-  const ledger: Array<{ amount: number; currency: string; status: "pending" | "confirmed" | "cancelled" }> = [];
+  const ledger: Array<{
+    amount: number;
+    currency: string;
+    status: "pending" | "confirmed" | "cancelled";
+  }> = [];
   const existing = new Map<string, ManualPaymentStoredRow>();
   let sequence = 0;
   const service = createManualReservationPaymentService({
     resolveAccess: access.resolver.resolve,
     now: () => new Date(TEST_NOW),
     repository: {
-      async findReservation() { return financialReservationRow({ total: 10000 }); },
-      async findByIdempotencyKey({ agencyId, idempotencyKey }) { return existing.get(`${agencyId}:${idempotencyKey}`) ?? null; },
+      async findReservation() {
+        return financialReservationRow({ total: 10000 });
+      },
+      async findByIdempotencyKey({ agencyId, idempotencyKey }) {
+        return existing.get(`${agencyId}:${idempotencyKey}`) ?? null;
+      },
       async createAtomic({ contractTotalCents, payment }) {
         const key = `${payment.agencyId}:${payment.idempotencyKey}`;
         const prior = existing.get(key);
         if (prior) return { status: "existing" as const, payment: prior };
-        const confirmed = ledger.filter((row) => row.status === "confirmed").reduce((sum, row) => sum + Math.round(row.amount * 100), 0);
-        const pending = ledger.filter((row) => row.status === "pending").reduce((sum, row) => sum + Math.round(row.amount * 100), 0);
-        if (ledger.some((row) => row.currency !== payment.currency)) return { status: "invalid_structure" as const };
-        if (confirmed > contractTotalCents) return { status: "historical_overpayment" as const };
-        if (confirmed >= contractTotalCents) return { status: "reservation_paid_in_full" as const };
+        const confirmed = ledger
+          .filter((row) => row.status === "confirmed")
+          .reduce((sum, row) => sum + Math.round(row.amount * 100), 0);
+        const pending = ledger
+          .filter((row) => row.status === "pending")
+          .reduce((sum, row) => sum + Math.round(row.amount * 100), 0);
+        if (ledger.some((row) => row.currency !== payment.currency))
+          return { status: "invalid_structure" as const };
+        if (confirmed > contractTotalCents)
+          return { status: "historical_overpayment" as const };
+        if (confirmed >= contractTotalCents)
+          return { status: "reservation_paid_in_full" as const };
         const amountCents = Math.round(payment.amount * 100);
-        if (payment.status === "pending" && amountCents > Math.max(contractTotalCents - confirmed - pending, 0)) return { status: "amount_exceeds_reportable_balance" as const };
-        if (payment.status === "confirmed" && amountCents > Math.max(contractTotalCents - confirmed, 0)) return { status: "amount_exceeds_confirmable_balance" as const };
-        const row = { ...manualPaymentStored(payment), id: `manual-${++sequence}` };
+        if (
+          payment.status === "pending" &&
+          amountCents > Math.max(contractTotalCents - confirmed - pending, 0)
+        )
+          return { status: "amount_exceeds_reportable_balance" as const };
+        if (
+          payment.status === "confirmed" &&
+          amountCents > Math.max(contractTotalCents - confirmed, 0)
+        )
+          return { status: "amount_exceeds_confirmable_balance" as const };
+        const row = {
+          ...manualPaymentStored(payment),
+          id: `manual-${++sequence}`,
+        };
         existing.set(key, row);
-        ledger.push({ amount: payment.amount, currency: payment.currency, status: payment.status });
+        ledger.push({
+          amount: payment.amount,
+          currency: payment.currency,
+          status: payment.status,
+        });
         return { status: "created" as const, payment: row };
       },
     },
   });
-  ledger.push({ amount: 4000, currency: "MXN", status: "confirmed" }, { amount: 4000, currency: "MXN", status: "pending" });
-  assert.equal((await service.create(manualPaymentInput({ initialStatus: "pending", amount: "2000.00", idempotencyKey: "48d8cc3a-a91b-491d-b209-02df25bb4f6a" }))).status, "created");
-  assert.deepEqual(await service.create(manualPaymentInput({ initialStatus: "pending", amount: "0.01", idempotencyKey: "49d8cc3a-a91b-491d-b209-02df25bb4f6a" })), { status: "amount_exceeds_reportable_balance" });
+  ledger.push(
+    { amount: 4000, currency: "MXN", status: "confirmed" },
+    { amount: 4000, currency: "MXN", status: "pending" },
+  );
+  assert.equal(
+    (
+      await service.create(
+        manualPaymentInput({
+          initialStatus: "pending",
+          amount: "2000.00",
+          idempotencyKey: "48d8cc3a-a91b-491d-b209-02df25bb4f6a",
+        }),
+      )
+    ).status,
+    "created",
+  );
+  assert.deepEqual(
+    await service.create(
+      manualPaymentInput({
+        initialStatus: "pending",
+        amount: "0.01",
+        idempotencyKey: "49d8cc3a-a91b-491d-b209-02df25bb4f6a",
+      }),
+    ),
+    { status: "amount_exceeds_reportable_balance" },
+  );
   // Pending rows do not block a real confirmed payment; only confirmed does.
-  assert.equal((await service.create(manualPaymentInput({ initialStatus: "confirmed", amount: "6000.00", idempotencyKey: "50d8cc3a-a91b-491d-b209-02df25bb4f6a" }))).status, "created");
-  assert.deepEqual(await service.create(manualPaymentInput({ initialStatus: "confirmed", amount: "0.01", idempotencyKey: "51d8cc3a-a91b-491d-b209-02df25bb4f6a" })), { status: "reservation_paid_in_full" });
-  assert.equal(ledger.filter((row) => row.status === "confirmed").reduce((sum, row) => sum + row.amount, 0), 10000);
-  assert.equal(ledger.filter((row) => row.status === "pending").reduce((sum, row) => sum + row.amount, 0), 6000);
+  assert.equal(
+    (
+      await service.create(
+        manualPaymentInput({
+          initialStatus: "confirmed",
+          amount: "6000.00",
+          idempotencyKey: "50d8cc3a-a91b-491d-b209-02df25bb4f6a",
+        }),
+      )
+    ).status,
+    "created",
+  );
+  assert.deepEqual(
+    await service.create(
+      manualPaymentInput({
+        initialStatus: "confirmed",
+        amount: "0.01",
+        idempotencyKey: "51d8cc3a-a91b-491d-b209-02df25bb4f6a",
+      }),
+    ),
+    { status: "reservation_paid_in_full" },
+  );
+  assert.equal(
+    ledger
+      .filter((row) => row.status === "confirmed")
+      .reduce((sum, row) => sum + row.amount, 0),
+    10000,
+  );
+  assert.equal(
+    ledger
+      .filter((row) => row.status === "pending")
+      .reduce((sum, row) => sum + row.amount, 0),
+    6000,
+  );
 });
 
 test("confirmación atómica conserva pending que excede capacidad y nunca genera documentos al bloquearse", async () => {
   const access = adminAccessFixture({ memberships: [adminMembership()] });
-  const rows = new Map<string, { id: string; status: ManualPaymentStatus; source: string; amount: number }>([
-    ["1c8f51f4-bacd-457c-8267-b173a2994f57", { id: "1c8f51f4-bacd-457c-8267-b173a2994f57", status: "pending", source: "manual", amount: 200000 }],
-    ["2c8f51f4-bacd-457c-8267-b173a2994f57", { id: "2c8f51f4-bacd-457c-8267-b173a2994f57", status: "pending", source: "manual", amount: 200000 }],
+  const rows = new Map<
+    string,
+    { id: string; status: ManualPaymentStatus; source: string; amount: number }
+  >([
+    [
+      "1c8f51f4-bacd-457c-8267-b173a2994f57",
+      {
+        id: "1c8f51f4-bacd-457c-8267-b173a2994f57",
+        status: "pending",
+        source: "manual",
+        amount: 200000,
+      },
+    ],
+    [
+      "2c8f51f4-bacd-457c-8267-b173a2994f57",
+      {
+        id: "2c8f51f4-bacd-457c-8267-b173a2994f57",
+        status: "pending",
+        source: "manual",
+        amount: 200000,
+      },
+    ],
   ]);
   let confirmed = 800000;
   let previous = Promise.resolve();
@@ -2700,44 +4288,107 @@ test("confirmación atómica conserva pending que excede capacidad y nunca gener
     resolveAccess: access.resolver.resolve,
     now: () => new Date(TEST_NOW),
     repository: {
-      async findReservation() { return financialReservationRow({ total: 10000 }); },
-      async findPayment({ paymentId }) { const row = rows.get(paymentId); return row ? { id: row.id, status: row.status, source: row.source } : null; },
-      async hasEvidence() { return false; },
-      async updateStatus({ paymentId, nextStatus }) { const row = rows.get(paymentId); if (!row || row.status !== "pending") return false; row.status = nextStatus; return true; },
+      async findReservation() {
+        return financialReservationRow({ total: 10000 });
+      },
+      async findPayment({ paymentId }) {
+        const row = rows.get(paymentId);
+        return row
+          ? { id: row.id, status: row.status, source: row.source }
+          : null;
+      },
+      async hasEvidence() {
+        return false;
+      },
+      async updateStatus({ paymentId, nextStatus }) {
+        const row = rows.get(paymentId);
+        if (!row || row.status !== "pending") return false;
+        row.status = nextStatus;
+        return true;
+      },
       async confirmAtomic({ paymentId, contractTotalCents }) {
         const before = previous;
         let release: () => void = () => undefined;
-        previous = new Promise<void>((resolve) => { release = resolve; });
+        previous = new Promise<void>((resolve) => {
+          release = resolve;
+        });
         await before;
         try {
           const row = rows.get(paymentId);
           if (!row || row.status !== "pending") return "conflict" as const;
-          if (row.amount > contractTotalCents - confirmed) return "payment_exceeds_remaining_balance" as const;
+          if (row.amount > contractTotalCents - confirmed)
+            return "payment_exceeds_remaining_balance" as const;
           confirmed += row.amount;
           row.status = "confirmed";
           return "updated" as const;
-        } finally { release(); }
+        } finally {
+          release();
+        }
       },
+      },
+    async afterStatusChanged() {
+      documentCalls += 1;
+      return "ready";
     },
-    async afterStatusChanged() { documentCalls += 1; return "ready"; },
   });
   const [first, second] = await Promise.all([
-    service.change({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId, paymentId: "1c8f51f4-bacd-457c-8267-b173a2994f57", nextStatus: "confirmed" }),
-    service.change({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId, paymentId: "2c8f51f4-bacd-457c-8267-b173a2994f57", nextStatus: "confirmed" }),
+    service.change({
+      requestedAgencySlug: "furiver",
+      reservationId: customerDetailReservationId,
+      paymentId: "1c8f51f4-bacd-457c-8267-b173a2994f57",
+      nextStatus: "confirmed",
+    }),
+    service.change({
+      requestedAgencySlug: "furiver",
+      reservationId: customerDetailReservationId,
+      paymentId: "2c8f51f4-bacd-457c-8267-b173a2994f57",
+      nextStatus: "confirmed",
+    }),
   ]);
-  assert.deepEqual([first.status, second.status].sort(), ["payment_exceeds_remaining_balance", "updated"]);
+  assert.deepEqual([first.status, second.status].sort(), [
+    "payment_exceeds_remaining_balance",
+    "updated",
+  ]);
   assert.equal(confirmed, 1000000);
-  assert.equal([...rows.values()].filter((row) => row.status === "pending").length, 1);
+  assert.equal(
+    [...rows.values()].filter((row) => row.status === "pending").length,
+    1,
+  );
   assert.equal(documentCalls, 1);
-  assert.equal((await service.change({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId, paymentId: "2c8f51f4-bacd-457c-8267-b173a2994f57", nextStatus: "cancelled" })).status, "updated");
+  assert.equal(
+    (
+      await service.change({
+        requestedAgencySlug: "furiver",
+        reservationId: customerDetailReservationId,
+        paymentId: "2c8f51f4-bacd-457c-8267-b173a2994f57",
+        nextStatus: "cancelled",
+      })
+    ).status,
+    "updated",
+  );
 });
 
 test("migración de capacidad administrativa bloquea por reservación y la UI conserva pagos pending revisables", () => {
-  const migration = readFileSync("supabase/migrations/20260801200000_atomic_admin_payment_capacity.sql", "utf8");
-  const createRepository = readFileSync("lib/payments/manual-payment-repository.ts", "utf8");
-  const statusRepository = readFileSync("lib/payments/admin-payment-status-repository.ts", "utf8");
-  const page = readFileSync("app/admin/[agencySlug]/reservaciones/[reservationId]/page.tsx", "utf8");
-  const actions = readFileSync("app/admin/[agencySlug]/reservaciones/[reservationId]/payment-status-actions.ts", "utf8");
+  const migration = readFileSync(
+    "supabase/migrations/20260801200000_atomic_admin_payment_capacity.sql",
+    "utf8",
+  );
+  const createRepository = readFileSync(
+    "lib/payments/manual-payment-repository.ts",
+    "utf8",
+  );
+  const statusRepository = readFileSync(
+    "lib/payments/admin-payment-status-repository.ts",
+    "utf8",
+  );
+  const page = readFileSync(
+    "app/admin/[agencySlug]/reservaciones/[reservationId]/page.tsx",
+    "utf8",
+  );
+  const actions = readFileSync(
+    "app/admin/[agencySlug]/reservaciones/[reservationId]/payment-status-actions.ts",
+    "utf8",
+  );
   assert.match(migration, /create_manual_reservation_payment_atomic/);
   assert.match(migration, /confirm_reservation_payment_atomic/);
   assert.match(migration, /for update/i);
@@ -2748,7 +4399,10 @@ test("migración de capacidad administrativa bloquea por reservación y la UI co
   assert.match(migration, /payment_exceeds_remaining_balance/);
   assert.match(migration, /historical_overpayment/);
   assert.match(migration, /grant execute[\s\S]*service_role/i);
-  assert.match(createRepository, /\.rpc\("create_manual_reservation_payment_atomic"/);
+  assert.match(
+    createRepository,
+    /\.rpc\("create_manual_reservation_payment_atomic"/,
+  );
   assert.match(statusRepository, /\.rpc\("confirm_reservation_payment_atomic"/);
   assert.match(page, /reservationPaidInFull/);
   assert.match(actions, /supera el saldo pendiente y no puede confirmarse/);
@@ -2757,29 +4411,73 @@ test("migración de capacidad administrativa bloquea por reservación y la UI co
 test("formulario administrativo convierte fecha local a ISO inequívoco y crea UUIDs no predecibles", () => {
   const iso = localDateTimeToIso("2026-07-26T08:30");
   assert.ok(iso?.endsWith("Z"));
-  assert.equal(new Date(iso as string).getTime(), new Date(2026, 6, 26, 8, 30).getTime());
+  assert.equal(
+    new Date(iso as string).getTime(),
+    new Date(2026, 6, 26, 8, 30).getTime(),
+  );
   assert.equal(localDateTimeToIso("2026-02-31T08:30"), null);
   assert.equal(localDateTimeToIso("fecha-inválida"), null);
-  assert.match(localDateTimeValue(new Date("2026-07-26T12:00:00.000Z")), /^2026-07-\d{2}T\d{2}:\d{2}$/);
-  assert.equal(createManualPaymentIdempotencyKey({ randomUUID: () => "58d8cc3a-a91b-491d-b209-02df25bb4f6a" } as Crypto), "58d8cc3a-a91b-491d-b209-02df25bb4f6a");
+  assert.match(
+    localDateTimeValue(new Date("2026-07-26T12:00:00.000Z")),
+    /^2026-07-\d{2}T\d{2}:\d{2}$/,
+  );
+  assert.equal(
+    createManualPaymentIdempotencyKey({
+      randomUUID: () => "58d8cc3a-a91b-491d-b209-02df25bb4f6a",
+    } as Crypto),
+    "58d8cc3a-a91b-491d-b209-02df25bb4f6a",
+  );
 });
 
 test("acción y diálogo de pago administrativo delegan al comando y mantienen idempotencia por intento", () => {
-  const action = readFileSync("app/admin/[agencySlug]/reservaciones/[reservationId]/payment-actions.ts", "utf8");
-  const form = readFileSync("app/admin/[agencySlug]/reservaciones/[reservationId]/manual-payment-form.tsx", "utf8");
-  const page = readFileSync("app/admin/[agencySlug]/reservaciones/[reservationId]/page.tsx", "utf8");
-  const clientPortal = readFileSync("app/cuenta/[agencySlug]/reservaciones/[reservationId]/page.tsx", "utf8");
+  const action = readFileSync(
+    "app/admin/[agencySlug]/reservaciones/[reservationId]/payment-actions.ts",
+    "utf8",
+  );
+  const form = readFileSync(
+    "app/admin/[agencySlug]/reservaciones/[reservationId]/manual-payment-form.tsx",
+    "utf8",
+  );
+  const page = readFileSync(
+    "app/admin/[agencySlug]/reservaciones/[reservationId]/page.tsx",
+    "utf8",
+  );
+  const clientPortal = readFileSync(
+    "app/cuenta/[agencySlug]/reservaciones/[reservationId]/page.tsx",
+    "utf8",
+  );
 
   assert.match(action, /createManualReservationPayment\(\{/);
-  assert.equal(action.includes("export const initialManualPaymentFormState"), false);
+  assert.equal(
+    action.includes("export const initialManualPaymentFormState"),
+    false,
+  );
   assert.equal(action.includes("export const"), false);
-  assert.match(readFileSync("app/admin/[agencySlug]/reservaciones/[reservationId]/manual-payment-form-core.ts", "utf8"), /initialManualPaymentFormState/);
-  assert.match(action, /revalidatePath\(detailPath\(requestedAgencySlug, reservationId\)\)/);
-  assert.match(action, /\/cuenta\/\$\{encodeURIComponent\(requestedAgencySlug\)\}\/reservaciones\/\$\{reservationId\}/);
+  assert.match(
+    readFileSync(
+      "app/admin/[agencySlug]/reservaciones/[reservationId]/manual-payment-form-core.ts",
+      "utf8",
+    ),
+    /initialManualPaymentFormState/,
+  );
+  assert.match(
+    action,
+    /revalidatePath\(detailPath\(requestedAgencySlug, reservationId\)\)/,
+  );
+  assert.match(
+    action,
+    /\/cuenta\/\$\{encodeURIComponent\(requestedAgencySlug\)\}\/reservaciones\/\$\{reservationId\}/,
+  );
   assert.match(action, /Pago registrado correctamente\./);
   assert.match(action, /El pago ya había sido registrado\./);
-  assert.match(action, /Este intento de registro ya fue utilizado con datos diferentes/);
-  assert.match(action, /No fue posible registrar el pago\. Verifica la reservación o contacta al administrador del sistema\./);
+  assert.match(
+    action,
+    /Este intento de registro ya fue utilizado con datos diferentes/,
+  );
+  assert.match(
+    action,
+    /No fue posible registrar el pago\. Verifica la reservación o contacta al administrador del sistema\./,
+  );
   assert.equal(action.includes("agencyId:"), false);
   assert.equal(action.includes("currency:"), false);
   assert.equal(action.includes("createdByUserId:"), false);
@@ -2791,7 +4489,10 @@ test("acción y diálogo de pago administrativo delegan al comando y mantienen i
   assert.match(form, /type="datetime-local"/);
   assert.match(form, /localDateTimeToIso\(localValue\)/);
   assert.match(form, /name="idempotencyKey"/);
-  assert.match(form, /setIdempotencyKey\(createManualPaymentIdempotencyKey\(\)\)/);
+  assert.match(
+    form,
+    /setIdempotencyKey\(createManualPaymentIdempotencyKey\(\)\)/,
+  );
   assert.match(form, /state\.outcome === "idempotency_conflict"/);
   assert.match(form, /Registrando…/);
   assert.match(form, /No modifica el saldo hasta ser confirmado\./);
@@ -2804,7 +4505,9 @@ test("acción y diálogo de pago administrativo delegan al comando y mantienen i
 const adminPaymentId = "3e38c1e6-62b5-4e76-8e12-a9272e3fd710";
 const secondAdminPaymentId = "3e38c1e6-62b5-4e76-8e12-a9272e3fd711";
 
-function adminPaymentRow(input: Partial<AdminPaymentHistoryRow> = {}): AdminPaymentHistoryRow {
+function adminPaymentRow(
+  input: Partial<AdminPaymentHistoryRow> = {},
+): AdminPaymentHistoryRow {
   return {
     id: input.id ?? adminPaymentId,
     amount: input.amount ?? 9563.4,
@@ -2814,7 +4517,10 @@ function adminPaymentRow(input: Partial<AdminPaymentHistoryRow> = {}): AdminPaym
     reference: input.reference ?? "REFERENCIA-INTERNA",
     paidAt: input.paidAt ?? "2026-07-26T12:00:00.000Z",
     createdAt: input.createdAt ?? "2026-07-26T12:01:00.000Z",
-    createdByUserId: input.createdByUserId === undefined ? "user-verified" : input.createdByUserId,
+    createdByUserId:
+      input.createdByUserId === undefined
+        ? "user-verified"
+        : input.createdByUserId,
     statusChangedAt: input.statusChangedAt ?? null,
     source: input.source ?? "manual",
     hasEvidence: input.hasEvidence ?? false,
@@ -2822,21 +4528,27 @@ function adminPaymentRow(input: Partial<AdminPaymentHistoryRow> = {}): AdminPaym
   };
 }
 
-function adminPaymentHistoryFixture(input: Readonly<{
+function adminPaymentHistoryFixture(
+  input: Readonly<{
   memberships?: readonly AdminAgencyMembershipRecord[];
   reservation?: ReturnType<typeof customerReservationDetailRow> | null;
   rows?: readonly AdminPaymentHistoryRow[];
   fail?: boolean;
-}> = {}) {
+  }> = {},
+) {
   const requests: string[] = [];
-  const access = adminAccessFixture({ memberships: input.memberships ?? [adminMembership()] });
+  const access = adminAccessFixture({
+    memberships: input.memberships ?? [adminMembership()],
+  });
   const service = createAdminPaymentHistoryService({
     resolveAccess: access.resolver.resolve,
     repository: {
       async findReservation({ agencyId, reservationId }) {
         requests.push(`reservation:${agencyId}:${reservationId}`);
         if (input.fail) throw new Error("SQL internal detail");
-        return input.reservation === undefined ? financialReservationRow() : input.reservation;
+        return input.reservation === undefined
+          ? financialReservationRow()
+          : input.reservation;
       },
       async listPayments({ agencyId, reservationId }) {
         requests.push(`payments:${agencyId}:${reservationId}`);
@@ -2844,38 +4556,54 @@ function adminPaymentHistoryFixture(input: Readonly<{
       },
       async findDisplayNames(userIds) {
         requests.push(`profiles:${userIds.join(",")}`);
-        return new Map(userIds.map((userId) => [userId, "Administración Furiver"]));
+        return new Map(
+          userIds.map((userId) => [userId, "Administración Furiver"]),
+        );
       },
     },
   });
   return { service, requests };
 }
 
-function adminPaymentStatusFixture(input: Readonly<{
+function adminPaymentStatusFixture(
+  input: Readonly<{
   memberships?: readonly AdminAgencyMembershipRecord[];
   paymentStatus?: ManualPaymentStatus;
   reservationExists?: boolean;
   conflict?: boolean;
   paymentSource?: string;
   hasEvidence?: boolean;
-  afterStatusChanged?: (input: Readonly<{
+    afterStatusChanged?: (
+      input: Readonly<{
     requestedAgencySlug: string | undefined;
     reservationId: string;
     paymentId: string;
     nextStatus: ManualPaymentStatus;
-  }>) => Promise<"ready" | "existing" | "revoked" | "document_error" | "not_applicable">;
-}> = {}) {
-  const row = { id: adminPaymentId, status: input.paymentStatus ?? "pending" as ManualPaymentStatus, source: input.paymentSource ?? "manual" };
+      }>,
+    ) => Promise<
+      "ready" | "existing" | "revoked" | "document_error" | "not_applicable"
+    >;
+  }> = {},
+) {
+  const row = {
+    id: adminPaymentId,
+    status: input.paymentStatus ?? ("pending" as ManualPaymentStatus),
+    source: input.paymentSource ?? "manual",
+  };
   const writes: Array<Record<string, unknown>> = [];
   const requests: string[] = [];
-  const access = adminAccessFixture({ memberships: input.memberships ?? [adminMembership()] });
+  const access = adminAccessFixture({
+    memberships: input.memberships ?? [adminMembership()],
+  });
   const service = createAdminPaymentStatusService({
     resolveAccess: access.resolver.resolve,
     now: () => new Date(TEST_NOW),
     repository: {
       async findReservation({ agencyId, reservationId }) {
         requests.push(`reservation:${agencyId}:${reservationId}`);
-        return input.reservationExists === false ? null : financialReservationRow();
+        return input.reservationExists === false
+          ? null
+          : financialReservationRow();
       },
       async findPayment({ agencyId, reservationId, paymentId }) {
         requests.push(`payment:${agencyId}:${reservationId}:${paymentId}`);
@@ -2887,13 +4615,15 @@ function adminPaymentStatusFixture(input: Readonly<{
       },
       async updateStatus(update) {
         writes.push(update);
-        if (input.conflict || update.expectedStatus !== row.status) return false;
+        if (input.conflict || update.expectedStatus !== row.status)
+          return false;
         row.status = update.nextStatus;
         return true;
       },
       async confirmAtomic(update) {
         writes.push(update);
-        if (input.conflict || row.status !== "pending") return "conflict" as const;
+        if (input.conflict || row.status !== "pending")
+          return "conflict" as const;
         row.status = "confirmed";
         return "updated" as const;
       },
@@ -2906,28 +4636,65 @@ function adminPaymentStatusFixture(input: Readonly<{
 test("historial administrativo autoriza antes de consultar, ordena y proyecta solamente datos operativos", async () => {
   let queried = false;
   const unauthenticated = createAdminPaymentHistoryService({
-    async resolveAccess() { return { status: "unauthenticated" } as const; },
+    async resolveAccess() {
+      return { status: "unauthenticated" } as const;
+    },
     repository: () => ({
-      async findReservation() { queried = true; return null; },
-      async listPayments() { queried = true; return []; },
-      async findDisplayNames() { queried = true; return new Map(); },
+      async findReservation() {
+        queried = true;
+        return null;
+      },
+      async listPayments() {
+        queried = true;
+        return [];
+      },
+      async findDisplayNames() {
+        queried = true;
+        return new Map();
+      },
     }),
   });
-  assert.deepEqual(await unauthenticated.list({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId }), { status: "unauthenticated" });
+  assert.deepEqual(
+    await unauthenticated.list({
+      requestedAgencySlug: "furiver",
+      reservationId: customerDetailReservationId,
+    }),
+    { status: "unauthenticated" },
+  );
   assert.equal(queried, false);
 
   const fixture = adminPaymentHistoryFixture({
     rows: [
-      adminPaymentRow({ id: adminPaymentId, status: "confirmed", paidAt: "2026-07-25T12:00:00.000Z", createdAt: "2026-07-25T12:01:00.000Z" }),
-      adminPaymentRow({ id: secondAdminPaymentId, status: "pending", paidAt: "2026-07-26T12:00:00.000Z", createdAt: "2026-07-26T12:01:00.000Z", createdByUserId: null }),
+      adminPaymentRow({
+        id: adminPaymentId,
+        status: "confirmed",
+        paidAt: "2026-07-25T12:00:00.000Z",
+        createdAt: "2026-07-25T12:01:00.000Z",
+      }),
+      adminPaymentRow({
+        id: secondAdminPaymentId,
+        status: "pending",
+        paidAt: "2026-07-26T12:00:00.000Z",
+        createdAt: "2026-07-26T12:01:00.000Z",
+        createdByUserId: null,
+      }),
     ],
   });
-  const listed = await fixture.service.list({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId });
+  const listed = await fixture.service.list({
+    requestedAgencySlug: "furiver",
+    reservationId: customerDetailReservationId,
+  });
   assert.equal(listed.status, "authorized");
   if (listed.status === "authorized") {
-    assert.deepEqual(listed.payments.map((payment) => payment.status), ["pending", "confirmed"]);
+    assert.deepEqual(
+      listed.payments.map((payment) => payment.status),
+      ["pending", "confirmed"],
+    );
     assert.equal(listed.payments[0].createdBy, null);
-    assert.equal(listed.payments[1].createdBy?.displayName, "Administración Furiver");
+    assert.equal(
+      listed.payments[1].createdBy?.displayName,
+      "Administración Furiver",
+    );
     assert.equal(listed.financialSummary?.payments.confirmedTotal, 9563.4);
     const serialized = JSON.stringify(listed.payments);
     assert.equal(serialized.includes("agencyId"), false);
@@ -2940,71 +4707,194 @@ test("historial administrativo autoriza antes de consultar, ordena y proyecta so
     `payments:agency-furiver:${customerDetailReservationId}`,
   ]);
   const crossTenant = adminPaymentHistoryFixture();
-  assert.deepEqual(await crossTenant.service.list({ requestedAgencySlug: "crisenix", reservationId: customerDetailReservationId }), { status: "forbidden" });
+  assert.deepEqual(
+    await crossTenant.service.list({
+      requestedAgencySlug: "crisenix",
+      reservationId: customerDetailReservationId,
+    }),
+    { status: "forbidden" },
+  );
   assert.deepEqual(crossTenant.requests, []);
 
   const failing = adminPaymentHistoryFixture({ fail: true });
-  await assert.rejects(failing.service.list({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId }), (error: unknown) => error instanceof AdminPaymentHistoryError && !error.message.includes("SQL"));
+  await assert.rejects(
+    failing.service.list({
+      requestedAgencySlug: "furiver",
+      reservationId: customerDetailReservationId,
+    }),
+    (error: unknown) =>
+      error instanceof AdminPaymentHistoryError &&
+      !error.message.includes("SQL"),
+  );
 });
 
 test("transiciones administrativas de pagos son auditadas, inmutables y evitan lost updates", async () => {
   assert.equal(canTransitionManualPaymentStatus("pending", "confirmed"), true);
   assert.equal(canTransitionManualPaymentStatus("pending", "cancelled"), true);
-  assert.equal(canTransitionManualPaymentStatus("confirmed", "cancelled"), true);
-  assert.equal(canTransitionManualPaymentStatus("cancelled", "confirmed"), false);
+  assert.equal(
+    canTransitionManualPaymentStatus("confirmed", "cancelled"),
+    true,
+  );
+  assert.equal(
+    canTransitionManualPaymentStatus("cancelled", "confirmed"),
+    false,
+  );
   assert.equal(canTransitionManualPaymentStatus("confirmed", "pending"), false);
   assert.equal(canTransitionManualPaymentStatus("cancelled", "pending"), false);
 
   const fixture = adminPaymentStatusFixture();
-  assert.deepEqual(await fixture.service.change({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId, paymentId: adminPaymentId, nextStatus: "confirmed" }), { status: "updated", nextStatus: "confirmed" });
+  assert.deepEqual(
+    await fixture.service.change({
+      requestedAgencySlug: "furiver",
+      reservationId: customerDetailReservationId,
+      paymentId: adminPaymentId,
+      nextStatus: "confirmed",
+    }),
+    { status: "updated", nextStatus: "confirmed" },
+  );
   assert.equal(fixture.row.status, "confirmed");
   assert.equal(fixture.writes[0].actorUserId, "user-verified");
   assert.equal(fixture.writes[0].changedAt, TEST_NOW);
   assert.equal("amount" in fixture.writes[0], false);
   assert.equal("currency" in fixture.writes[0], false);
   assert.equal("idempotencyKey" in fixture.writes[0], false);
-  assert.deepEqual(await fixture.service.change({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId, paymentId: adminPaymentId, nextStatus: "pending" }), { status: "invalid_transition" });
-  assert.deepEqual(await fixture.service.change({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId, paymentId: adminPaymentId, nextStatus: "cancelled" }), { status: "updated", nextStatus: "cancelled" });
-  assert.deepEqual(await fixture.service.change({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId, paymentId: adminPaymentId, nextStatus: "cancelled" }), { status: "invalid_transition" });
+  assert.deepEqual(
+    await fixture.service.change({
+      requestedAgencySlug: "furiver",
+      reservationId: customerDetailReservationId,
+      paymentId: adminPaymentId,
+      nextStatus: "pending",
+    }),
+    { status: "invalid_transition" },
+  );
+  assert.deepEqual(
+    await fixture.service.change({
+      requestedAgencySlug: "furiver",
+      reservationId: customerDetailReservationId,
+      paymentId: adminPaymentId,
+      nextStatus: "cancelled",
+    }),
+    { status: "updated", nextStatus: "cancelled" },
+  );
+  assert.deepEqual(
+    await fixture.service.change({
+      requestedAgencySlug: "furiver",
+      reservationId: customerDetailReservationId,
+      paymentId: adminPaymentId,
+      nextStatus: "cancelled",
+    }),
+    { status: "invalid_transition" },
+  );
 
   const concurrent = adminPaymentStatusFixture({ conflict: true });
-  assert.deepEqual(await concurrent.service.change({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId, paymentId: adminPaymentId, nextStatus: "confirmed" }), { status: "conflict" });
+  assert.deepEqual(
+    await concurrent.service.change({
+      requestedAgencySlug: "furiver",
+      reservationId: customerDetailReservationId,
+      paymentId: adminPaymentId,
+      nextStatus: "confirmed",
+    }),
+    { status: "conflict" },
+  );
   const customerOnly = adminPaymentStatusFixture({ memberships: [] });
-  assert.deepEqual(await customerOnly.service.change({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId, paymentId: adminPaymentId, nextStatus: "confirmed" }), { status: "forbidden" });
+  assert.deepEqual(
+    await customerOnly.service.change({
+      requestedAgencySlug: "furiver",
+      reservationId: customerDetailReservationId,
+      paymentId: adminPaymentId,
+      nextStatus: "confirmed",
+    }),
+    { status: "forbidden" },
+  );
   assert.deepEqual(customerOnly.requests, []);
   const crossTenant = adminPaymentStatusFixture();
-  assert.deepEqual(await crossTenant.service.change({ requestedAgencySlug: "crisenix", reservationId: customerDetailReservationId, paymentId: adminPaymentId, nextStatus: "confirmed" }), { status: "forbidden" });
+  assert.deepEqual(
+    await crossTenant.service.change({
+      requestedAgencySlug: "crisenix",
+      reservationId: customerDetailReservationId,
+      paymentId: adminPaymentId,
+      nextStatus: "confirmed",
+    }),
+    { status: "forbidden" },
+  );
   assert.deepEqual(crossTenant.requests, []);
   const invalid = adminPaymentStatusFixture();
-  assert.deepEqual(await invalid.service.change({ requestedAgencySlug: "furiver", reservationId: "invalid", paymentId: adminPaymentId, nextStatus: "confirmed" }), { status: "invalid_input" });
+  assert.deepEqual(
+    await invalid.service.change({
+      requestedAgencySlug: "furiver",
+      reservationId: "invalid",
+      paymentId: adminPaymentId,
+      nextStatus: "confirmed",
+    }),
+    { status: "invalid_input" },
+  );
   assert.deepEqual(invalid.requests, []);
 });
 
 test("historial y cambio de status reflejan el efecto financiero sin mutar el snapshot", () => {
   const snapshot = financialReservationRow();
   const before = JSON.stringify(snapshot.snapshot);
-  const pending = calculateReservationFinancialSummary({ snapshot, payments: [{ amount: 9563.4, currency: "MXN", status: "pending" }] });
-  const confirmed = calculateReservationFinancialSummary({ snapshot, payments: [{ amount: 9563.4, currency: "MXN", status: "confirmed" }] });
-  const cancelled = calculateReservationFinancialSummary({ snapshot, payments: [{ amount: 9563.4, currency: "MXN", status: "cancelled" }] });
+  const pending = calculateReservationFinancialSummary({
+    snapshot,
+    payments: [{ amount: 9563.4, currency: "MXN", status: "pending" }],
+  });
+  const confirmed = calculateReservationFinancialSummary({
+    snapshot,
+    payments: [{ amount: 9563.4, currency: "MXN", status: "confirmed" }],
+  });
+  const cancelled = calculateReservationFinancialSummary({
+    snapshot,
+    payments: [{ amount: 9563.4, currency: "MXN", status: "cancelled" }],
+  });
   assert.equal(pending?.balance.remaining, 47817);
   assert.equal(confirmed?.balance.remaining, 38253.6);
   assert.equal(cancelled?.balance.remaining, 47817);
   assert.equal(JSON.stringify(snapshot.snapshot), before);
 
-  const listRepository = readFileSync("lib/payments/admin-payment-list-repository.ts", "utf8");
-  const statusRepository = readFileSync("lib/payments/admin-payment-status-repository.ts", "utf8");
-  const action = readFileSync("app/admin/[agencySlug]/reservaciones/[reservationId]/payment-status-actions.ts", "utf8");
-  const controls = readFileSync("app/admin/[agencySlug]/reservaciones/[reservationId]/payment-status-controls.tsx", "utf8");
-  const page = readFileSync("app/admin/[agencySlug]/reservaciones/[reservationId]/page.tsx", "utf8");
-  assert.match(listRepository, /.eq\("reservation_id", reservationId\)[\s\S]*\.eq\("agency_id", agencyId\)/);
-  assert.match(statusRepository, /.eq\("id", paymentId\)[\s\S]*\.eq\("reservation_id", reservationId\)[\s\S]*\.eq\("agency_id", agencyId\)[\s\S]*\.eq\("status", expectedStatus\)/);
+  const listRepository = readFileSync(
+    "lib/payments/admin-payment-list-repository.ts",
+    "utf8",
+  );
+  const statusRepository = readFileSync(
+    "lib/payments/admin-payment-status-repository.ts",
+    "utf8",
+  );
+  const action = readFileSync(
+    "app/admin/[agencySlug]/reservaciones/[reservationId]/payment-status-actions.ts",
+    "utf8",
+  );
+  const controls = readFileSync(
+    "app/admin/[agencySlug]/reservaciones/[reservationId]/payment-status-controls.tsx",
+    "utf8",
+  );
+  const page = readFileSync(
+    "app/admin/[agencySlug]/reservaciones/[reservationId]/page.tsx",
+    "utf8",
+  );
+  assert.match(
+    listRepository,
+    /.eq\("reservation_id", reservationId\)[\s\S]*\.eq\("agency_id", agencyId\)/,
+  );
+  assert.match(
+    statusRepository,
+    /.eq\("id", paymentId\)[\s\S]*\.eq\("reservation_id", reservationId\)[\s\S]*\.eq\("agency_id", agencyId\)[\s\S]*\.eq\("status", expectedStatus\)/,
+  );
   assert.match(statusRepository, /status_changed_by_user_id: actorUserId/);
   assert.match(statusRepository, /status_changed_at: changedAt/);
   assert.match(action, /changeManualPaymentStatus\(\{/);
   assert.equal(action.includes("export const"), false);
-  assert.match(action, /revalidatePath\(detailPath\(requestedAgencySlug, reservationId\)\)/);
-  assert.match(action, /\/cuenta\/\$\{encodeURIComponent\(requestedAgencySlug\)\}\/reservaciones\/\$\{reservationId\}/);
-  assert.match(controls, /Cancelar este movimiento hará que deje de contabilizarse dentro de los pagos confirmados/);
+  assert.match(
+    action,
+    /revalidatePath\(detailPath\(requestedAgencySlug, reservationId\)\)/,
+  );
+  assert.match(
+    action,
+    /\/cuenta\/\$\{encodeURIComponent\(requestedAgencySlug\)\}\/reservaciones\/\$\{reservationId\}/,
+  );
+  assert.match(
+    controls,
+    /Cancelar este movimiento hará que deje de contabilizarse dentro de los pagos confirmados/,
+  );
   assert.match(page, /<PaymentStatusControls/);
   assert.match(page, /Aún no hay pagos registrados\./);
   assert.equal(page.includes("idempotency_key"), false);
@@ -3017,11 +4907,22 @@ test("comprobante administrativo se autoriza antes de generar URL temporal y no 
   const service = createAdminPaymentEvidenceService({
     resolveAccess: access.resolver.resolve,
     repository: {
-      async findReservation({ agencyId, reservationId }) { requests.push(`reservation:${agencyId}:${reservationId}`); return true; },
-      async findPayment({ agencyId, reservationId, paymentId }) { requests.push(`payment:${agencyId}:${reservationId}:${paymentId}`); return paymentId === adminPaymentId; },
+      async findReservation({ agencyId, reservationId }) {
+        requests.push(`reservation:${agencyId}:${reservationId}`);
+        return true;
+      },
+      async findPayment({ agencyId, reservationId, paymentId }) {
+        requests.push(`payment:${agencyId}:${reservationId}:${paymentId}`);
+        return paymentId === adminPaymentId;
+      },
       async findEvidence({ agencyId, reservationId, paymentId }) {
         requests.push(`evidence:${agencyId}:${reservationId}:${paymentId}`);
-        return paymentId === adminPaymentId ? { storagePath: "agency-furiver/reservation/payment/evidence.pdf", mimeType: "application/pdf" } : null;
+        return paymentId === adminPaymentId
+          ? {
+              storagePath: "agency-furiver/reservation/payment/evidence.pdf",
+              mimeType: "application/pdf",
+            }
+          : null;
       },
     },
     storage: {
@@ -3032,51 +4933,190 @@ test("comprobante administrativo se autoriza antes de generar URL temporal y no 
       },
     },
   });
-  const ready = await service.request({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId, paymentId: adminPaymentId });
-  assert.deepEqual(ready, { status: "ready", signedUrl: "https://storage.example/signed-temporary", mimeType: "application/pdf" });
-  assert.deepEqual(requests.map((request) => request.split(":")[0]), ["reservation", "payment", "evidence", "storage"]);
+  const ready = await service.request({
+    requestedAgencySlug: "furiver",
+    reservationId: customerDetailReservationId,
+    paymentId: adminPaymentId,
+  });
+  assert.deepEqual(ready, {
+    status: "ready",
+    signedUrl: "https://storage.example/signed-temporary",
+    mimeType: "application/pdf",
+  });
+  assert.deepEqual(
+    requests.map((request) => request.split(":")[0]),
+    ["reservation", "payment", "evidence", "storage"],
+  );
   assert.equal(JSON.stringify(ready).includes("storagePath"), false);
 
   const noEvidence = createAdminPaymentEvidenceService({
     resolveAccess: access.resolver.resolve,
     repository: {
-      async findReservation() { return true; }, async findPayment() { return true; }, async findEvidence() { return null; },
+      async findReservation() {
+        return true;
+      },
+      async findPayment() {
+        return true;
+      },
+      async findEvidence() {
+        return null;
+      },
     },
-    storage: { async createSignedReadUrl() { throw new Error("should not read storage"); } },
+    storage: {
+      async createSignedReadUrl() {
+        throw new Error("should not read storage");
+      },
+    },
   });
-  assert.deepEqual(await noEvidence.request({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId, paymentId: adminPaymentId }), { status: "no_evidence" });
+  assert.deepEqual(
+    await noEvidence.request({
+      requestedAgencySlug: "furiver",
+      reservationId: customerDetailReservationId,
+      paymentId: adminPaymentId,
+    }),
+    { status: "no_evidence" },
+  );
   const unauthenticated = createAdminPaymentEvidenceService({
-    async resolveAccess() { return { status: "unauthenticated" } as const; },
-    repository: { async findReservation() { throw new Error(); }, async findPayment() { throw new Error(); }, async findEvidence() { throw new Error(); } },
-    storage: { async createSignedReadUrl() { throw new Error(); } },
+    async resolveAccess() {
+      return { status: "unauthenticated" } as const;
+    },
+    repository: {
+      async findReservation() {
+        throw new Error();
+      },
+      async findPayment() {
+        throw new Error();
+      },
+      async findEvidence() {
+        throw new Error();
+      },
+    },
+    storage: {
+      async createSignedReadUrl() {
+        throw new Error();
+      },
+    },
   });
-  assert.deepEqual(await unauthenticated.request({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId, paymentId: adminPaymentId }), { status: "unauthenticated" });
+  assert.deepEqual(
+    await unauthenticated.request({
+      requestedAgencySlug: "furiver",
+      reservationId: customerDetailReservationId,
+      paymentId: adminPaymentId,
+    }),
+    { status: "unauthenticated" },
+  );
   const failing = createAdminPaymentEvidenceService({
     resolveAccess: access.resolver.resolve,
-    repository: { async findReservation() { throw new Error("SQL private"); }, async findPayment() { return false; }, async findEvidence() { return null; } },
-    storage: { async createSignedReadUrl() { return ""; } },
+    repository: {
+      async findReservation() {
+        throw new Error("SQL private");
+      },
+      async findPayment() {
+        return false;
+      },
+      async findEvidence() {
+        return null;
+      },
+    },
+    storage: {
+      async createSignedReadUrl() {
+        return "";
+      },
+    },
   });
-  await assert.rejects(failing.request({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId, paymentId: adminPaymentId }), (error: unknown) => error instanceof AdminPaymentEvidenceError && !error.message.includes("SQL"));
+  await assert.rejects(
+    failing.request({
+      requestedAgencySlug: "furiver",
+      reservationId: customerDetailReservationId,
+      paymentId: adminPaymentId,
+    }),
+    (error: unknown) =>
+      error instanceof AdminPaymentEvidenceError &&
+      !error.message.includes("SQL"),
+  );
 });
 
 test("confirmación administrativa exige evidencia para pending customer, no para manual", async () => {
-  const customerWithoutEvidence = adminPaymentStatusFixture({ paymentSource: "customer", hasEvidence: false });
-  assert.deepEqual(await customerWithoutEvidence.service.change({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId, paymentId: adminPaymentId, nextStatus: "confirmed" }), { status: "evidence_required" });
+  const customerWithoutEvidence = adminPaymentStatusFixture({
+    paymentSource: "customer",
+    hasEvidence: false,
+  });
+  assert.deepEqual(
+    await customerWithoutEvidence.service.change({
+      requestedAgencySlug: "furiver",
+      reservationId: customerDetailReservationId,
+      paymentId: adminPaymentId,
+      nextStatus: "confirmed",
+    }),
+    { status: "evidence_required" },
+  );
   assert.equal(customerWithoutEvidence.writes.length, 0);
-  assert.deepEqual(await customerWithoutEvidence.service.change({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId, paymentId: adminPaymentId, nextStatus: "cancelled" }), { status: "updated", nextStatus: "cancelled" });
-  const customerWithEvidence = adminPaymentStatusFixture({ paymentSource: "customer", hasEvidence: true });
-  assert.equal((await customerWithEvidence.service.change({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId, paymentId: adminPaymentId, nextStatus: "confirmed" })).status, "updated");
-  const manual = adminPaymentStatusFixture({ paymentSource: "manual", hasEvidence: false });
-  assert.equal((await manual.service.change({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId, paymentId: adminPaymentId, nextStatus: "confirmed" })).status, "updated");
+  assert.deepEqual(
+    await customerWithoutEvidence.service.change({
+      requestedAgencySlug: "furiver",
+      reservationId: customerDetailReservationId,
+      paymentId: adminPaymentId,
+      nextStatus: "cancelled",
+    }),
+    { status: "updated", nextStatus: "cancelled" },
+  );
+  const customerWithEvidence = adminPaymentStatusFixture({
+    paymentSource: "customer",
+    hasEvidence: true,
+  });
+  assert.equal(
+    (
+      await customerWithEvidence.service.change({
+        requestedAgencySlug: "furiver",
+        reservationId: customerDetailReservationId,
+        paymentId: adminPaymentId,
+        nextStatus: "confirmed",
+      })
+    ).status,
+    "updated",
+  );
+  const manual = adminPaymentStatusFixture({
+    paymentSource: "manual",
+    hasEvidence: false,
+  });
+  assert.equal(
+    (
+      await manual.service.change({
+        requestedAgencySlug: "furiver",
+        reservationId: customerDetailReservationId,
+        paymentId: adminPaymentId,
+        nextStatus: "confirmed",
+      })
+    ).status,
+    "updated",
+  );
 });
 
 test("UI administrativa solicita evidencia bajo demanda sin rutas internas ni descarga por Vercel", () => {
-  const action = readFileSync("app/admin/[agencySlug]/reservaciones/[reservationId]/payment-evidence-actions.ts", "utf8");
-  const button = readFileSync("app/admin/[agencySlug]/reservaciones/[reservationId]/payment-evidence-button.tsx", "utf8");
-  const evidenceRepository = readFileSync("lib/payments/admin-payment-evidence-repository.ts", "utf8");
-  const storage = readFileSync("lib/payments/admin-payment-evidence-storage.ts", "utf8");
-  const core = readFileSync("lib/payments/admin-payment-evidence-core.ts", "utf8");
-  const page = readFileSync("app/admin/[agencySlug]/reservaciones/[reservationId]/page.tsx", "utf8");
+  const action = readFileSync(
+    "app/admin/[agencySlug]/reservaciones/[reservationId]/payment-evidence-actions.ts",
+    "utf8",
+  );
+  const button = readFileSync(
+    "app/admin/[agencySlug]/reservaciones/[reservationId]/payment-evidence-button.tsx",
+    "utf8",
+  );
+  const evidenceRepository = readFileSync(
+    "lib/payments/admin-payment-evidence-repository.ts",
+    "utf8",
+  );
+  const storage = readFileSync(
+    "lib/payments/admin-payment-evidence-storage.ts",
+    "utf8",
+  );
+  const core = readFileSync(
+    "lib/payments/admin-payment-evidence-core.ts",
+    "utf8",
+  );
+  const page = readFileSync(
+    "app/admin/[agencySlug]/reservaciones/[reservationId]/page.tsx",
+    "utf8",
+  );
   assert.equal(action.includes("export const"), false);
   assert.match(action, /getAdminPaymentEvidenceAccess/);
   assert.equal(action.includes("storagePath"), false);
@@ -3084,14 +5124,19 @@ test("UI administrativa solicita evidencia bajo demanda sin rutas internas ni de
   assert.match(button, /window\.open/);
   assert.match(button, /noopener,noreferrer/);
   assert.equal(button.includes("storagePath"), false);
-  assert.match(evidenceRepository, /.eq\("payment_id", paymentId\)[\s\S]*\.eq\("reservation_id", reservationId\)[\s\S]*\.eq\("agency_id", agencyId\)/);
+  assert.match(
+    evidenceRepository,
+    /.eq\("payment_id", paymentId\)[\s\S]*\.eq\("reservation_id", reservationId\)[\s\S]*\.eq\("agency_id", agencyId\)/,
+  );
   assert.match(storage, /createSignedUrl\(path, expiresInSeconds\)/);
   assert.match(core, /expiresInSeconds: 60/);
   assert.match(page, /<PaymentEvidenceButton/);
   assert.match(page, /Comprobante no disponible/);
 });
 
-function customerPaymentRow(input: Partial<CustomerPaymentHistoryRow> = {}): CustomerPaymentHistoryRow {
+function customerPaymentRow(
+  input: Partial<CustomerPaymentHistoryRow> = {},
+): CustomerPaymentHistoryRow {
   return {
     amount: input.amount ?? 9563.4,
     currency: input.currency ?? "MXN",
@@ -3102,19 +5147,29 @@ function customerPaymentRow(input: Partial<CustomerPaymentHistoryRow> = {}): Cus
   };
 }
 
-function customerPaymentHistoryFixture(input: Readonly<{
+function customerPaymentHistoryFixture(
+  input: Readonly<{
   accounts?: readonly CustomerAgencyAccountRecord[];
   linked?: boolean;
   rows?: readonly CustomerPaymentHistoryRow[];
   fail?: boolean;
-}> = {}) {
+  }> = {},
+) {
   const requests: string[] = [];
-  const access = customerAccessFixture({ accounts: input.accounts ?? [customerAccount()] });
+  const access = customerAccessFixture({
+    accounts: input.accounts ?? [customerAccount()],
+  });
   const service = createCustomerPaymentHistoryService({
     resolveAccess: access.resolver.resolve,
     repository: {
-      async findLinkedReservation({ customerAccountId, agencyId, reservationId }) {
-        requests.push(`linked:${customerAccountId}:${agencyId}:${reservationId}`);
+      async findLinkedReservation({
+        customerAccountId,
+        agencyId,
+        reservationId,
+      }) {
+        requests.push(
+          `linked:${customerAccountId}:${agencyId}:${reservationId}`,
+        );
         if (input.fail) throw new Error("SQL payment reference");
         return input.linked !== false;
       },
@@ -3130,17 +5185,34 @@ function customerPaymentHistoryFixture(input: Readonly<{
 test("historial de pagos del cliente se autoriza antes de leer el ledger y conserva el aislamiento", async () => {
   let queried = false;
   const unauthenticated = createCustomerPaymentHistoryService({
-    async resolveAccess() { return { status: "unauthenticated" } as const; },
+    async resolveAccess() {
+      return { status: "unauthenticated" } as const;
+    },
     repository: () => ({
-      async findLinkedReservation() { queried = true; return false; },
-      async listPayments() { queried = true; return []; },
+      async findLinkedReservation() {
+        queried = true;
+        return false;
+      },
+      async listPayments() {
+        queried = true;
+        return [];
+      },
     }),
   });
-  assert.deepEqual(await unauthenticated.list({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId }), { status: "unauthenticated" });
+  assert.deepEqual(
+    await unauthenticated.list({
+      requestedAgencySlug: "furiver",
+      reservationId: customerDetailReservationId,
+    }),
+    { status: "unauthenticated" },
+  );
   assert.equal(queried, false);
 
   const fixture = customerPaymentHistoryFixture();
-  const result = await fixture.service.list({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId });
+  const result = await fixture.service.list({
+    requestedAgencySlug: "furiver",
+    reservationId: customerDetailReservationId,
+  });
   assert.equal(result.status, "authorized");
   if (result.status === "authorized") {
     assert.equal(result.payments.length, 1);
@@ -3156,54 +5228,145 @@ test("historial de pagos del cliente se autoriza antes de leer el ledger y conse
     `payments:agency-furiver:${customerDetailReservationId}`,
   ]);
 
-  const otherAccount = customerPaymentHistoryFixture({ accounts: [customerAccount({ customerAccountId: "other-customer" })], linked: false });
-  assert.deepEqual(await otherAccount.service.list({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId }), { status: "not_found" });
-  assert.equal(otherAccount.requests.some((request) => request.startsWith("payments:")), false);
+  const otherAccount = customerPaymentHistoryFixture({
+    accounts: [customerAccount({ customerAccountId: "other-customer" })],
+    linked: false,
+  });
+  assert.deepEqual(
+    await otherAccount.service.list({
+      requestedAgencySlug: "furiver",
+      reservationId: customerDetailReservationId,
+    }),
+    { status: "not_found" },
+  );
+  assert.equal(
+    otherAccount.requests.some((request) => request.startsWith("payments:")),
+    false,
+  );
   const crisenix = customerPaymentHistoryFixture();
-  assert.deepEqual(await crisenix.service.list({ requestedAgencySlug: "crisenix", reservationId: customerDetailReservationId }), { status: "forbidden" });
+  assert.deepEqual(
+    await crisenix.service.list({
+      requestedAgencySlug: "crisenix",
+      reservationId: customerDetailReservationId,
+    }),
+    { status: "forbidden" },
+  );
   assert.deepEqual(crisenix.requests, []);
-  const suspended = customerPaymentHistoryFixture({ accounts: [customerAccount({ status: "suspended" })] });
-  assert.deepEqual(await suspended.service.list({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId }), { status: "forbidden" });
-  const administratorWithoutCustomerAccount = customerPaymentHistoryFixture({ accounts: [] });
-  assert.deepEqual(await administratorWithoutCustomerAccount.service.list({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId }), { status: "forbidden" });
+  const suspended = customerPaymentHistoryFixture({
+    accounts: [customerAccount({ status: "suspended" })],
+  });
+  assert.deepEqual(
+    await suspended.service.list({
+      requestedAgencySlug: "furiver",
+      reservationId: customerDetailReservationId,
+    }),
+    { status: "forbidden" },
+  );
+  const administratorWithoutCustomerAccount = customerPaymentHistoryFixture({
+    accounts: [],
+  });
+  assert.deepEqual(
+    await administratorWithoutCustomerAccount.service.list({
+      requestedAgencySlug: "furiver",
+      reservationId: customerDetailReservationId,
+    }),
+    { status: "forbidden" },
+  );
   assert.deepEqual(administratorWithoutCustomerAccount.requests, []);
   const invalidUuid = customerPaymentHistoryFixture();
-  assert.deepEqual(await invalidUuid.service.list({ requestedAgencySlug: "furiver", reservationId: "not-a-uuid" }), { status: "not_found" });
+  assert.deepEqual(
+    await invalidUuid.service.list({
+      requestedAgencySlug: "furiver",
+      reservationId: "not-a-uuid",
+    }),
+    { status: "not_found" },
+  );
   assert.deepEqual(invalidUuid.requests, []);
 });
 
 test("historial del cliente ordena y proyecta pagos confirmed, pending, cancelled y el QA histórico", async () => {
   const fixture = customerPaymentHistoryFixture({
     rows: [
-      customerPaymentRow({ status: "confirmed", method: "transfer", paidAt: "2026-08-18T12:00:00.000Z", createdAt: "2026-08-18T12:01:00.000Z" }),
-      customerPaymentRow({ status: "pending", method: "cash", paidAt: "2026-08-20T12:00:00.000Z", createdAt: "2026-08-20T12:01:00.000Z" }),
-      customerPaymentRow({ status: "cancelled", method: "payment_link", paidAt: "2026-08-19T12:00:00.000Z", createdAt: "2026-08-19T12:01:00.000Z" }),
+      customerPaymentRow({
+        status: "confirmed",
+        method: "transfer",
+        paidAt: "2026-08-18T12:00:00.000Z",
+        createdAt: "2026-08-18T12:01:00.000Z",
+      }),
+      customerPaymentRow({
+        status: "pending",
+        method: "cash",
+        paidAt: "2026-08-20T12:00:00.000Z",
+        createdAt: "2026-08-20T12:01:00.000Z",
+      }),
+      customerPaymentRow({
+        status: "cancelled",
+        method: "payment_link",
+        paidAt: "2026-08-19T12:00:00.000Z",
+        createdAt: "2026-08-19T12:01:00.000Z",
+      }),
     ],
   });
-  const result = await fixture.service.list({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId });
+  const result = await fixture.service.list({
+    requestedAgencySlug: "furiver",
+    reservationId: customerDetailReservationId,
+  });
   assert.equal(result.status, "authorized");
   if (result.status === "authorized") {
-    assert.deepEqual(result.payments.map((payment) => payment.status), ["pending", "cancelled", "confirmed"]);
-    assert.deepEqual(result.payments.map((payment) => payment.method), ["cash", "payment_link", "transfer"]);
+    assert.deepEqual(
+      result.payments.map((payment) => payment.status),
+      ["pending", "cancelled", "confirmed"],
+    );
+    assert.deepEqual(
+      result.payments.map((payment) => payment.method),
+      ["cash", "payment_link", "transfer"],
+    );
   }
   const empty = customerPaymentHistoryFixture({ rows: [] });
-  const emptyResult = await empty.service.list({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId });
+  const emptyResult = await empty.service.list({
+    requestedAgencySlug: "furiver",
+    reservationId: customerDetailReservationId,
+  });
   assert.equal(emptyResult.status, "authorized");
-  if (emptyResult.status === "authorized") assert.deepEqual(emptyResult.payments, []);
+  if (emptyResult.status === "authorized")
+    assert.deepEqual(emptyResult.payments, []);
   const failing = customerPaymentHistoryFixture({ fail: true });
-  await assert.rejects(failing.service.list({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId }), (error: unknown) => error instanceof CustomerPaymentHistoryError && !error.message.includes("SQL"));
+  await assert.rejects(
+    failing.service.list({
+      requestedAgencySlug: "furiver",
+      reservationId: customerDetailReservationId,
+    }),
+    (error: unknown) =>
+      error instanceof CustomerPaymentHistoryError &&
+      !error.message.includes("SQL"),
+  );
 });
 
 test("detalle cliente usa historial seguro sin recalcular el saldo ni exponer campos operativos", () => {
-  const page = readFileSync("app/cuenta/[agencySlug]/reservaciones/[reservationId]/page.tsx", "utf8");
-  const repository = readFileSync("lib/payments/customer-payment-list-repository.ts", "utf8");
+  const page = readFileSync(
+    "app/cuenta/[agencySlug]/reservaciones/[reservationId]/page.tsx",
+    "utf8",
+  );
+  const repository = readFileSync(
+    "lib/payments/customer-payment-list-repository.ts",
+    "utf8",
+  );
   const detailIndex = page.indexOf("getCustomerReservationDetail({");
   const historyIndex = page.indexOf("listCustomerReservationPayments({");
   assert.ok(detailIndex >= 0);
   assert.ok(historyIndex > detailIndex);
-  assert.match(repository, /.eq\("customer_account_id", customerAccountId\)[\s\S]*\.eq\("agency_id", agencyId\)[\s\S]*\.eq\("reservation_id", reservationId\)/);
-  assert.match(repository, /.from\("reservation_payments"\)[\s\S]*\.eq\("reservation_id", reservationId\)[\s\S]*\.eq\("agency_id", agencyId\)/);
-  assert.match(repository, /select\("amount, currency, status, method, paid_at, created_at"\)/);
+  assert.match(
+    repository,
+    /.eq\("customer_account_id", customerAccountId\)[\s\S]*\.eq\("agency_id", agencyId\)[\s\S]*\.eq\("reservation_id", reservationId\)/,
+  );
+  assert.match(
+    repository,
+    /.from\("reservation_payments"\)[\s\S]*\.eq\("reservation_id", reservationId\)[\s\S]*\.eq\("agency_id", agencyId\)/,
+  );
+  assert.match(
+    repository,
+    /select\("amount, currency, status, method, paid_at, created_at"\)/,
+  );
   assert.equal(repository.includes("reference"), false);
   assert.equal(repository.includes("idempotency"), false);
   assert.match(page, /No hay pagos registrados todavía\./);
@@ -3232,9 +5395,12 @@ function customerTransferFile(bytes: readonly number[], size = bytes.length) {
   };
 }
 
-const validTransferPdf = () => customerTransferFile([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x37]);
+const validTransferPdf = () =>
+  customerTransferFile([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x37]);
 
-function customerTransferStored(insert: CustomerTransferPaymentInsert): CustomerTransferPaymentRow {
+function customerTransferStored(
+  insert: CustomerTransferPaymentInsert,
+): CustomerTransferPaymentRow {
   return {
     id: customerTransferPaymentId,
     reservationId: insert.reservationId,
@@ -3251,24 +5417,50 @@ function customerTransferStored(insert: CustomerTransferPaymentInsert): Customer
   };
 }
 
-function customerTransferFixture(input: Readonly<{
+function customerTransferFixture(
+  input: Readonly<{
   accounts?: readonly CustomerAgencyAccountRecord[];
   linked?: boolean;
   reservation?: ReturnType<typeof financialReservationRow> | null;
-}> = {}) {
+  }> = {},
+) {
   const payments = new Map<string, CustomerTransferPaymentRow>();
   const evidence = new Set<string>();
-  const state = { failUpload: false, failEvidence: false, uploads: [] as string[], removals: [] as string[], writes: [] as CustomerTransferPaymentInsert[], reads: [] as string[] };
-  const access = customerAccessFixture({ accounts: input.accounts ?? [customerAccount()] });
-  const keyFor = (agencyId: string, idempotencyKey: string) => `${agencyId}:${idempotencyKey}`;
-  const evidenceKey = (paymentId: string, reservationId: string, agencyId: string) => `${paymentId}:${reservationId}:${agencyId}`;
+  const state = {
+    failUpload: false,
+    failEvidence: false,
+    uploads: [] as string[],
+    removals: [] as string[],
+    writes: [] as CustomerTransferPaymentInsert[],
+    reads: [] as string[],
+  };
+  const access = customerAccessFixture({
+    accounts: input.accounts ?? [customerAccount()],
+  });
+  const keyFor = (agencyId: string, idempotencyKey: string) =>
+    `${agencyId}:${idempotencyKey}`;
+  const evidenceKey = (
+    paymentId: string,
+    reservationId: string,
+    agencyId: string,
+  ) => `${paymentId}:${reservationId}:${agencyId}`;
   const service = createCustomerTransferEvidenceService({
     resolveAccess: access.resolver.resolve,
     now: () => new Date(TEST_NOW),
     repository: {
-      async findAuthorizedReservation({ customerAccountId, agencyId, reservationId }) {
-        state.reads.push(`reservation:${customerAccountId}:${agencyId}:${reservationId}`);
-        return input.linked === false ? null : input.reservation === undefined ? financialReservationRow() : input.reservation;
+      async findAuthorizedReservation({
+        customerAccountId,
+        agencyId,
+        reservationId,
+      }) {
+        state.reads.push(
+          `reservation:${customerAccountId}:${agencyId}:${reservationId}`,
+        );
+        return input.linked === false
+          ? null
+          : input.reservation === undefined
+            ? financialReservationRow()
+            : input.reservation;
       },
       async findByIdempotencyKey({ agencyId, idempotencyKey }) {
         state.reads.push(`idempotency:${agencyId}`);
@@ -3276,7 +5468,8 @@ function customerTransferFixture(input: Readonly<{
       },
       async insertPayment(payment) {
         const key = keyFor(payment.agencyId, payment.idempotencyKey);
-        if (payments.has(key)) throw Object.assign(new Error("duplicate"), { code: "23505" });
+        if (payments.has(key))
+          throw Object.assign(new Error("duplicate"), { code: "23505" });
         const stored = customerTransferStored(payment);
         payments.set(key, stored);
         state.writes.push(payment);
@@ -3289,14 +5482,18 @@ function customerTransferFixture(input: Readonly<{
       async insertEvidence({ paymentId, reservationId, agencyId }) {
         if (state.failEvidence) throw new Error("metadata unavailable");
         const key = evidenceKey(paymentId, reservationId, agencyId);
-        if (evidence.has(key)) throw Object.assign(new Error("duplicate evidence"), { code: "23505" });
+        if (evidence.has(key))
+          throw Object.assign(new Error("duplicate evidence"), {
+            code: "23505",
+          });
         evidence.add(key);
       },
     },
     storage: {
       async upload({ path }) {
         if (state.failUpload) throw new Error("storage unavailable");
-        if (state.uploads.includes(path)) throw new Error("object already exists");
+        if (state.uploads.includes(path))
+          throw new Error("object already exists");
         state.uploads.push(path);
       },
       async remove(path) {
@@ -3321,13 +5518,53 @@ function customerTransferInput(input: Partial<Record<string, unknown>> = {}) {
 }
 
 test("comprobante de transferencia valida firmas reales, tamaño y no confía en MIME o nombre", async () => {
-  assert.equal((await detectCustomerTransferFile(validTransferPdf()))?.mimeType, "application/pdf");
-  assert.equal((await detectCustomerTransferFile(customerTransferFile([0xff, 0xd8, 0xff, 0x00])))?.mimeType, "image/jpeg");
-  assert.equal((await detectCustomerTransferFile(customerTransferFile([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])))?.mimeType, "image/png");
-  assert.equal((await detectCustomerTransferFile(customerTransferFile([0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x45, 0x42, 0x50])))?.mimeType, "image/webp");
-  assert.equal(await detectCustomerTransferFile(customerTransferFile([0x00, 0x01], 2)), null);
-  assert.equal(await detectCustomerTransferFile(customerTransferFile([], 0)), null);
-  assert.equal(await detectCustomerTransferFile(customerTransferFile([0x25, 0x50, 0x44, 0x46, 0x2d], CUSTOMER_TRANSFER_MAX_FILE_BYTES + 1)), null);
+  assert.equal(
+    (await detectCustomerTransferFile(validTransferPdf()))?.mimeType,
+    "application/pdf",
+  );
+  assert.equal(
+    (
+      await detectCustomerTransferFile(
+        customerTransferFile([0xff, 0xd8, 0xff, 0x00]),
+      )
+    )?.mimeType,
+    "image/jpeg",
+  );
+  assert.equal(
+    (
+      await detectCustomerTransferFile(
+        customerTransferFile([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      )
+    )?.mimeType,
+    "image/png",
+  );
+  assert.equal(
+    (
+      await detectCustomerTransferFile(
+        customerTransferFile([
+          0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x45, 0x42, 0x50,
+        ]),
+      )
+    )?.mimeType,
+    "image/webp",
+  );
+  assert.equal(
+    await detectCustomerTransferFile(customerTransferFile([0x00, 0x01], 2)),
+    null,
+  );
+  assert.equal(
+    await detectCustomerTransferFile(customerTransferFile([], 0)),
+    null,
+  );
+  assert.equal(
+    await detectCustomerTransferFile(
+      customerTransferFile(
+        [0x25, 0x50, 0x44, 0x46, 0x2d],
+        CUSTOMER_TRANSFER_MAX_FILE_BYTES + 1,
+      ),
+    ),
+    null,
+  );
 });
 
 test("cliente autorizado crea un payment pending customer con evidencia privada y receipt seguro", async () => {
@@ -3342,9 +5579,15 @@ test("cliente autorizado crea un payment pending customer con evidencia privada 
   assert.equal(fixture.state.writes[0].method, "transfer");
   assert.equal(fixture.state.writes[0].source, "customer");
   assert.equal(fixture.state.writes[0].currency, "MXN");
-  assert.equal(fixture.state.writes[0].submittedByCustomerAccountId, "customer-furiver");
+  assert.equal(
+    fixture.state.writes[0].submittedByCustomerAccountId,
+    "customer-furiver",
+  );
   assert.equal(fixture.state.writes[0].reference, "TRANSFERENCIA-QA");
-  assert.match(fixture.state.uploads[0], /^agency-furiver\/[0-9a-f-]+\/[0-9a-f-]+\/evidence\.pdf$/i);
+  assert.match(
+    fixture.state.uploads[0],
+    /^agency-furiver\/[0-9a-f-]+\/[0-9a-f-]+\/evidence\.pdf$/i,
+  );
   assert.equal(fixture.state.uploads[0].includes("referencia-privada"), false);
   assert.equal(JSON.stringify(source.snapshot), before);
   if (submitted.status === "submitted") {
@@ -3356,7 +5599,9 @@ test("cliente autorizado crea un payment pending customer con evidencia privada 
   }
   const financial = calculateReservationFinancialSummary({
     snapshot: financialReservationRow(),
-    payments: [...fixture.payments.values()].map(({ amount, currency, status }) => ({ amount, currency, status })),
+    payments: [...fixture.payments.values()].map(
+      ({ amount, currency, status }) => ({ amount, currency, status }),
+    ),
   });
   assert.equal(financial?.balance.remaining, 47817);
 });
@@ -3364,36 +5609,96 @@ test("cliente autorizado crea un payment pending customer con evidencia privada 
 test("transferencia de cliente conserva aislamiento y valida campos antes de DB o Storage", async () => {
   let wrote = false;
   const unauthenticated = createCustomerTransferEvidenceService({
-    async resolveAccess() { return { status: "unauthenticated" } as const; },
-    repository: {
-      async findAuthorizedReservation() { wrote = true; return null; }, async findByIdempotencyKey() { wrote = true; return null; }, async insertPayment() { wrote = true; throw new Error(); }, async hasEvidence() { wrote = true; return false; }, async insertEvidence() { wrote = true; },
+    async resolveAccess() {
+      return { status: "unauthenticated" } as const;
     },
-    storage: { async upload() { wrote = true; }, async remove() { wrote = true; } },
+    repository: {
+      async findAuthorizedReservation() {
+        wrote = true;
+        return null;
+      },
+      async findByIdempotencyKey() {
+        wrote = true;
+        return null;
+      },
+      async insertPayment() {
+        wrote = true;
+        throw new Error();
+      },
+      async hasEvidence() {
+        wrote = true;
+        return false;
+      },
+      async insertEvidence() {
+        wrote = true;
+      },
+    },
+    storage: {
+      async upload() {
+        wrote = true;
+      },
+      async remove() {
+        wrote = true;
+      },
+    },
   });
-  assert.deepEqual(await unauthenticated.submit(customerTransferInput()), { status: "unauthenticated" });
+  assert.deepEqual(await unauthenticated.submit(customerTransferInput()), {
+    status: "unauthenticated",
+  });
   assert.equal(wrote, false);
 
   const invalid = customerTransferFixture();
-  for (const [field, value] of [["reservationId", "invalid"], ["amount", "0"], ["amount", "1.001"], ["paidAt", "fecha"], ["idempotencyKey", "invalid"]] as const) {
-    const result = await invalid.service.submit(customerTransferInput({ [field]: value }));
+  for (const [field, value] of [
+    ["reservationId", "invalid"],
+    ["amount", "0"],
+    ["amount", "1.001"],
+    ["paidAt", "fecha"],
+    ["idempotencyKey", "invalid"],
+  ] as const) {
+    const result = await invalid.service.submit(
+      customerTransferInput({ [field]: value }),
+    );
     assert.equal(result.status, "invalid_input");
   }
   assert.equal(invalid.payments.size, 0);
   assert.equal(invalid.state.uploads.length, 0);
-  const fileInvalid = await invalid.service.submit(customerTransferInput({ file: customerTransferFile([1, 2]) }));
+  const fileInvalid = await invalid.service.submit(
+    customerTransferInput({ file: customerTransferFile([1, 2]) }),
+  );
   assert.deepEqual(fileInvalid, { status: "invalid_file" });
   assert.equal(invalid.payments.size, 0);
 
-  const otherAccount = customerTransferFixture({ accounts: [customerAccount({ customerAccountId: "other-account" })], linked: false });
-  assert.deepEqual(await otherAccount.service.submit(customerTransferInput()), { status: "not_found" });
+  const otherAccount = customerTransferFixture({
+    accounts: [customerAccount({ customerAccountId: "other-account" })],
+    linked: false,
+  });
+  assert.deepEqual(await otherAccount.service.submit(customerTransferInput()), {
+    status: "not_found",
+  });
   assert.equal(otherAccount.state.writes.length, 0);
   const crisenix = customerTransferFixture();
-  assert.deepEqual(await crisenix.service.submit(customerTransferInput({ requestedAgencySlug: "crisenix" })), { status: "forbidden" });
+  assert.deepEqual(
+    await crisenix.service.submit(
+      customerTransferInput({ requestedAgencySlug: "crisenix" }),
+    ),
+    { status: "forbidden" },
+  );
   assert.equal(crisenix.state.writes.length, 0);
-  const suspended = customerTransferFixture({ accounts: [customerAccount({ status: "suspended" })] });
-  assert.deepEqual(await suspended.service.submit(customerTransferInput()), { status: "forbidden" });
-  const administratorWithoutCustomerAccount = customerTransferFixture({ accounts: [] });
-  assert.deepEqual(await administratorWithoutCustomerAccount.service.submit(customerTransferInput()), { status: "forbidden" });
+  const suspended = customerTransferFixture({
+    accounts: [customerAccount({ status: "suspended" })],
+  });
+  assert.deepEqual(await suspended.service.submit(customerTransferInput()), {
+    status: "forbidden",
+  });
+  const administratorWithoutCustomerAccount = customerTransferFixture({
+    accounts: [],
+  });
+  assert.deepEqual(
+    await administratorWithoutCustomerAccount.service.submit(
+      customerTransferInput(),
+    ),
+    { status: "forbidden" },
+  );
   assert.equal(administratorWithoutCustomerAccount.state.writes.length, 0);
 });
 
@@ -3407,38 +5712,72 @@ test("transferencia cliente recupera reintentos y compensa evidencia sin duplica
   assert.equal(fixture.payments.size, 1);
   assert.equal(fixture.evidence.size, 1);
   assert.equal(fixture.state.uploads.length, 1);
-  assert.deepEqual(await fixture.service.submit(customerTransferInput({ amount: "5000.00" })), { status: "idempotency_conflict" });
+  assert.deepEqual(
+    await fixture.service.submit(customerTransferInput({ amount: "5000.00" })),
+    { status: "idempotency_conflict" },
+  );
 
   const resumable = customerTransferFixture();
   resumable.state.failUpload = true;
-  assert.deepEqual(await resumable.service.submit(customerTransferInput()), { status: "storage_error" });
+  assert.deepEqual(await resumable.service.submit(customerTransferInput()), {
+    status: "storage_error",
+  });
   assert.equal(resumable.payments.size, 1);
   resumable.state.failUpload = false;
-  assert.equal((await resumable.service.submit(customerTransferInput())).status, "submitted");
+  assert.equal(
+    (await resumable.service.submit(customerTransferInput())).status,
+    "submitted",
+  );
   assert.equal(resumable.payments.size, 1);
   assert.equal(resumable.evidence.size, 1);
 
   const metadataFailure = customerTransferFixture();
   metadataFailure.state.failEvidence = true;
-  await assert.rejects(metadataFailure.service.submit(customerTransferInput()), (error: unknown) => error instanceof CustomerTransferError && !error.message.includes("metadata"));
+  await assert.rejects(
+    metadataFailure.service.submit(customerTransferInput()),
+    (error: unknown) =>
+      error instanceof CustomerTransferError &&
+      !error.message.includes("metadata"),
+  );
   assert.equal(metadataFailure.payments.size, 1);
   assert.equal(metadataFailure.state.removals.length, 1);
 
   const concurrent = customerTransferFixture();
-  const results = await Promise.all([concurrent.service.submit(customerTransferInput()), concurrent.service.submit(customerTransferInput())]);
-  assert.deepEqual(results.map((result) => result.status).sort(), ["already_submitted", "submitted"]);
+  const results = await Promise.all([
+    concurrent.service.submit(customerTransferInput()),
+    concurrent.service.submit(customerTransferInput()),
+  ]);
+  assert.deepEqual(results.map((result) => result.status).sort(), [
+    "already_submitted",
+    "submitted",
+  ]);
   assert.equal(concurrent.payments.size, 1);
   assert.equal(concurrent.evidence.size, 1);
   assert.equal(concurrent.state.uploads.length, 1);
 
-  const repository = readFileSync("lib/payments/customer-transfer-repository.ts", "utf8");
-  const storage = readFileSync("lib/payments/customer-transfer-storage.ts", "utf8");
-  assert.match(repository, /submitted_by_customer_account_id: payment\.submittedByCustomerAccountId/);
+  const repository = readFileSync(
+    "lib/payments/customer-transfer-repository.ts",
+    "utf8",
+  );
+  const storage = readFileSync(
+    "lib/payments/customer-transfer-storage.ts",
+    "utf8",
+  );
+  assert.match(
+    repository,
+    /submitted_by_customer_account_id: payment\.submittedByCustomerAccountId/,
+  );
   assert.match(repository, /source: "customer"/);
   assert.match(repository, /status: "pending"/);
   assert.match(repository, /created_by_user_id: null/);
-  assert.match(repository, /\.eq\("customer_account_id", customerAccountId\)[\s\S]*\.eq\("agency_id", agencyId\)[\s\S]*\.eq\("reservation_id", reservationId\)/);
-  assert.match(repository, /\.from\("payment_evidence"\)[\s\S]*\.eq\("payment_id", paymentId\)[\s\S]*\.eq\("reservation_id", reservationId\)[\s\S]*\.eq\("agency_id", agencyId\)/);
+  assert.match(
+    repository,
+    /\.eq\("customer_account_id", customerAccountId\)[\s\S]*\.eq\("agency_id", agencyId\)[\s\S]*\.eq\("reservation_id", reservationId\)/,
+  );
+  assert.match(
+    repository,
+    /\.from\("payment_evidence"\)[\s\S]*\.eq\("payment_id", paymentId\)[\s\S]*\.eq\("reservation_id", reservationId\)[\s\S]*\.eq\("agency_id", agencyId\)/,
+  );
   assert.match(storage, /upsert: false/);
   assert.equal(storage.includes("createSignedUrl"), false);
   assert.equal(storage.includes("getPublicUrl"), false);
@@ -3449,36 +5788,77 @@ test("transferencia staged firma después de autorizar, valida bytes y crea paym
   const payments = new Map<string, CustomerTransferPaymentRow>();
   const evidence = new Set<string>();
   const objects = new Map<string, Uint8Array>();
-  const keyFor = (agencyId: string, idempotencyKey: string) => `${agencyId}:${idempotencyKey}`;
+  const keyFor = (agencyId: string, idempotencyKey: string) =>
+    `${agencyId}:${idempotencyKey}`;
   const service = createCustomerTransferUploadService({
     resolveAccess: access.resolver.resolve,
     now: () => new Date(TEST_NOW),
     repository: {
       async findAuthorizedReservation({ agencyId, reservationId }) {
-        return agencyId === "agency-furiver" && reservationId === customerDetailReservationId ? financialReservationRow() : null;
+        return agencyId === "agency-furiver" &&
+          reservationId === customerDetailReservationId
+          ? financialReservationRow()
+          : null;
       },
-      async listReservationPayments() { return [...payments.values()].map(({ amount, currency, status }) => ({ amount, currency, status })); },
-      async findByIdempotencyKey({ agencyId, idempotencyKey }) { return payments.get(keyFor(agencyId, idempotencyKey)) ?? null; },
-      async finalizePaymentAndEvidence({ paymentId, payment, evidence: evidenceInput }) {
+      async listReservationPayments() {
+        return [...payments.values()].map(({ amount, currency, status }) => ({
+          amount,
+          currency,
+          status,
+        }));
+      },
+      async findByIdempotencyKey({ agencyId, idempotencyKey }) {
+        return payments.get(keyFor(agencyId, idempotencyKey)) ?? null;
+      },
+      async finalizePaymentAndEvidence({
+        paymentId,
+        payment,
+        evidence: evidenceInput,
+      }) {
         const key = keyFor(payment.agencyId, payment.idempotencyKey);
         if (payments.has(key)) return { status: "existing" as const };
-        payments.set(key, { ...customerTransferStored(payment), id: paymentId });
-        evidence.add(`${evidenceInput.paymentId}:${evidenceInput.reservationId}:${evidenceInput.agencyId}`);
+        payments.set(key, {
+          ...customerTransferStored(payment),
+          id: paymentId,
+        });
+        evidence.add(
+          `${evidenceInput.paymentId}:${evidenceInput.reservationId}:${evidenceInput.agencyId}`,
+        );
         return { status: "created" as const };
       },
       async insertPayment(insert) {
         const key = keyFor(insert.agencyId, insert.idempotencyKey);
-        if (payments.has(key)) throw Object.assign(new Error("duplicate"), { code: "23505" });
-        const payment = customerTransferStored(insert); payments.set(key, payment); return payment;
+        if (payments.has(key))
+          throw Object.assign(new Error("duplicate"), { code: "23505" });
+        const payment = customerTransferStored(insert);
+        payments.set(key, payment);
+        return payment;
       },
-      async hasEvidence({ paymentId, reservationId, agencyId }) { return evidence.has(`${paymentId}:${reservationId}:${agencyId}`); },
-      async insertEvidence({ paymentId, reservationId, agencyId }) { evidence.add(`${paymentId}:${reservationId}:${agencyId}`); },
+      async hasEvidence({ paymentId, reservationId, agencyId }) {
+        return evidence.has(`${paymentId}:${reservationId}:${agencyId}`);
+      },
+      async insertEvidence({ paymentId, reservationId, agencyId }) {
+        evidence.add(`${paymentId}:${reservationId}:${agencyId}`);
+      },
     },
     storage: {
-      async createSignedUpload({ path }) { return { path, token: "temporary-upload-token" }; },
-      async download(path) { const bytes = objects.get(path); if (!bytes) throw new Error("missing"); return bytes; },
-      async move({ fromPath, toPath }) { const bytes = objects.get(fromPath); if (!bytes || objects.has(toPath)) throw new Error("move"); objects.delete(fromPath); objects.set(toPath, bytes); },
-      async remove(path) { objects.delete(path); },
+      async createSignedUpload({ path }) {
+        return { path, token: "temporary-upload-token" };
+      },
+      async download(path) {
+        const bytes = objects.get(path);
+        if (!bytes) throw new Error("missing");
+        return bytes;
+      },
+      async move({ fromPath, toPath }) {
+        const bytes = objects.get(fromPath);
+        if (!bytes || objects.has(toPath)) throw new Error("move");
+        objects.delete(fromPath);
+        objects.set(toPath, bytes);
+      },
+      async remove(path) {
+        objects.delete(path);
+      },
     },
   });
   const input = customerTransferInput();
@@ -3486,20 +5866,37 @@ test("transferencia staged firma después de autorizar, valida bytes y crea paym
   assert.equal(prepared.status, "ready");
   assert.equal(payments.size, 0);
   if (prepared.status !== "ready") return;
-  assert.match(prepared.upload.path, /^agency-furiver\/[0-9a-f-]+\/staging\/[0-9a-f-]+$/i);
-  objects.set(prepared.upload.path, new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x37]));
+  assert.match(
+    prepared.upload.path,
+    /^agency-furiver\/[0-9a-f-]+\/staging\/[0-9a-f-]+$/i,
+  );
+  objects.set(
+    prepared.upload.path,
+    new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x37]),
+  );
   const finalized = await service.finalize(input);
   assert.equal(finalized.status, "submitted");
   assert.equal(payments.size, 1);
   assert.equal(evidence.size, 1);
-  assert.equal([...objects.keys()].some((path) => /\/evidence\.pdf$/.test(path)), true);
+  assert.equal(
+    [...objects.keys()].some((path) => /\/evidence\.pdf$/.test(path)),
+    true,
+  );
   assert.equal((await service.finalize(input)).status, "already_submitted");
 
   const invalidKey = "48f3dddf-5c89-43b2-8fec-a42199f5a9f8";
-  const invalidPrepared = await service.prepare({ ...input, idempotencyKey: invalidKey, fileSize: 2 });
-  if (invalidPrepared.status !== "ready") throw new Error("expected signed staging upload");
+  const invalidPrepared = await service.prepare({
+    ...input,
+    idempotencyKey: invalidKey,
+    fileSize: 2,
+  });
+  if (invalidPrepared.status !== "ready")
+    throw new Error("expected signed staging upload");
   objects.set(invalidPrepared.upload.path, new Uint8Array([0, 1]));
-  assert.deepEqual(await service.finalize({ ...input, idempotencyKey: invalidKey }), { status: "invalid_file" });
+  assert.deepEqual(
+    await service.finalize({ ...input, idempotencyKey: invalidKey }),
+    { status: "invalid_file" },
+  );
   assert.equal(objects.has(invalidPrepared.upload.path), false);
   assert.equal(payments.size, 1);
 });
@@ -3519,57 +5916,169 @@ test("reporte de transferencia limita nuevos pending por saldo reportable en pre
     resolveAccess: access.resolver.resolve,
     now: () => new Date(TEST_NOW),
     repository: {
-      async findAuthorizedReservation() { return financialReservationRow({ total: 10000, depositPercent: 20, depositRequired: 2000 }); },
-      async listReservationPayments() { return [...basePayments, ...payments.values()].map(({ amount, currency, status }) => ({ amount, currency, status })); },
-      async findByIdempotencyKey({ idempotencyKey }) { return payments.get(keyFor(idempotencyKey)) ?? null; },
-      async finalizePaymentAndEvidence({ paymentId, payment, evidence: evidenceInput, contractTotalCents }) {
+      async findAuthorizedReservation() {
+        return financialReservationRow({
+          total: 10000,
+          depositPercent: 20,
+          depositRequired: 2000,
+        });
+      },
+      async listReservationPayments() {
+        return [...basePayments, ...payments.values()].map(
+          ({ amount, currency, status }) => ({ amount, currency, status }),
+        );
+      },
+      async findByIdempotencyKey({ idempotencyKey }) {
+        return payments.get(keyFor(idempotencyKey)) ?? null;
+      },
+      async finalizePaymentAndEvidence({
+        paymentId,
+        payment,
+        evidence: evidenceInput,
+        contractTotalCents,
+      }) {
         const key = keyFor(payment.idempotencyKey);
         if (payments.has(key)) return { status: "existing" as const };
         const financialRows = [...basePayments, ...payments.values()];
-        const confirmed = financialRows.filter((row) => row.status === "confirmed").reduce((sum, row) => sum + Math.round(row.amount * 100), 0);
-        const pending = financialRows.filter((row) => row.status === "pending").reduce((sum, row) => sum + Math.round(row.amount * 100), 0);
-        if (confirmed >= contractTotalCents) return { status: "reservation_paid_in_full" as const };
+        const confirmed = financialRows
+          .filter((row) => row.status === "confirmed")
+          .reduce((sum, row) => sum + Math.round(row.amount * 100), 0);
+        const pending = financialRows
+          .filter((row) => row.status === "pending")
+          .reduce((sum, row) => sum + Math.round(row.amount * 100), 0);
+        if (confirmed >= contractTotalCents)
+          return { status: "reservation_paid_in_full" as const };
         const remaining = Math.max(contractTotalCents - confirmed - pending, 0);
-        if (remaining === 0) return { status: "pending_covers_balance" as const };
-        if (Math.round(payment.amount * 100) > remaining) return { status: "amount_exceeds_reportable_balance" as const };
-        payments.set(key, { ...customerTransferStored(payment), id: paymentId });
+        if (remaining === 0)
+          return { status: "pending_covers_balance" as const };
+        if (Math.round(payment.amount * 100) > remaining)
+          return { status: "amount_exceeds_reportable_balance" as const };
+        payments.set(key, {
+          ...customerTransferStored(payment),
+          id: paymentId,
+        });
         void evidenceInput;
         return { status: "created" as const };
       },
-      async insertPayment(insert) { const key = keyFor(insert.idempotencyKey); if (payments.has(key)) throw Object.assign(new Error("duplicate"), { code: "23505" }); const payment = customerTransferStored(insert); payments.set(key, payment); return payment; },
-      async hasEvidence() { return false; },
+      async insertPayment(insert) {
+        const key = keyFor(insert.idempotencyKey);
+        if (payments.has(key))
+          throw Object.assign(new Error("duplicate"), { code: "23505" });
+        const payment = customerTransferStored(insert);
+        payments.set(key, payment);
+        return payment;
+      },
+      async hasEvidence() {
+        return false;
+      },
       async insertEvidence() {},
     },
     storage: {
-      async createSignedUpload({ path }) { return { path, token: "temporary" }; },
-      async download(path) { const bytes = objects.get(path); if (!bytes) throw new Error("missing"); return bytes; },
-      async move({ fromPath, toPath }) { const bytes = objects.get(fromPath); if (!bytes) throw new Error("missing"); objects.delete(fromPath); objects.set(toPath, bytes); },
-      async remove(path) { removals.push(path); objects.delete(path); },
+      async createSignedUpload({ path }) {
+        return { path, token: "temporary" };
+    },
+      async download(path) {
+        const bytes = objects.get(path);
+        if (!bytes) throw new Error("missing");
+        return bytes;
+      },
+      async move({ fromPath, toPath }) {
+        const bytes = objects.get(fromPath);
+        if (!bytes) throw new Error("missing");
+        objects.delete(fromPath);
+        objects.set(toPath, bytes);
+      },
+      async remove(path) {
+        removals.push(path);
+        objects.delete(path);
+      },
     },
   });
   const firstKey = "0dce1e1a-5d14-4cff-b2ea-d506aa4c7eb3";
   const secondKey = "1dce1e1a-5d14-4cff-b2ea-d506aa4c7eb3";
-  const tooLarge = await service.prepare({ ...customerTransferInput({ amount: "4000.01", idempotencyKey: firstKey }), fileSize: 8 });
+  const tooLarge = await service.prepare({
+    ...customerTransferInput({ amount: "4000.01", idempotencyKey: firstKey }),
+    fileSize: 8,
+  });
   assert.deepEqual(tooLarge, { status: "amount_exceeds_reportable_balance" });
-  const first = await service.prepare({ ...customerTransferInput({ amount: "4000.00", idempotencyKey: firstKey }), fileSize: 8 });
-  const second = await service.prepare({ ...customerTransferInput({ amount: "4000.00", idempotencyKey: secondKey }), fileSize: 8 });
+  const first = await service.prepare({
+    ...customerTransferInput({ amount: "4000.00", idempotencyKey: firstKey }),
+    fileSize: 8,
+  });
+  const second = await service.prepare({
+    ...customerTransferInput({ amount: "4000.00", idempotencyKey: secondKey }),
+    fileSize: 8,
+  });
   assert.equal(first.status, "ready");
   assert.equal(second.status, "ready");
   if (first.status !== "ready" || second.status !== "ready") return;
-  objects.set(first.upload.path, new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d]));
-  objects.set(second.upload.path, new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d]));
-  assert.equal((await service.finalize(customerTransferInput({ amount: "4000.00", idempotencyKey: firstKey }))).status, "submitted");
-  assert.deepEqual(await service.finalize(customerTransferInput({ amount: "4000.00", idempotencyKey: secondKey })), { status: "pending_payments_cover_remaining" });
+  objects.set(
+    first.upload.path,
+    new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d]),
+  );
+  objects.set(
+    second.upload.path,
+    new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d]),
+  );
+  assert.equal(
+    (
+      await service.finalize(
+        customerTransferInput({ amount: "4000.00", idempotencyKey: firstKey }),
+      )
+    ).status,
+    "submitted",
+  );
+  assert.deepEqual(
+    await service.finalize(
+      customerTransferInput({ amount: "4000.00", idempotencyKey: secondKey }),
+    ),
+    { status: "pending_payments_cover_remaining" },
+  );
   assert.equal(payments.size, 1);
   assert.equal(objects.has(second.upload.path), false);
   assert.ok(removals.some((path) => /\/evidence\.pdf$/.test(path)));
 
   const full = createCustomerTransferUploadService({
     resolveAccess: access.resolver.resolve,
-    repository: { async findAuthorizedReservation() { return financialReservationRow({ total: 10000 }); }, async listReservationPayments() { return [{ amount: 10000, currency: "MXN", status: "confirmed" }]; }, async findByIdempotencyKey() { return null; }, async finalizePaymentAndEvidence() { throw new Error("must not finalize"); }, async insertPayment() { throw new Error("must not insert"); }, async hasEvidence() { return false; }, async insertEvidence() {} },
-    storage: { async createSignedUpload() { throw new Error("must not sign"); }, async download() { throw new Error("must not download"); }, async move() {}, async remove() {} },
+    repository: {
+      async findAuthorizedReservation() {
+        return financialReservationRow({ total: 10000 });
+      },
+      async listReservationPayments() {
+        return [{ amount: 10000, currency: "MXN", status: "confirmed" }];
+      },
+      async findByIdempotencyKey() {
+        return null;
+      },
+      async finalizePaymentAndEvidence() {
+        throw new Error("must not finalize");
+      },
+      async insertPayment() {
+        throw new Error("must not insert");
+      },
+      async hasEvidence() {
+        return false;
+      },
+      async insertEvidence() {},
+    },
+    storage: {
+      async createSignedUpload() {
+        throw new Error("must not sign");
+      },
+      async download() {
+        throw new Error("must not download");
+      },
+      async move() {},
+      async remove() {},
+    },
   });
-  assert.deepEqual(await full.prepare({ ...customerTransferInput({ amount: "1.00" }), fileSize: 8 }), { status: "reservation_paid_in_full" });
+  assert.deepEqual(
+    await full.prepare({
+      ...customerTransferInput({ amount: "1.00" }),
+      fileSize: 8,
+    }),
+    { status: "reservation_paid_in_full" },
+  );
 });
 
 test("finalización atómica serializa una reservación y no sobre-reserva con idempotency keys distintas", async () => {
@@ -3577,101 +6086,218 @@ test("finalización atómica serializa una reservación y no sobre-reserva con i
   const payments = new Map<string, CustomerTransferPaymentRow>();
   const evidence = new Set<string>();
   const objects = new Map<string, Uint8Array>();
-  const base: ReservationPaymentFinancialRow[] = [{ amount: 7000, currency: "MXN", status: "confirmed" }];
+  const base: ReservationPaymentFinancialRow[] = [
+    { amount: 7000, currency: "MXN", status: "confirmed" },
+  ];
   const keyFor = (key: string) => `agency-furiver:${key}`;
   let previous = Promise.resolve();
   const service = createCustomerTransferUploadService({
     resolveAccess: access.resolver.resolve,
     now: () => new Date(TEST_NOW),
     repository: {
-      async findAuthorizedReservation() { return financialReservationRow({ total: 10000 }); },
-      async listReservationPayments() { return [...base, ...payments.values()].map(({ amount, currency, status }) => ({ amount, currency, status })); },
-      async findByIdempotencyKey({ idempotencyKey }) { return payments.get(keyFor(idempotencyKey)) ?? null; },
-      async finalizePaymentAndEvidence({ paymentId, payment, evidence: evidenceInput, contractTotalCents }) {
+      async findAuthorizedReservation() {
+        return financialReservationRow({ total: 10000 });
+      },
+      async listReservationPayments() {
+        return [...base, ...payments.values()].map(
+          ({ amount, currency, status }) => ({ amount, currency, status }),
+        );
+      },
+      async findByIdempotencyKey({ idempotencyKey }) {
+        return payments.get(keyFor(idempotencyKey)) ?? null;
+      },
+      async finalizePaymentAndEvidence({
+        paymentId,
+        payment,
+        evidence: evidenceInput,
+        contractTotalCents,
+      }) {
         const before = previous;
         let release: () => void = () => undefined;
-        previous = new Promise<void>((resolve) => { release = resolve; });
+        previous = new Promise<void>((resolve) => {
+          release = resolve;
+        });
         await before;
         try {
           const key = keyFor(payment.idempotencyKey);
           if (payments.has(key)) return { status: "existing" as const };
           const rows = [...base, ...payments.values()];
-          const confirmed = rows.filter((row) => row.status === "confirmed").reduce((sum, row) => sum + Math.round(row.amount * 100), 0);
-          const pending = rows.filter((row) => row.status === "pending").reduce((sum, row) => sum + Math.round(row.amount * 100), 0);
-          if (confirmed >= contractTotalCents) return { status: "reservation_paid_in_full" as const };
-          const reportable = Math.max(contractTotalCents - confirmed - pending, 0);
-          if (reportable === 0) return { status: "pending_covers_balance" as const };
-          if (Math.round(payment.amount * 100) > reportable) return { status: "amount_exceeds_reportable_balance" as const };
-          payments.set(key, { ...customerTransferStored(payment), id: paymentId });
-          evidence.add(`${evidenceInput.paymentId}:${evidenceInput.reservationId}:${evidenceInput.agencyId}`);
+          const confirmed = rows
+            .filter((row) => row.status === "confirmed")
+            .reduce((sum, row) => sum + Math.round(row.amount * 100), 0);
+          const pending = rows
+            .filter((row) => row.status === "pending")
+            .reduce((sum, row) => sum + Math.round(row.amount * 100), 0);
+          if (confirmed >= contractTotalCents)
+            return { status: "reservation_paid_in_full" as const };
+          const reportable = Math.max(
+            contractTotalCents - confirmed - pending,
+            0,
+          );
+          if (reportable === 0)
+            return { status: "pending_covers_balance" as const };
+          if (Math.round(payment.amount * 100) > reportable)
+            return { status: "amount_exceeds_reportable_balance" as const };
+          payments.set(key, {
+            ...customerTransferStored(payment),
+            id: paymentId,
+          });
+          evidence.add(
+            `${evidenceInput.paymentId}:${evidenceInput.reservationId}:${evidenceInput.agencyId}`,
+          );
           return { status: "created" as const };
-        } finally { release(); }
+        } finally {
+          release();
+        }
       },
-      async insertPayment() { throw new Error("atomic RPC must be the payment barrier"); },
-      async hasEvidence({ paymentId, reservationId, agencyId }) { return evidence.has(`${paymentId}:${reservationId}:${agencyId}`); },
-      async insertEvidence() { throw new Error("atomic RPC must create evidence"); },
+      async insertPayment() {
+        throw new Error("atomic RPC must be the payment barrier");
+      },
+      async hasEvidence({ paymentId, reservationId, agencyId }) {
+        return evidence.has(`${paymentId}:${reservationId}:${agencyId}`);
+      },
+      async insertEvidence() {
+        throw new Error("atomic RPC must create evidence");
+      },
     },
     storage: {
-      async createSignedUpload({ path }) { return { path, token: "temporary" }; },
-      async download(path) { const bytes = objects.get(path); if (!bytes) throw new Error("missing"); return bytes; },
-      async move({ fromPath, toPath }) { const bytes = objects.get(fromPath); if (!bytes) throw new Error("missing"); objects.delete(fromPath); objects.set(toPath, bytes); },
-      async remove(path) { objects.delete(path); },
+      async createSignedUpload({ path }) {
+        return { path, token: "temporary" };
+      },
+      async download(path) {
+        const bytes = objects.get(path);
+        if (!bytes) throw new Error("missing");
+        return bytes;
+      },
+      async move({ fromPath, toPath }) {
+        const bytes = objects.get(fromPath);
+        if (!bytes) throw new Error("missing");
+        objects.delete(fromPath);
+        objects.set(toPath, bytes);
+      },
+      async remove(path) {
+        objects.delete(path);
+      },
     },
   });
   const keyA = "1dce1e1a-5d14-4cff-b2ea-d506aa4c7eb3";
   const keyB = "2dce1e1a-5d14-4cff-b2ea-d506aa4c7eb3";
   const [preparedA, preparedB] = await Promise.all([
-    service.prepare({ ...customerTransferInput({ amount: "3000.00", idempotencyKey: keyA }), fileSize: 8 }),
-    service.prepare({ ...customerTransferInput({ amount: "3000.00", idempotencyKey: keyB }), fileSize: 8 }),
+    service.prepare({
+      ...customerTransferInput({ amount: "3000.00", idempotencyKey: keyA }),
+      fileSize: 8,
+    }),
+    service.prepare({
+      ...customerTransferInput({ amount: "3000.00", idempotencyKey: keyB }),
+      fileSize: 8,
+    }),
   ]);
-  if (preparedA.status !== "ready" || preparedB.status !== "ready") throw new Error("both preflights should be ready");
+  if (preparedA.status !== "ready" || preparedB.status !== "ready")
+    throw new Error("both preflights should be ready");
   const pdf = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d]);
   objects.set(preparedA.upload.path, pdf);
   objects.set(preparedB.upload.path, pdf);
   const results = await Promise.all([
-    service.finalize(customerTransferInput({ amount: "3000.00", idempotencyKey: keyA })),
-    service.finalize(customerTransferInput({ amount: "3000.00", idempotencyKey: keyB })),
+    service.finalize(
+      customerTransferInput({ amount: "3000.00", idempotencyKey: keyA }),
+    ),
+    service.finalize(
+      customerTransferInput({ amount: "3000.00", idempotencyKey: keyB }),
+    ),
   ]);
-  assert.deepEqual(results.map((result) => result.status).sort(), ["pending_payments_cover_remaining", "submitted"]);
+  assert.deepEqual(results.map((result) => result.status).sort(), [
+    "pending_payments_cover_remaining",
+    "submitted",
+  ]);
   assert.equal(payments.size, 1);
   assert.equal(evidence.size, 1);
-  assert.equal([...payments.values()].reduce((sum, payment) => sum + payment.amount, 0), 3000);
+  assert.equal(
+    [...payments.values()].reduce((sum, payment) => sum + payment.amount, 0),
+    3000,
+  );
 });
 
 test("RPC de finalize bloquea por reservación y conserva payment más evidencia en un solo límite server-only", () => {
-  const migration = readFileSync("supabase/migrations/20260801190000_atomic_customer_transfer_finalize.sql", "utf8");
+  const migration = readFileSync(
+    "supabase/migrations/20260801190000_atomic_customer_transfer_finalize.sql",
+    "utf8",
+  );
   const core = readFileSync("lib/payments/customer-transfer-core.ts", "utf8");
-  const repository = readFileSync("lib/payments/customer-transfer-repository.ts", "utf8");
+  const repository = readFileSync(
+    "lib/payments/customer-transfer-repository.ts",
+    "utf8",
+  );
   assert.match(migration, /security definer/i);
   assert.match(migration, /set search_path = public, pg_temp/i);
   assert.match(migration, /reservation_snapshots[\s\S]*for update/i);
   assert.match(migration, /Idempotency precedes capacity/i);
   assert.match(migration, /reservation_payments[\s\S]*idempotency_key/i);
   assert.match(migration, /pending_covers_balance/);
-  assert.match(migration, /insert into public\.reservation_payments[\s\S]*insert into public\.payment_evidence/i);
-  assert.match(migration, /revoke all on function[\s\S]*from public, anon, authenticated/i);
+  assert.match(
+    migration,
+    /insert into public\.reservation_payments[\s\S]*insert into public\.payment_evidence/i,
+  );
+  assert.match(
+    migration,
+    /revoke all on function[\s\S]*from public, anon, authenticated/i,
+  );
   assert.match(migration, /grant execute on function[\s\S]*to service_role/i);
-  assert.match(repository, /\.rpc\("finalize_customer_transfer_payment_atomic"/);
+  assert.match(
+    repository,
+    /\.rpc\("finalize_customer_transfer_payment_atomic"/,
+  );
   assert.match(core, /finalizePaymentAndEvidence/);
-  assert.doesNotMatch(core.slice(core.indexOf("async finalize(input"), core.indexOf("// Kept as an in-memory")), /repository\(\)\.insertPayment/);
+  assert.doesNotMatch(
+    core.slice(
+      core.indexOf("async finalize(input"),
+      core.indexOf("// Kept as an in-memory"),
+    ),
+    /repository\(\)\.insertPayment/,
+  );
 });
 
 test("formulario cliente usa URL firmada, conserva UTC e idempotencia sin enviar File a Vercel", () => {
-  const action = readFileSync("app/cuenta/[agencySlug]/reservaciones/[reservationId]/transfer-actions.ts", "utf8");
-  const form = readFileSync("app/cuenta/[agencySlug]/reservaciones/[reservationId]/customer-transfer-form.tsx", "utf8");
-  const core = readFileSync("app/cuenta/[agencySlug]/reservaciones/[reservationId]/customer-transfer-form-core.ts", "utf8");
-  const page = readFileSync("app/cuenta/[agencySlug]/reservaciones/[reservationId]/page.tsx", "utf8");
+  const action = readFileSync(
+    "app/cuenta/[agencySlug]/reservaciones/[reservationId]/transfer-actions.ts",
+    "utf8",
+  );
+  const form = readFileSync(
+    "app/cuenta/[agencySlug]/reservaciones/[reservationId]/customer-transfer-form.tsx",
+    "utf8",
+  );
+  const core = readFileSync(
+    "app/cuenta/[agencySlug]/reservaciones/[reservationId]/customer-transfer-form-core.ts",
+    "utf8",
+  );
+  const page = readFileSync(
+    "app/cuenta/[agencySlug]/reservaciones/[reservationId]/page.tsx",
+    "utf8",
+  );
   const iso = localTransferDateTimeToIso("2026-07-26T08:30");
   assert.ok(iso?.endsWith("Z"));
   assert.match(iso as string, /^2026-07-26T/);
   assert.equal(localTransferDateTimeToIso("2026-02-31T08:30"), null);
-  assert.match(localTransferDateTimeValue(new Date("2026-07-26T12:00:00.000Z")), /^2026-07-\d{2}T\d{2}:\d{2}$/);
-  assert.equal(createCustomerTransferIdempotencyKey({ randomUUID: () => "2dce1e1a-5d14-4cff-b2ea-d506aa4c7eb3" } as Crypto), "2dce1e1a-5d14-4cff-b2ea-d506aa4c7eb3");
+  assert.match(
+    localTransferDateTimeValue(new Date("2026-07-26T12:00:00.000Z")),
+    /^2026-07-\d{2}T\d{2}:\d{2}$/,
+  );
+  assert.equal(
+    createCustomerTransferIdempotencyKey({
+      randomUUID: () => "2dce1e1a-5d14-4cff-b2ea-d506aa4c7eb3",
+    } as Crypto),
+    "2dce1e1a-5d14-4cff-b2ea-d506aa4c7eb3",
+  );
 
   assert.match(action, /prepareCustomerTransferUpload\(/);
   assert.match(action, /finalizeCustomerTransferUpload\(/);
-  assert.match(action, /revalidatePath\(customerDetailPath\(input\.requestedAgencySlug, input\.reservationId\)\)/);
-  assert.match(action, /\/admin\/\$\{encodeURIComponent\(input\.requestedAgencySlug\)\}\/reservaciones\/\$\{input\.reservationId\}/);
+  assert.match(
+    action,
+    /revalidatePath\(customerDetailPath\(input\.requestedAgencySlug, input\.reservationId\)\)/,
+  );
+  assert.match(
+    action,
+    /\/admin\/\$\{encodeURIComponent\(input\.requestedAgencySlug\)\}\/reservaciones\/\$\{input\.reservationId\}/,
+  );
   assert.equal(action.includes("export const"), false);
   assert.equal(action.includes('formData.get("file")'), false);
   assert.equal(action.includes("agencyId:"), false);
@@ -3681,7 +6307,10 @@ test("formulario cliente usa URL firmada, conserva UTC e idempotencia sin enviar
   assert.match(form, /<dialog/);
   assert.match(form, /type="datetime-local"/);
   assert.match(form, /localTransferDateTimeToIso\(/);
-  assert.match(form, /accept="application\/pdf,image\/jpeg,image\/png,image\/webp"/);
+  assert.match(
+    form,
+    /accept="application\/pdf,image\/jpeg,image\/png,image\/webp"/,
+  );
   assert.match(form, /PDF, JPG, PNG o WebP\. Máximo 10 MB\./);
   assert.match(form, /uploadToSignedUrl/);
   assert.match(form, /prepared\.upload\.path, prepared\.upload\.token, file/);
@@ -3706,7 +6335,10 @@ test("vista de mis reservaciones usa el repositorio seguro, pagina y no filtra p
     "/cuenta/furiver/reservaciones?status=pending&page=2",
   );
 
-  const page = readFileSync("app/cuenta/[agencySlug]/reservaciones/page.tsx", "utf8");
+  const page = readFileSync(
+    "app/cuenta/[agencySlug]/reservaciones/page.tsx",
+    "utf8",
+  );
   const queryIndex = page.indexOf("listCustomerReservations({");
   assert.ok(queryIndex >= 0);
   assert.match(page, /limit: PAGE_SIZE/);
@@ -3748,7 +6380,8 @@ test("comando usa UUID persistido y rechaza una agencia inexistente", async () =
   await assert.rejects(
     missing.execute(serverReservationRequest("missing-agency")),
     (error: unknown) =>
-      error instanceof ReservationServerCommandError && error.kind === "not_found",
+      error instanceof ReservationServerCommandError &&
+      error.kind === "not_found",
   );
 });
 
@@ -3777,8 +6410,14 @@ test("reintento idempotente conserva habitaciones, ocupación e importes", async
     totalTravelers: 3,
   });
   assert.equal(retry.reservation.total, first.reservation.total);
-  assert.equal(retry.reservation.depositAmount, first.reservation.depositAmount);
-  assert.equal(retry.reservation.remainingAmount, first.reservation.remainingAmount);
+  assert.equal(
+    retry.reservation.depositAmount,
+    first.reservation.depositAmount,
+  );
+  assert.equal(
+    retry.reservation.remainingAmount,
+    first.reservation.remainingAmount,
+  );
 });
 
 test("la persistencia conserva el UUID de la fila sin convertir un retry en conflicto", async () => {
@@ -3793,9 +6432,15 @@ test("la persistencia conserva el UUID de la fila sin convertir un retry en conf
     snapshot: { ...reservation, id: persistedId },
   };
   const repository = createReservationSnapshotRepository({
-    async findByIdempotency() { return persisted; },
-    async findByReservationCode() { return null; },
-    async insert() { throw new Error("No debe insertar durante un retry"); },
+    async findByIdempotency() {
+      return persisted;
+    },
+    async findByReservationCode() {
+      return null;
+    },
+    async insert() {
+      throw new Error("No debe insertar durante un retry");
+    },
   });
 
   const result = await repository.insert({
@@ -3806,7 +6451,10 @@ test("la persistencia conserva el UUID de la fila sin convertir un retry en conf
   assert.equal(result.created, false);
   assert.equal(result.reservation.id, persistedId);
 
-  const source = readFileSync("lib/reservations/supabase-repository.ts", "utf8");
+  const source = readFileSync(
+    "lib/reservations/supabase-repository.ts",
+    "utf8",
+  );
   assert.match(source, /id, agency_id, idempotency_key/);
   assert.match(source, /id: row\.id/);
 });
@@ -3878,7 +6526,9 @@ test("POST público rechaza Content-Type incorrecto", async () => {
     execute: async () => reservationApiSuccess(),
   });
   const response = await handler(
-    reservationApiRequest(publicReservationBody(), { contentType: "text/plain" }),
+    reservationApiRequest(publicReservationBody(), {
+      contentType: "text/plain",
+    }),
   );
   assert.equal(response.status, 400);
 });
@@ -4025,7 +6675,10 @@ test("comando servidor conserva idempotencia al reintentar", async () => {
 
   assert.equal(first.created, true);
   assert.equal(retry.created, false);
-  assert.equal(retry.reservation.reservationCode, first.reservation.reservationCode);
+  assert.equal(
+    retry.reservation.reservationCode,
+    first.reservation.reservationCode,
+  );
 });
 
 test("repositorio de snapshots inserta una reservación inmutable", async () => {
@@ -4145,10 +6798,7 @@ test("folio de reservación incluye la clave actual del tour", () => {
     suffix: () => "A1B2C3",
   });
 
-  assert.equal(
-    reservation.reservationCode,
-    `${input.tour.code}-260729-A1B2C3`,
-  );
+  assert.equal(reservation.reservationCode, `${input.tour.code}-260729-A1B2C3`);
 });
 
 test("snapshot de reservación conserva anticipo y saldo", () => {
@@ -4197,7 +6847,10 @@ test("doble envío de checkout no duplica la reservación", () => {
 
   assert.equal(first.created, true);
   assert.equal(second.created, false);
-  assert.equal(second.reservation.reservationCode, first.reservation.reservationCode);
+  assert.equal(
+    second.reservation.reservationCode,
+    first.reservation.reservationCode,
+  );
   assert.equal(readReservations(storage).length, 1);
 });
 
@@ -4258,23 +6911,46 @@ test("snapshot de anticipo permanece inmutable ante cambios de configuración", 
 test("secciones configurables se ordenan, ocultan desactivadas y omiten contenido vacío", () => {
   const trip = structuredClone(configuredTrip());
   trip.pageConfiguration!.sections = [
-    { id: "faq", type: "faq", enabled: true, order: 2, showInStickyNavigation: true },
-    { id: "summary", type: "summary", enabled: true, order: 1, showInStickyNavigation: true },
+    {
+      id: "faq",
+      type: "faq",
+      enabled: true,
+      order: 2,
+      showInStickyNavigation: true,
+    },
+    {
+      id: "summary",
+      type: "summary",
+      enabled: true,
+      order: 1,
+      showInStickyNavigation: true,
+    },
     { id: "off", type: "video", enabled: false, order: 0 },
   ];
   trip.faqContent = { displayMode: "accordion", items: [] };
-  assert.deepEqual(resolveTripSections(trip).map((item) => item.type), ["summary"]);
+  assert.deepEqual(
+    resolveTripSections(trip).map((item) => item.type),
+    ["summary"],
+  );
 });
 test("sticky nav refleja orden y visibilidad reales", () => {
   const trip = configuredTrip();
   const sticky = getStickyTripSections(trip);
   assert.ok(sticky.length > 1);
-  assert.deepEqual(sticky, [...sticky].sort((a, b) => a.order - b.order));
-  assert.ok(sticky.every((item) => item.enabled && item.showInStickyNavigation));
+  assert.deepEqual(
+    sticky,
+    [...sticky].sort((a, b) => a.order - b.order),
+  );
+  assert.ok(
+    sticky.every((item) => item.enabled && item.showInStickyNavigation),
+  );
 });
 test("la configuración predeterminada tiene identificadores y orden estable", () => {
   assert.equal(DEFAULT_TRIP_SECTIONS[0].type, "summary");
-  assert.equal(new Set(DEFAULT_TRIP_SECTIONS.map((item) => item.id)).size, DEFAULT_TRIP_SECTIONS.length);
+  assert.equal(
+    new Set(DEFAULT_TRIP_SECTIONS.map((item) => item.id)).size,
+    DEFAULT_TRIP_SECTIONS.length,
+  );
 });
 test("duración singular y con noches se formatea sin cero noches", () => {
   assert.equal(formatTripDuration(1, 0), "1 día");
@@ -4282,26 +6958,56 @@ test("duración singular y con noches se formatea sin cero noches", () => {
 });
 test("destinos del itinerario se ordenan, deduplican y limitan", () => {
   const days = [
-    { day: 2, order: 2, title: "B", description: "", stops: [{ id: "3", name: "Aculco", order: 1 }] },
-    { day: 1, order: 1, title: "A", description: "", stops: [{ id: "1", name: "Amealco", order: 1 }, { id: "2", name: "Aculco", order: 2 }] },
+    {
+      day: 2,
+      order: 2,
+      title: "B",
+      description: "",
+      stops: [{ id: "3", name: "Aculco", order: 1 }],
+    },
+    {
+      day: 1,
+      order: 1,
+      title: "A",
+      description: "",
+      stops: [
+        { id: "1", name: "Amealco", order: 1 },
+        { id: "2", name: "Aculco", order: 2 },
+      ],
+    },
   ];
   assert.deepEqual(getVisitedDestinations(days, 2), ["Amealco", "Aculco"]);
 });
 test("precio con hospedaje usa adulto doble", () => {
-  const trip = travels.find((item) => item.accommodationMode === "hotel_occupancy")!;
-  assert.equal(getTripDisplayStartingPrice({ trip }).amount, trip.pricingOptions.find((item) => item.occupancy === "double")!.amount);
+  const trip = travels.find(
+    (item) => item.accommodationMode === "hotel_occupancy",
+  )!;
+  assert.equal(
+    getTripDisplayStartingPrice({ trip }).amount,
+    trip.pricingOptions.find((item) => item.occupancy === "double")!.amount,
+  );
   assert.equal(getTripDisplayStartingPrice({ trip }).basis, "adult_double");
 });
 test("precio sin hospedaje usa adulto general", () => {
   const trip = travels.find((item) => item.accommodationMode === "none")!;
-  assert.equal(getTripDisplayStartingPrice({ trip }).amount, trip.pricingOptions.find((item) => item.occupancy === "general")!.amount);
+  assert.equal(
+    getTripDisplayStartingPrice({ trip }).amount,
+    trip.pricingOptions.find((item) => item.occupancy === "general")!.amount,
+  );
   assert.equal(getTripDisplayStartingPrice({ trip }).basis, "adult_general");
 });
 test("override de salida sustituye el precio sin mutar el viaje", () => {
-  const trip = travels.find((item) => item.departures.some((departure) => departure.pricing?.mode === "custom"))!;
-  const departure = trip.departures.find((item) => item.pricing?.mode === "custom")!;
+  const trip = travels.find((item) =>
+    item.departures.some((departure) => departure.pricing?.mode === "custom"),
+  )!;
+  const departure = trip.departures.find(
+    (item) => item.pricing?.mode === "custom",
+  )!;
   const base = trip.basePrice.amount;
-  assert.notEqual(getTripDisplayStartingPrice({ trip, departure }).amount, base);
+  assert.notEqual(
+    getTripDisplayStartingPrice({ trip, departure }).amount,
+    base,
+  );
   assert.equal(trip.basePrice.amount, base);
 });
 test("modos del itinerario producen estados de apertura correctos", () => {
@@ -4310,15 +7016,60 @@ test("modos del itinerario producen estados de apertura correctos", () => {
   assert.deepEqual(getInitialItineraryOpenDays("all_closed", 3), []);
 });
 test("video vacío y proveedor desconocido se rechazan", () => {
-  assert.equal(getSafeVideoPresentation({ enabled: true, provider: "html5", url: "" }), null);
-  assert.equal(getSafeVideoPresentation({ enabled: true, provider: "youtube", url: "https://evil.example/watch?v=abcdef" }), null);
+  assert.equal(
+    getSafeVideoPresentation({ enabled: true, provider: "html5", url: "" }),
+    null,
+  );
+  assert.equal(
+    getSafeVideoPresentation({
+      enabled: true,
+      provider: "youtube",
+      url: "https://evil.example/watch?v=abcdef",
+    }),
+    null,
+  );
 });
 test("YouTube, Vimeo, TikTok, Instagram y HTML5 usan presentaciones controladas", () => {
-  assert.equal(getSafeVideoPresentation({ enabled: true, provider: "youtube", url: "https://youtube.com/watch?v=abcdef1" })?.mode, "iframe");
-  assert.equal(getSafeVideoPresentation({ enabled: true, provider: "vimeo", url: "https://vimeo.com/123456" })?.mode, "iframe");
-  assert.equal(getSafeVideoPresentation({ enabled: true, provider: "tiktok", url: "https://www.tiktok.com/@demo/video/123" })?.mode, "link");
-  assert.equal(getSafeVideoPresentation({ enabled: true, provider: "instagram", url: "https://instagram.com/reel/demo" })?.mode, "link");
-  assert.equal(getSafeVideoPresentation({ enabled: true, provider: "html5", url: "https://cdn.example/demo.mp4" })?.mode, "html5");
+  assert.equal(
+    getSafeVideoPresentation({
+      enabled: true,
+      provider: "youtube",
+      url: "https://youtube.com/watch?v=abcdef1",
+    })?.mode,
+    "iframe",
+  );
+  assert.equal(
+    getSafeVideoPresentation({
+      enabled: true,
+      provider: "vimeo",
+      url: "https://vimeo.com/123456",
+    })?.mode,
+    "iframe",
+  );
+  assert.equal(
+    getSafeVideoPresentation({
+      enabled: true,
+      provider: "tiktok",
+      url: "https://www.tiktok.com/@demo/video/123",
+    })?.mode,
+    "link",
+  );
+  assert.equal(
+    getSafeVideoPresentation({
+      enabled: true,
+      provider: "instagram",
+      url: "https://instagram.com/reel/demo",
+    })?.mode,
+    "link",
+  );
+  assert.equal(
+    getSafeVideoPresentation({
+      enabled: true,
+      provider: "html5",
+      url: "https://cdn.example/demo.mp4",
+    })?.mode,
+    "html5",
+  );
 });
 test("URLs y archivos peligrosos se rechazan", () => {
   assert.equal(isSafeDownloadUrl("javascript:alert(1)"), false);
@@ -4330,50 +7081,91 @@ test("icono personalizado solo admite imágenes seguras", () => {
   assert.equal(isSafeCustomIconUrl("https://example.com/icon.svg"), false);
 });
 test("parser de recomendaciones elimina viñetas y líneas vacías", () => {
-  assert.deepEqual(parseBulletedRecommendations("• Calzado\n\n- Agua\n* Bloqueador").map((item) => item.text), ["Calzado", "Agua", "Bloqueador"]);
+  assert.deepEqual(
+    parseBulletedRecommendations("• Calzado\n\n- Agua\n* Bloqueador").map(
+      (item) => item.text,
+    ),
+    ["Calzado", "Agua", "Bloqueador"],
+  );
 });
 test("ruta mantiene orden por día y orden interno", () => {
-  assert.deepEqual(getOrderedRouteStops({ enabled: true, mode: "route", routeStops: [
+  assert.deepEqual(
+    getOrderedRouteStops({
+      enabled: true,
+      mode: "route",
+      routeStops: [
     { id: "b", dayNumber: 2, name: "B", order: 1 },
     { id: "a2", dayNumber: 1, name: "A2", order: 2 },
     { id: "a1", dayNumber: 1, name: "A1", order: 1 },
-  ] }).map((item) => item.id), ["a1", "a2", "b"]);
+      ],
+    }).map((item) => item.id),
+    ["a1", "a2", "b"],
+  );
 });
 test("puntos públicos filtran desactivados y conservan orden", () => {
-  assert.deepEqual(getPublicDeparturePoints([
+  assert.deepEqual(
+    getPublicDeparturePoints([
     { id: "2", type: "airport", name: "Aeropuerto", enabled: true, order: 2 },
     { id: "off", type: "hotel", name: "Oculto", enabled: false, order: 0 },
-    { id: "1", type: "city_boarding", name: "Centro", enabled: true, order: 1 },
-  ]).map((item) => item.id), ["1", "2"]);
+      {
+        id: "1",
+        type: "city_boarding",
+        name: "Centro",
+        enabled: true,
+        order: 1,
+      },
+    ]).map((item) => item.id),
+    ["1", "2"],
+  );
 });
 test("formulario de descarga valida nombre, WhatsApp y consentimiento", () => {
-  assert.deepEqual(Object.keys(validateLead({ name: " ", whatsapp: "55", consent: false })).sort(), ["consent", "name", "whatsapp"]);
-  assert.deepEqual(validateLead({ name: "Ana", whatsapp: "+525512345678", consent: true }), {});
+  assert.deepEqual(
+    Object.keys(
+      validateLead({ name: " ", whatsapp: "55", consent: false }),
+    ).sort(),
+    ["consent", "name", "whatsapp"],
+  );
+  assert.deepEqual(
+    validateLead({ name: "Ana", whatsapp: "+525512345678", consent: true }),
+    {},
+  );
 });
 test("demos incluyen descarga directa y descarga con formulario", () => {
   const configured = travels.filter((trip) => trip.itineraryDownload?.enabled);
-  assert.ok(configured.some((trip) => !trip.itineraryDownload?.requireLeadForm));
+  assert.ok(
+    configured.some((trip) => !trip.itineraryDownload?.requireLeadForm),
+  );
   assert.ok(configured.some((trip) => trip.itineraryDownload?.requireLeadForm));
 });
 test("día sin imagen no requiere hueco estructural", () => {
   const trip = configuredTrip();
-  assert.ok(trip.itinerary.some((day) => !day.images?.length) || trip.itinerary.length <= 2);
+  assert.ok(
+    trip.itinerary.some((day) => !day.images?.length) ||
+      trip.itinerary.length <= 2,
+  );
 });
 test("demos incluyen mapa destino y mapa de ruta", () => {
-  assert.ok(travels.some((trip) => trip.mapSettings?.mode === "main_destination"));
+  assert.ok(
+    travels.some((trip) => trip.mapSettings?.mode === "main_destination"),
+  );
   assert.ok(travels.some((trip) => trip.mapSettings?.mode === "route"));
 });
 test("demos incluyen punto terrestre y aeropuerto", () => {
   const points = travels.flatMap((trip) => trip.publicDeparturePoints ?? []);
   assert.ok(points.some((point) => point.type === "city_boarding"));
-  assert.ok(points.some((point) => point.type === "airport" && point.airportCode));
+  assert.ok(
+    points.some((point) => point.type === "airport" && point.airportCode),
+  );
 });
 test("información importante y FAQ solo existen con contenido útil", () => {
   const trip = configuredTrip();
   assert.ok(trip.importantInformation!.items.length > 0);
-  assert.ok(trip.faqContent!.items.every((item) => item.question && item.answer));
+  assert.ok(
+    trip.faqContent!.items.every((item) => item.question && item.answer),
+  );
 });
-const barrancasTrip = () => travels.find((trip) => trip.slug === "barrancas-del-cobre")!;
+const barrancasTrip = () =>
+  travels.find((trip) => trip.slug === "barrancas-del-cobre")!;
 test("viaje de cinco días usa secciones configurables", () => {
   const trip = barrancasTrip();
   assert.equal(trip.durationDays, 5);
@@ -4382,23 +7174,36 @@ test("viaje de cinco días usa secciones configurables", () => {
 test("viaje de un día sigue usando secciones configurables", () => {
   const trip = travels.find((item) => item.slug === "bosque-de-luciernagas")!;
   assert.equal(trip.durationDays, 1);
-  assert.ok(resolveTripSections(trip).some((section) => section.type === "itinerary"));
+  assert.ok(
+    resolveTripSections(trip).some((section) => section.type === "itinerary"),
+  );
 });
 test("el número de días no controla el orquestador modular", () => {
   const oneDay = travels.find((item) => item.slug === "bosque-de-luciernagas")!;
   const multiday = barrancasTrip();
   assert.ok(oneDay.pageConfiguration);
   assert.ok(multiday.pageConfiguration);
-  assert.equal(typeof resolveTripSections(oneDay)[0].order, typeof resolveTripSections(multiday)[0].order);
+  assert.equal(
+    typeof resolveTripSections(oneDay)[0].order,
+    typeof resolveTripSections(multiday)[0].order,
+  );
 });
 test("Barrancas contiene cinco días con identificadores estables", () => {
   const days = barrancasTrip().itinerary;
   assert.equal(days.length, 5);
-  assert.deepEqual(days.map((day) => day.day), [1, 2, 3, 4, 5]);
+  assert.deepEqual(
+    days.map((day) => day.day),
+    [1, 2, 3, 4, 5],
+  );
   assert.equal(new Set(days.map((day) => day.id)).size, 5);
 });
 test("Barrancas extrae destinos desde los cinco días sin duplicados", () => {
-  assert.deepEqual(getVisitedDestinations(barrancasTrip().itinerary), ["Chihuahua", "Creel", "Divisadero", "Barrancas del Cobre"]);
+  assert.deepEqual(getVisitedDestinations(barrancasTrip().itinerary), [
+    "Chihuahua",
+    "Creel",
+    "Divisadero",
+    "Barrancas del Cobre",
+  ]);
 });
 test("precio desde de Barrancas usa la base doble", () => {
   const result = getTripDisplayStartingPrice({ trip: barrancasTrip() });
@@ -4408,12 +7213,35 @@ test("precio desde de Barrancas usa la base doble", () => {
 test("la misma salida activa alimenta resumen y panel", () => {
   const trip = barrancasTrip();
   const selected = trip.departures[1];
-  assert.equal(getTripDisplayStartingPrice({ trip, departure: selected }).amount, selected.pricing?.pricingOverrides?.adultDouble);
+  assert.equal(
+    getTripDisplayStartingPrice({ trip, departure: selected }).amount,
+    selected.pricing?.pricingOverrides?.adultDouble,
+  );
 });
 test("cambiar fecha conserva viajeros y actualiza el texto de WhatsApp", () => {
   const trip = barrancasTrip();
-  const first = explorerBookingMessage({ agencyName: "Furiver", trip, departureLabel: "10 de agosto", adults: 2, children: 0, occupancyLabel: "Doble", totalLabel: "$29,980 MXN", depositLabel: "$2,000 MXN", url: "https://demo.test" });
-  const second = explorerBookingMessage({ agencyName: "Furiver", trip, departureLabel: "7 de septiembre", adults: 2, children: 0, occupancyLabel: "Doble", totalLabel: "$32,378 MXN", depositLabel: "$2,000 MXN", url: "https://demo.test" });
+  const first = explorerBookingMessage({
+    agencyName: "Furiver",
+    trip,
+    departureLabel: "10 de agosto",
+    adults: 2,
+    children: 0,
+    occupancyLabel: "Doble",
+    totalLabel: "$29,980 MXN",
+    depositLabel: "$2,000 MXN",
+    url: "https://demo.test",
+  });
+  const second = explorerBookingMessage({
+    agencyName: "Furiver",
+    trip,
+    departureLabel: "7 de septiembre",
+    adults: 2,
+    children: 0,
+    occupancyLabel: "Doble",
+    totalLabel: "$32,378 MXN",
+    depositLabel: "$2,000 MXN",
+    url: "https://demo.test",
+  });
   assert.match(first, /10 de agosto/);
   assert.match(second, /7 de septiembre/);
   assert.match(second, /2 adultos/);
@@ -4422,13 +7250,25 @@ test("override de salida aplica a la tarifa doble efectiva", () => {
   const trip = barrancasTrip();
   const departure = trip.departures[1];
   const rate = trip.pricingOptions.find((item) => item.occupancy === "double")!;
-  assert.equal(getEffectiveRateAmount({ trip, departure, rate }), departure.pricing!.pricingOverrides!.adultDouble);
+  assert.equal(
+    getEffectiveRateAmount({ trip, departure, rate }),
+    departure.pricing!.pricingOverrides!.adultDouble,
+  );
 });
 test("dos adultos no duplican la tarifa más de una vez", () => {
   const trip = barrancasTrip();
   const departure = trip.departures[0];
   const rate = trip.pricingOptions.find((item) => item.occupancy === "double")!;
-  const priced = priceLinePending({ id: "barrancas-double", agencyId: trip.agencyId, travelId: trip.id, departureId: departure.id, boardingOptionId: null, pricingOptionId: rate.id, travelers: 2, extraIds: [] });
+  const priced = priceLinePending({
+    id: "barrancas-double",
+    agencyId: trip.agencyId,
+    travelId: trip.id,
+    departureId: departure.id,
+    boardingOptionId: null,
+    pricingOptionId: rate.id,
+    travelers: 2,
+    extraIds: [],
+  });
   assert.equal(priced.subtotal, 29980);
 });
 test("impuestos de Barrancas se aplican una sola vez por viajero", () => {
@@ -4436,18 +7276,45 @@ test("impuestos de Barrancas se aplican una sola vez por viajero", () => {
   const departure = trip.departures[0];
   const rate = trip.pricingOptions.find((item) => item.occupancy === "double")!;
   const perTraveler = getEffectiveTaxesPerTraveler({ trip, departure, rate });
-  const priced = priceLinePending({ id: "barrancas-tax", agencyId: trip.agencyId, travelId: trip.id, departureId: departure.id, boardingOptionId: null, pricingOptionId: rate.id, travelers: 2, extraIds: [] });
+  const priced = priceLinePending({
+    id: "barrancas-tax",
+    agencyId: trip.agencyId,
+    travelId: trip.id,
+    departureId: departure.id,
+    boardingOptionId: null,
+    pricingOptionId: rate.id,
+    travelers: 2,
+    extraIds: [],
+  });
   assert.equal(priced.taxes, perTraveler * 2);
   assert.equal(priced.total, priced.subtotal + priced.taxes);
 });
 test("cargos adicionales permanecen separados del subtotal e impuestos", () => {
   const trip = barrancasTrip();
   const rate = trip.pricingOptions.find((item) => item.occupancy === "double")!;
-  const priced = priceLinePending({ id: "barrancas-extra", agencyId: trip.agencyId, travelId: trip.id, departureId: trip.departures[0].id, boardingOptionId: null, pricingOptionId: rate.id, travelers: 2, extraIds: [trip.extras[0].id] });
-  assert.equal(priced.total, priced.subtotal + priced.taxes + priced.extrasTotal);
+  const priced = priceLinePending({
+    id: "barrancas-extra",
+    agencyId: trip.agencyId,
+    travelId: trip.id,
+    departureId: trip.departures[0].id,
+    boardingOptionId: null,
+    pricingOptionId: rate.id,
+    travelers: 2,
+    extraIds: [trip.extras[0].id],
+  });
+  assert.equal(
+    priced.total,
+    priced.subtotal + priced.taxes + priced.extrasTotal,
+  );
 });
 test("capacidad hotelera continúa activa para Barrancas", () => {
-  const result = validateRoomCapacity({ adults: 2, minors: 2, maxGuestsPerRoom: 4, adultCountsTowardCapacity: true, minorCountsTowardCapacity: true });
+  const result = validateRoomCapacity({
+    adults: 2,
+    minors: 2,
+    maxGuestsPerRoom: 4,
+    adultCountsTowardCapacity: true,
+    minorCountsTowardCapacity: true,
+  });
   assert.equal(result.valid, true);
 });
 test("menores no cambian la base adulta de Barrancas", () => {
@@ -4457,24 +7324,41 @@ test("menores no cambian la base adulta de Barrancas", () => {
 });
 test("viaje sin hospedaje no expone tarifas hoteleras", () => {
   const trip = travels.find((item) => item.slug === "bosque-de-luciernagas")!;
-  assert.ok(trip.pricingOptions.every((rate) => !["single", "double", "triple", "quadruple"].includes(rate.occupancy)));
+  assert.ok(
+    trip.pricingOptions.every(
+      (rate) =>
+        !["single", "double", "triple", "quadruple"].includes(rate.occupancy),
+    ),
+  );
 });
 test("sticky nav multiday refleja contenido y orden", () => {
   const nav = getStickyTripSections(barrancasTrip());
   assert.ok(nav.some((section) => section.type === "rates"));
-  assert.deepEqual(nav, [...nav].sort((a, b) => a.order - b.order));
+  assert.deepEqual(
+    nav,
+    [...nav].sort((a, b) => a.order - b.order),
+  );
 });
 test("descarga de Barrancas usa su documento específico", () => {
-  assert.equal(barrancasTrip().itineraryDownload?.fileUrl, "/documents/itinerario-barrancas-del-cobre-demo.txt");
+  assert.equal(
+    barrancasTrip().itineraryDownload?.fileUrl,
+    "/documents/itinerario-barrancas-del-cobre-demo.txt",
+  );
 });
 test("mapa de Barrancas conserva días del itinerario", () => {
   const stops = getOrderedRouteStops(barrancasTrip().mapSettings);
-  assert.deepEqual([...new Set(stops.map((stop) => stop.dayNumber))], [1, 2, 3, 4, 5]);
+  assert.deepEqual(
+    [...new Set(stops.map((stop) => stop.dayNumber))],
+    [1, 2, 3, 4, 5],
+  );
 });
 test("Lavella queda registrado sin reemplazar el renderer Explorer", () => {
   assert.equal(TRIP_SECTION_RENDERER_KEYS.explorer, "explorer-cinematic");
   assert.equal(TRIP_SECTION_RENDERER_KEYS.lavella, "lavella-native");
-  assert.notEqual(TRIP_SECTION_RENDERER_KEYS.lavella, TRIP_SECTION_RENDERER_KEYS.explorer);
+  assert.notEqual(
+    TRIP_SECTION_RENDERER_KEYS.lavella,
+    TRIP_SECTION_RENDERER_KEYS.explorer,
+  );
 });
 test("resuelve tenant por hostname, query demo y fallback local", () => {
   assert.equal(resolveTenant("FURIVER.TRAVEL.FU.LAND:443").slug, "furiver");
@@ -4501,10 +7385,7 @@ test("los temas retirados son inválidos y usan el fallback general", () => {
   for (const value of removedThemes) {
     assert.equal(isValidTheme(value), false);
     assert.equal(resolveTheme(agencies[0], value), "explorer");
-    assert.equal(
-      demoQuerySchema.safeParse({ theme: value }).success,
-      false,
-    );
+    assert.equal(demoQuerySchema.safeParse({ theme: value }).success, false);
   }
 });
 test("los selectores públicos y administrativos contienen exactamente dos temas", () => {
@@ -4513,8 +7394,11 @@ test("los selectores públicos y administrativos contienen exactamente dos temas
     "components/legacy-travel-app.tsx",
   ]) {
     const source = readFileSync(file, "utf8");
-    const options = [...source.matchAll(/<option value="([^"]+)">(?:Explorer|Lavella)<\/option>/g)]
-      .map((match) => match[1]);
+    const options = [
+      ...source.matchAll(
+        /<option value="([^"]+)">(?:Explorer|Lavella)<\/option>/g,
+      ),
+    ].map((match) => match[1]);
     assert.deepEqual(options, ["explorer", "lavella"]);
   }
 });
@@ -5218,7 +8102,10 @@ test("los estilos Lavella no se importan como hoja global del layout", () => {
   const commerce = readFileSync("app/themes/lavella-commerce.css", "utf8");
   assert.doesNotMatch(layout, /lavella\.css/);
   assert.match(commerce, /^\.lavella-commerce/m);
-  assert.doesNotMatch(commerce, /(^|\n)\s*\.(container|row|col|header|button|title|active)\b/m);
+  assert.doesNotMatch(
+    commerce,
+    /(^|\n)\s*\.(container|row|col|header|button|title|active)\b/m,
+  );
 });
 
 test("Lavella no carga scripts heredados del template", () => {
@@ -5226,8 +8113,13 @@ test("Lavella no carga scripts heredados del template", () => {
     "components/themes/lavella/lavella-home-hero.tsx",
     "components/themes/lavella/lavella-mobile-menu.tsx",
     "components/themes/lavella/lavella-trip-sections.tsx",
-  ].map((path) => readFileSync(path, "utf8")).join("\n");
-  assert.doesNotMatch(files, /jquery|slick\(|lightGallery|dangerouslySetInnerHTML/i);
+  ]
+    .map((path) => readFileSync(path, "utf8"))
+    .join("\n");
+  assert.doesNotMatch(
+    files,
+    /jquery|slick\(|lightGallery|dangerouslySetInnerHTML/i,
+  );
 });
 
 test("detalle Lavella no depende de SharedDetail ni de markup Explorer", () => {
@@ -5238,11 +8130,12 @@ test("detalle Lavella no depende de SharedDetail ni de markup Explorer", () => {
     "lavella-trip-sections.tsx",
     "lavella-booking-panel.tsx",
   ]
-    .map((name) =>
-      readFileSync(`components/themes/lavella/${name}`, "utf8"),
-    )
+    .map((name) => readFileSync(`components/themes/lavella/${name}`, "utf8"))
     .join("\n");
-  assert.doesNotMatch(files, /SharedDetail|ExplorerBookingPanel|className=["'`]explorer-/);
+  assert.doesNotMatch(
+    files,
+    /SharedDetail|ExplorerBookingPanel|className=["'`]explorer-/,
+  );
   assert.match(files, /LavellaTripGallery/);
   assert.match(files, /LavellaBookingPanel/);
 });
@@ -5296,14 +8189,10 @@ const sourcedTripIds = [
 ] as const;
 
 const sourcedTrips = () =>
-  sourcedTripIds.map(
-    (id) => travels.find((trip) => trip.id === id)!,
-  );
+  sourcedTripIds.map((id) => travels.find((trip) => trip.id === id)!);
 
 const patagonia = () =>
-  travels.find(
-    (trip) => trip.id === "crisenix-patagonia-fin-del-mundo",
-  )!;
+  travels.find((trip) => trip.id === "crisenix-patagonia-fin-del-mundo")!;
 
 const crisenixFxPolicy = () =>
   agencies.find((agency) => agency.id === "a-crisenix")!.settings
@@ -5383,9 +8272,18 @@ test("flechas Lavella usan una estructura de centrado estable", () => {
     "components/themes/lavella/lavella-arrow-icon.module.css",
     "utf8",
   );
-  assert.match(homeCss, /\.heroArrow \{[\s\S]*display: inline-grid;[\s\S]*place-items: center;/);
-  assert.match(arrowCss, /\.container \{[\s\S]*display: inline-grid;[\s\S]*place-items: center;[\s\S]*padding: 0;[\s\S]*line-height: 0;/);
-  assert.match(arrowCss, /\.container svg \{[\s\S]*display: block;[\s\S]*width: 18px;[\s\S]*height: 18px;/);
+  assert.match(
+    homeCss,
+    /\.heroArrow \{[\s\S]*display: inline-grid;[\s\S]*place-items: center;/,
+  );
+  assert.match(
+    arrowCss,
+    /\.container \{[\s\S]*display: inline-grid;[\s\S]*place-items: center;[\s\S]*padding: 0;[\s\S]*line-height: 0;/,
+  );
+  assert.match(
+    arrowCss,
+    /\.container svg \{[\s\S]*display: block;[\s\S]*width: 18px;[\s\S]*height: 18px;/,
+  );
   assert.doesNotMatch(arrowCss, /translate[XY]\(/);
 });
 
@@ -5461,7 +8359,11 @@ test("interacción pausa y después permite reanudar autoplay Lavella", () => {
   );
   const resumed = updateLavellaPauseReasons(paused, "interaction", false);
   assert.equal(
-    canLavellaAutoplay({ autoplay: true, slideCount: 4, pauseReasons: resumed }),
+    canLavellaAutoplay({
+      autoplay: true,
+      slideCount: 4,
+      pauseReasons: resumed,
+    }),
     true,
   );
 });
@@ -5550,7 +8452,10 @@ test("flechas de carruseles y lupa conservan centrado y submit", () => {
     "components/themes/lavella/lavella-arrow-icon.module.css",
     "utf8",
   );
-  assert.equal((home.match(/className=\{styles\.carouselArrowButton\}/g) ?? []).length, 4);
+  assert.equal(
+    (home.match(/className=\{styles\.carouselArrowButton\}/g) ?? []).length,
+    4,
+  );
   assert.match(
     css,
     /\.carouselArrowButton[\s\S]*display: inline-grid;[\s\S]*place-items: center;[\s\S]*padding: 0;[\s\S]*line-height: 0;/,
@@ -5652,7 +8557,10 @@ test("cards de destinos declaran superficie de imagen y tokens on-dark", () => {
     css,
     /\.destinationImageOverlay \{[\s\S]*rgba\(0, 0, 0, \.72\)[\s\S]*rgba\(0, 0, 0, \.08\)/,
   );
-  assert.match(css, /\.destinationImageCode \{[\s\S]*var\(--lavella-text-on-dark\)/);
+  assert.match(
+    css,
+    /\.destinationImageCode \{[\s\S]*var\(--lavella-text-on-dark\)/,
+  );
 });
 
 test("componentes Lavella declaran superficies claras, oscuras e imagen", () => {
@@ -5666,9 +8574,7 @@ test("componentes Lavella declaran superficies claras, oscuras e imagen", () => 
     "lavella-booking-panel.tsx",
     "lavella-footer.tsx",
   ]
-    .map((name) =>
-      readFileSync(`components/themes/lavella/${name}`, "utf8"),
-    )
+    .map((name) => readFileSync(`components/themes/lavella/${name}`, "utf8"))
     .join("\n");
   assert.match(files, /data-lavella-surface="light"/);
   assert.match(files, /data-lavella-surface="dark"/);
@@ -5748,10 +8654,7 @@ test("catálogo Lavella conserva tenant y tema mediante navegación compartida",
   const app = readFileSync("components/travel-app.tsx", "utf8");
   assert.match(catalog, /<LavellaTourCard[\s\S]*onOpen=\{onOpen\}/);
   assert.doesNotMatch(catalog, /history\.(?:pushState|replaceState)/);
-  assert.match(
-    app,
-    /new URLSearchParams\(\{ tenant: agency\.slug, theme \}\)/,
-  );
+  assert.match(app, /new URLSearchParams\(\{ tenant: agency\.slug, theme \}\)/);
 });
 
 test("Ordenar no cuenta como filtro Lavella", () => {
@@ -5838,10 +8741,7 @@ test("adultos y menores comparten fila en el panel Lavella", () => {
     "components/themes/lavella/lavella-booking.module.css",
     "utf8",
   );
-  assert.match(
-    css,
-    /\.travelerRows[\s\S]*grid-template-columns: 1fr 1fr/,
-  );
+  assert.match(css, /\.travelerRows[\s\S]*grid-template-columns: 1fr 1fr/);
 });
 
 test("reserva y WhatsApp comparten fila en escritorio Lavella", () => {
@@ -5879,7 +8779,8 @@ test("paradas tipadas siguen disponibles para el mapa", () => {
   );
   assert.ok(
     sourcedTrips().every(
-      (trip) => (trip.mapSettings?.routeStops?.length ?? 0) >= trip.durationDays,
+      (trip) =>
+        (trip.mapSettings?.routeStops?.length ?? 0) >= trip.durationDays,
     ),
   );
 });
@@ -5929,10 +8830,7 @@ for (const activeTheme of ["explorer", "lavella"] as const) {
 
 test("duraciones y noches de los siete viajes coinciden con las fuentes", () => {
   assert.deepEqual(
-    sourcedTrips().map((trip) => [
-      trip.durationDays,
-      trip.durationNights,
-    ]),
+    sourcedTrips().map((trip) => [trip.durationDays, trip.durationNights]),
     [
       [1, 0],
       [2, 1],
@@ -6063,11 +8961,7 @@ test("snapshot expirado requiere una nueva cotización", async () => {
     true,
   );
   assert.throws(
-    () =>
-      requireFreshFxSnapshot(
-        result.snapshot,
-        "2026-07-26T12:16:00.000Z",
-      ),
+    () => requireFreshFxSnapshot(result.snapshot, "2026-07-26T12:16:00.000Z"),
     /venció/,
   );
 });
@@ -6352,8 +9246,7 @@ test("panel Lavella prepara una sola reserva consistente para el carrito", () =>
   const agency = agencies.find((item) => item.slug === "furiver")!;
   const trip = travels.find(
     (item) =>
-      item.agencyId === agency.id &&
-      item.slug === "barrancas-del-cobre",
+      item.agencyId === agency.id && item.slug === "barrancas-del-cobre",
   )!;
   const departure = lavellaDeparture(trip);
   const adultRate = trip.pricingOptions.find(
@@ -6448,9 +9341,7 @@ test("panel Lavella bloquea mezcla de monedas antes de escribir el carrito", () 
     trip.pricingOptions.find((item) => item.occupancy === "double") ??
     trip.pricingOptions[0];
   const existingTrip = travels.find(
-    (item) =>
-      item.agencyId === agency.id &&
-      item.basePrice.currency === "MXN",
+    (item) => item.agencyId === agency.id && item.basePrice.currency === "MXN",
   )!;
   const existingDeparture = lavellaDeparture(existingTrip);
   const existingRate = existingTrip.pricingOptions[0];
@@ -6533,7 +9424,10 @@ test("panel Lavella impide doble activación del agregado", () => {
     "utf8",
   );
   assert.match(booking, /reservingRef\.current/);
-  assert.match(booking, /if \(!canReserve \|\| !adultLine \|\| reservingRef\.current\) return/);
+  assert.match(
+    booking,
+    /if \(!canReserve \|\| !adultLine \|\| reservingRef\.current\) return/,
+  );
 });
 
 test("controles Lavella actualizan adultos y menores una sola vez", () => {
@@ -6660,7 +9554,10 @@ test("checkout Lavella usa la confirmación del servidor sin recalcular importes
 
 test("checkout Lavella conserva la clave al reintentar y bloquea doble envío", () => {
   const checkout = readFileSync("components/legacy-travel-app.tsx", "utf8");
-  assert.match(checkout, /"Idempotency-Key": reservationSubmissionKeyRef\.current/);
+  assert.match(
+    checkout,
+    /"Idempotency-Key": reservationSubmissionKeyRef\.current/,
+  );
   assert.match(checkout, /if \(finalizingRef\.current\) return/);
   assert.match(checkout, /setIsSubmittingReservation\(true\)/);
   assert.match(checkout, /setIsSubmittingReservation\(false\)/);
@@ -6759,10 +9656,7 @@ test("un viaje FX debe reservarse sin otro viaje aunque ambos usen USD", () => {
   );
   assert.throws(
     () =>
-      validateDemoFxOrderShape([
-        makeLine(foreignTrip),
-        makeLine(usdWithoutFx),
-      ]),
+      validateDemoFxOrderShape([makeLine(foreignTrip), makeLine(usdWithoutFx)]),
     /sin otros viajes/,
   );
 });
@@ -6809,7 +9703,8 @@ test("visibilidad de disponibilidad distingue oculto, estado y conteo", () => {
 
 const paymentReceiptDocumentId = "24cf2e61-23bd-4d4a-85ca-e1d7a36fc183";
 
-function paymentReceiptFixture(input: Readonly<{
+function paymentReceiptFixture(
+  input: Readonly<{
   memberships?: readonly AdminAgencyMembershipRecord[];
   paymentStatus?: string;
   paymentSource?: string;
@@ -6817,7 +9712,8 @@ function paymentReceiptFixture(input: Readonly<{
   payments?: readonly ReservationPaymentFinancialRow[];
   failStorage?: boolean;
   failInsert?: boolean;
-}> = {}) {
+  }> = {},
+) {
   const documents = new Map<string, PaymentReceiptDocumentRow>();
   const state = {
     requests: [] as string[],
@@ -6826,7 +9722,9 @@ function paymentReceiptFixture(input: Readonly<{
     inserts: [] as PaymentReceiptDocumentInsert[],
     pdfs: [] as Parameters<typeof renderPaymentReceiptPdf>[0][],
   };
-  const access = adminAccessFixture({ memberships: input.memberships ?? [adminMembership()] });
+  const access = adminAccessFixture({
+    memberships: input.memberships ?? [adminMembership()],
+  });
   const service = createPaymentReceiptService({
     resolveAccess: access.resolver.resolve,
     now: () => new Date(TEST_NOW),
@@ -6838,10 +9736,14 @@ function paymentReceiptFixture(input: Readonly<{
     repository: {
       async findReservation({ agencyId, reservationId }) {
         state.requests.push(`reservation:${agencyId}:${reservationId}`);
-        return input.reservation === undefined ? financialReservationRow() : input.reservation;
+        return input.reservation === undefined
+          ? financialReservationRow()
+          : input.reservation;
       },
       async findPayment({ agencyId, reservationId, paymentId }) {
-        state.requests.push(`payment:${agencyId}:${reservationId}:${paymentId}`);
+        state.requests.push(
+          `payment:${agencyId}:${reservationId}:${paymentId}`,
+        );
         return paymentId === adminPaymentId
           ? {
               id: paymentId,
@@ -6857,19 +9759,32 @@ function paymentReceiptFixture(input: Readonly<{
       },
       async listPayments({ agencyId, reservationId }) {
         state.requests.push(`payments:${agencyId}:${reservationId}`);
-        return input.payments ?? [{ amount: 9563.4, currency: "MXN", status: "confirmed" }];
+        return (
+          input.payments ?? [
+            { amount: 9563.4, currency: "MXN", status: "confirmed" },
+          ]
+        );
       },
       async findExistingDocument({ agencyId, reservationId, paymentId }) {
-        state.requests.push(`document:${agencyId}:${reservationId}:${paymentId}`);
-        return documents.get(`${agencyId}:${reservationId}:${paymentId}`) ?? null;
+        state.requests.push(
+          `document:${agencyId}:${reservationId}:${paymentId}`,
+        );
+        return (
+          documents.get(`${agencyId}:${reservationId}:${paymentId}`) ?? null
+        );
       },
       async revokeAvailableDocument() {},
       async insertDocument(document) {
         state.inserts.push(document);
         if (input.failInsert) throw new Error("database unavailable");
         const key = `${document.agencyId}:${document.reservationId}:${document.paymentId}`;
-        if (documents.has(key)) throw Object.assign(new Error("duplicate"), { code: "23505" });
-        const row = { status: document.status, version: document.version, generatedAt: document.generatedAt } as const;
+        if (documents.has(key))
+          throw Object.assign(new Error("duplicate"), { code: "23505" });
+        const row = {
+          status: document.status,
+          version: document.version,
+          generatedAt: document.generatedAt,
+        } as const;
         documents.set(key, row);
         return row;
       },
@@ -6879,7 +9794,9 @@ function paymentReceiptFixture(input: Readonly<{
         if (input.failStorage) throw new Error("storage unavailable");
         state.uploads.push(path);
       },
-      async remove(path) { state.removals.push(path); },
+      async remove(path) {
+        state.removals.push(path);
+      },
     },
   });
   return { service, documents, state };
@@ -6897,33 +9814,78 @@ function paymentReceiptInput(input: Partial<Record<string, unknown>> = {}) {
 test("comprobante privado exige acceso administrativo y pago confirmado antes de generar", async () => {
   let queried = false;
   const unauthenticated = createPaymentReceiptService({
-    async resolveAccess() { return { status: "unauthenticated" } as const; },
-    repository: {
-      async findReservation() { queried = true; return null; },
-      async findPayment() { queried = true; return null; },
-      async listPayments() { queried = true; return []; },
-      async findExistingDocument() { queried = true; return null; },
-      async revokeAvailableDocument() { queried = true; },
-      async insertDocument() { queried = true; throw new Error(); },
+    async resolveAccess() {
+      return { status: "unauthenticated" } as const;
     },
-    storage: { async upload() { queried = true; }, async remove() { queried = true; } },
+    repository: {
+      async findReservation() {
+        queried = true;
+        return null;
+      },
+      async findPayment() {
+        queried = true;
+        return null;
+      },
+      async listPayments() {
+        queried = true;
+        return [];
+      },
+      async findExistingDocument() {
+        queried = true;
+        return null;
+      },
+      async revokeAvailableDocument() {
+        queried = true;
+      },
+      async insertDocument() {
+        queried = true;
+        throw new Error();
+      },
+    },
+    storage: {
+      async upload() {
+        queried = true;
+      },
+      async remove() {
+        queried = true;
+      },
+    },
     renderPdf: async () => new TextEncoder().encode("%PDF"),
   });
-  assert.deepEqual(await unauthenticated.ensure(paymentReceiptInput()), { status: "unauthenticated" });
+  assert.deepEqual(await unauthenticated.ensure(paymentReceiptInput()), {
+    status: "unauthenticated",
+  });
   assert.equal(queried, false);
 
   const invalid = paymentReceiptFixture();
-  assert.deepEqual(await invalid.service.ensure(paymentReceiptInput({ reservationId: "invalid" })), { status: "not_found" });
+  assert.deepEqual(
+    await invalid.service.ensure(
+      paymentReceiptInput({ reservationId: "invalid" }),
+    ),
+    { status: "not_found" },
+  );
   assert.deepEqual(invalid.state.requests, []);
   const pending = paymentReceiptFixture({ paymentStatus: "pending" });
-  assert.deepEqual(await pending.service.ensure(paymentReceiptInput()), { status: "payment_not_confirmed" });
+  assert.deepEqual(await pending.service.ensure(paymentReceiptInput()), {
+    status: "payment_not_confirmed",
+  });
   assert.equal(pending.state.uploads.length, 0);
   const cancelled = paymentReceiptFixture({ paymentStatus: "cancelled" });
-  assert.deepEqual(await cancelled.service.ensure(paymentReceiptInput()), { status: "payment_not_confirmed" });
+  assert.deepEqual(await cancelled.service.ensure(paymentReceiptInput()), {
+    status: "payment_not_confirmed",
+  });
   const customer = paymentReceiptFixture({ paymentSource: "customer" });
-  assert.equal((await customer.service.ensure(paymentReceiptInput())).status, "generated");
+  assert.equal(
+    (await customer.service.ensure(paymentReceiptInput())).status,
+    "generated",
+  );
   const crossTenant = paymentReceiptFixture();
-  assert.deepEqual(await crossTenant.service.ensure(paymentReceiptInput({ requestedAgencySlug: "crisenix" })), { status: "forbidden" });
+  assert.deepEqual(
+    await crossTenant.service.ensure(
+      paymentReceiptInput({ requestedAgencySlug: "crisenix" }),
+    ),
+    { status: "forbidden" },
+  );
   assert.deepEqual(crossTenant.state.requests, []);
 });
 
@@ -6938,17 +9900,28 @@ test("comprobante de pago usa ledger real, genera PDF privado e idempotente sin 
   const first = await fixture.service.ensure(paymentReceiptInput());
   assert.equal(first.status, "generated");
   assert.deepEqual(first.status === "generated" ? first.document : null, {
-    documentType: "payment_receipt", version: 1, generatedAt: TEST_NOW,
+    documentType: "payment_receipt",
+    version: 1,
+    generatedAt: TEST_NOW,
   });
   assert.equal(fixture.state.inserts.length, 1);
   assert.equal(fixture.state.inserts[0].mimeType, "application/pdf");
   assert.ok(fixture.state.inserts[0].fileSizeBytes > 0);
-  assert.match(fixture.state.inserts[0].storagePath, /^agency-furiver\/[0-9a-f-]+\/payment_receipt\/[0-9a-f-]+\/v1\.pdf$/i);
-  assert.equal(fixture.state.inserts[0].storagePath.includes("REFERENCIA"), false);
+  assert.match(
+    fixture.state.inserts[0].storagePath,
+    /^agency-furiver\/[0-9a-f-]+\/payment_receipt\/[0-9a-f-]+\/v1\.pdf$/i,
+  );
+  assert.equal(
+    fixture.state.inserts[0].storagePath.includes("REFERENCIA"),
+    false,
+  );
   assert.equal(fixture.state.pdfs[0].confirmedTotal, 9563.4);
   assert.equal(fixture.state.pdfs[0].remaining, 38253.6);
   assert.equal(fixture.state.pdfs[0].reference, "REFERENCIA-OPERATIVA");
-  assert.equal(JSON.stringify(financialReservationRow().snapshot), beforeSnapshot);
+  assert.equal(
+    JSON.stringify(financialReservationRow().snapshot),
+    beforeSnapshot,
+  );
   const serialized = JSON.stringify(first);
   assert.equal(serialized.includes("paymentId"), false);
   assert.equal(serialized.includes("storagePath"), false);
@@ -6973,13 +9946,17 @@ test("comprobante de pago usa ledger real, genera PDF privado e idempotente sin 
 
 test("comprobante privado recupera fallos de Storage o DB sin metadata falsa ni duplicados", async () => {
   const storageFailure = paymentReceiptFixture({ failStorage: true });
-  assert.deepEqual(await storageFailure.service.ensure(paymentReceiptInput()), { status: "document_storage_error" });
+  assert.deepEqual(await storageFailure.service.ensure(paymentReceiptInput()), {
+    status: "document_storage_error",
+  });
   assert.equal(storageFailure.state.inserts.length, 0);
 
   const databaseFailure = paymentReceiptFixture({ failInsert: true });
   await assert.rejects(
     databaseFailure.service.ensure(paymentReceiptInput()),
-    (error: unknown) => error instanceof PaymentReceiptError && !error.message.includes("database"),
+    (error: unknown) =>
+      error instanceof PaymentReceiptError &&
+      !error.message.includes("database"),
   );
   assert.equal(databaseFailure.state.uploads.length, 1);
   assert.equal(databaseFailure.state.removals.length, 1);
@@ -6989,13 +9966,28 @@ test("comprobante privado recupera fallos de Storage o DB sin metadata falsa ni 
     concurrent.service.ensure(paymentReceiptInput()),
     concurrent.service.ensure(paymentReceiptInput()),
   ]);
-  assert.deepEqual(results.map((result) => result.status).sort(), ["existing", "generated"]);
+  assert.deepEqual(results.map((result) => result.status).sort(), [
+    "existing",
+    "generated",
+  ]);
   assert.equal(concurrent.documents.size, 1);
   assert.ok(concurrent.state.removals.length <= 1);
-  const repository = readFileSync("lib/documents/payment-receipt-repository.ts", "utf8");
-  const storage = readFileSync("lib/documents/payment-receipt-storage.ts", "utf8");
-  assert.match(repository, /\.eq\("id", paymentId\)[\s\S]*\.eq\("reservation_id", reservationId\)[\s\S]*\.eq\("agency_id", agencyId\)/);
-  assert.match(repository, /\.eq\("reservation_id", reservationId\)[\s\S]*\.eq\("agency_id", agencyId\)[\s\S]*\.eq\("payment_id", paymentId\)/);
+  const repository = readFileSync(
+    "lib/documents/payment-receipt-repository.ts",
+    "utf8",
+  );
+  const storage = readFileSync(
+    "lib/documents/payment-receipt-storage.ts",
+    "utf8",
+  );
+  assert.match(
+    repository,
+    /\.eq\("id", paymentId\)[\s\S]*\.eq\("reservation_id", reservationId\)[\s\S]*\.eq\("agency_id", agencyId\)/,
+  );
+  assert.match(
+    repository,
+    /\.eq\("reservation_id", reservationId\)[\s\S]*\.eq\("agency_id", agencyId\)[\s\S]*\.eq\("payment_id", paymentId\)/,
+  );
   assert.match(storage, /upsert: false/);
   assert.equal(storage.includes("createSignedUrl"), false);
 });
@@ -7039,22 +10031,32 @@ test("el ciclo documental se ejecuta después del ledger y nunca revierte un pag
   assert.deepEqual(generated, [adminPaymentId]);
 
   const pending = manualPaymentFixture({
-    async afterConfirmedPayment() { throw new Error("No debe generar para pending"); },
+    async afterConfirmedPayment() {
+      throw new Error("No debe generar para pending");
+    },
   });
-  const pendingResult = await pending.service.create(manualPaymentInput({ initialStatus: "pending" }));
+  const pendingResult = await pending.service.create(
+    manualPaymentInput({ initialStatus: "pending" }),
+  );
   assert.equal(pendingResult.status, "created");
-  if (pendingResult.status === "created") assert.equal(pendingResult.documentStatus, undefined);
+  if (pendingResult.status === "created")
+    assert.equal(pendingResult.documentStatus, undefined);
 
   const failedDocument = manualPaymentFixture({
-    async afterConfirmedPayment() { throw new Error("storage unavailable"); },
+    async afterConfirmedPayment() {
+      throw new Error("storage unavailable");
+    },
   });
-  const failedResult = await failedDocument.service.create(manualPaymentInput());
+  const failedResult =
+    await failedDocument.service.create(manualPaymentInput());
   assert.equal(failedResult.status, "created");
-  if (failedResult.status === "created") assert.equal(failedResult.documentStatus, "document_error");
+  if (failedResult.status === "created")
+    assert.equal(failedResult.documentStatus, "document_error");
   assert.equal(failedDocument.rows[0].status, "confirmed");
   const retried = await failedDocument.service.create(manualPaymentInput());
   assert.equal(retried.status, "already_exists");
-  if (retried.status === "already_exists") assert.equal(retried.documentStatus, "document_error");
+  if (retried.status === "already_exists")
+    assert.equal(retried.documentStatus, "document_error");
 });
 
 test("transiciones exitosas reconcilian recibos y preservan la cancelación ante fallos documentales", async () => {
@@ -7066,89 +10068,193 @@ test("transiciones exitosas reconcilian recibos y preservan la cancelación ante
     },
   });
   const confirmed = await fixture.service.change({
-    requestedAgencySlug: "furiver", reservationId: customerDetailReservationId, paymentId: adminPaymentId, nextStatus: "confirmed",
+    requestedAgencySlug: "furiver",
+    reservationId: customerDetailReservationId,
+    paymentId: adminPaymentId,
+    nextStatus: "confirmed",
   });
-  assert.deepEqual(confirmed, { status: "updated", nextStatus: "confirmed", documentStatus: "ready" });
+  assert.deepEqual(confirmed, {
+    status: "updated",
+    nextStatus: "confirmed",
+    documentStatus: "ready",
+  });
   const cancelled = await fixture.service.change({
-    requestedAgencySlug: "furiver", reservationId: customerDetailReservationId, paymentId: adminPaymentId, nextStatus: "cancelled",
+    requestedAgencySlug: "furiver",
+    reservationId: customerDetailReservationId,
+    paymentId: adminPaymentId,
+    nextStatus: "cancelled",
   });
-  assert.deepEqual(cancelled, { status: "updated", nextStatus: "cancelled", documentStatus: "revoked" });
+  assert.deepEqual(cancelled, {
+    status: "updated",
+    nextStatus: "cancelled",
+    documentStatus: "revoked",
+  });
   assert.deepEqual(calls, ["confirmed", "cancelled"]);
 
   const pendingCancelled = adminPaymentStatusFixture({
-    async afterStatusChanged({ nextStatus }) { return nextStatus === "cancelled" ? "not_applicable" : "ready"; },
+    async afterStatusChanged({ nextStatus }) {
+      return nextStatus === "cancelled" ? "not_applicable" : "ready";
+    },
   });
   const noGeneration = await pendingCancelled.service.change({
-    requestedAgencySlug: "furiver", reservationId: customerDetailReservationId, paymentId: adminPaymentId, nextStatus: "cancelled",
+    requestedAgencySlug: "furiver",
+    reservationId: customerDetailReservationId,
+    paymentId: adminPaymentId,
+    nextStatus: "cancelled",
   });
-  assert.deepEqual(noGeneration, { status: "updated", nextStatus: "cancelled", documentStatus: "not_applicable" });
+  assert.deepEqual(noGeneration, {
+    status: "updated",
+    nextStatus: "cancelled",
+    documentStatus: "not_applicable",
+  });
 
   const documentFailure = adminPaymentStatusFixture({
-    async afterStatusChanged() { throw new Error("document database failure"); },
+    async afterStatusChanged() {
+      throw new Error("document database failure");
+    },
   });
   const failureResult = await documentFailure.service.change({
-    requestedAgencySlug: "furiver", reservationId: customerDetailReservationId, paymentId: adminPaymentId, nextStatus: "confirmed",
+    requestedAgencySlug: "furiver",
+    reservationId: customerDetailReservationId,
+    paymentId: adminPaymentId,
+    nextStatus: "confirmed",
   });
-  assert.deepEqual(failureResult, { status: "updated", nextStatus: "confirmed", documentStatus: "document_error" });
+  assert.deepEqual(failureResult, {
+    status: "updated",
+    nextStatus: "confirmed",
+    documentStatus: "document_error",
+  });
   assert.equal(documentFailure.row.status, "confirmed");
-  assert.equal(canTransitionManualPaymentStatus("cancelled", "confirmed"), false);
+  assert.equal(
+    canTransitionManualPaymentStatus("cancelled", "confirmed"),
+    false,
+  );
 });
 
 test("revocación de recibo conserva metadata y PDF, exige pago cancelado y aislamiento administrativo", async () => {
   const access = adminAccessFixture({ memberships: [adminMembership()] });
-  const state = { paymentStatus: "cancelled", document: "available" as "available" | "revoked" | null, updates: 0 };
+  const state = {
+    paymentStatus: "cancelled",
+    document: "available" as "available" | "revoked" | null,
+    updates: 0,
+  };
   const service = createPaymentReceiptRevocationService({
     resolveAccess: access.resolver.resolve,
     repository: {
       async findReservation({ agencyId, reservationId }) {
-        return agencyId === "agency-furiver" && reservationId === customerDetailReservationId;
+        return (
+          agencyId === "agency-furiver" &&
+          reservationId === customerDetailReservationId
+        );
       },
-      async findPayment({ paymentId }) { return paymentId === adminPaymentId ? { status: state.paymentStatus } : null; },
+      async findPayment({ paymentId }) {
+        return paymentId === adminPaymentId
+          ? { status: state.paymentStatus }
+          : null;
+      },
       async revokeAvailableReceipts() {
         if (state.document !== "available") return 0;
         state.document = "revoked";
         state.updates += 1;
         return 1;
       },
-      async hasReceipt() { return state.document !== null; },
+      async hasReceipt() {
+        return state.document !== null;
+    },
     },
   });
-  assert.deepEqual(await service.revoke(paymentReceiptInput()), { status: "revoked" });
+  assert.deepEqual(await service.revoke(paymentReceiptInput()), {
+    status: "revoked",
+  });
   assert.equal(state.document, "revoked");
   assert.equal(state.updates, 1);
-  assert.deepEqual(await service.revoke(paymentReceiptInput()), { status: "already_revoked" });
+  assert.deepEqual(await service.revoke(paymentReceiptInput()), {
+    status: "already_revoked",
+  });
   state.paymentStatus = "confirmed";
-  assert.deepEqual(await service.revoke(paymentReceiptInput()), { status: "payment_not_cancelled" });
+  assert.deepEqual(await service.revoke(paymentReceiptInput()), {
+    status: "payment_not_cancelled",
+  });
   assert.equal(state.document, "revoked");
-  assert.deepEqual(await service.revoke(paymentReceiptInput({ requestedAgencySlug: "crisenix" })), { status: "forbidden" });
+  assert.deepEqual(
+    await service.revoke(
+      paymentReceiptInput({ requestedAgencySlug: "crisenix" }),
+    ),
+    { status: "forbidden" },
+  );
 
   const failing = createPaymentReceiptRevocationService({
     resolveAccess: access.resolver.resolve,
     repository: {
-      async findReservation() { throw new Error("SQL private path"); },
-      async findPayment() { return null; }, async revokeAvailableReceipts() { return 0; }, async hasReceipt() { return false; },
+      async findReservation() {
+        throw new Error("SQL private path");
+      },
+      async findPayment() {
+        return null;
+      },
+      async revokeAvailableReceipts() {
+        return 0;
+      },
+      async hasReceipt() {
+        return false;
+      },
     },
   });
-  await assert.rejects(failing.revoke(paymentReceiptInput()), (error: unknown) => error instanceof PaymentReceiptRevocationError && !error.message.includes("SQL"));
-  const revocationRepository = readFileSync("lib/documents/payment-receipt-revocation-repository.ts", "utf8");
+  await assert.rejects(
+    failing.revoke(paymentReceiptInput()),
+    (error: unknown) =>
+      error instanceof PaymentReceiptRevocationError &&
+      !error.message.includes("SQL"),
+  );
+  const revocationRepository = readFileSync(
+    "lib/documents/payment-receipt-revocation-repository.ts",
+    "utf8",
+  );
   assert.match(revocationRepository, /\.update\(\{ status: "revoked" \}\)/);
   assert.equal(revocationRepository.includes("storage"), false);
   assert.equal(revocationRepository.includes("remove("), false);
 });
 
 test("reintento de recibo sólo se presenta para pagos confirmed sin receipt vigente", () => {
-  const page = readFileSync("app/admin/[agencySlug]/reservaciones/[reservationId]/page.tsx", "utf8");
-  const action = readFileSync("app/admin/[agencySlug]/reservaciones/[reservationId]/payment-actions.ts", "utf8");
-  const statusAction = readFileSync("app/admin/[agencySlug]/reservaciones/[reservationId]/payment-status-actions.ts", "utf8");
-  const control = readFileSync("app/admin/[agencySlug]/reservaciones/[reservationId]/payment-receipt-control.tsx", "utf8");
-  const historyRepository = readFileSync("lib/payments/admin-payment-list-repository.ts", "utf8");
-  assert.match(page, /payment\.status === "confirmed" && payment\.receiptStatus !== "available"/);
+  const page = readFileSync(
+    "app/admin/[agencySlug]/reservaciones/[reservationId]/page.tsx",
+    "utf8",
+  );
+  const action = readFileSync(
+    "app/admin/[agencySlug]/reservaciones/[reservationId]/payment-actions.ts",
+    "utf8",
+  );
+  const statusAction = readFileSync(
+    "app/admin/[agencySlug]/reservaciones/[reservationId]/payment-status-actions.ts",
+    "utf8",
+  );
+  const control = readFileSync(
+    "app/admin/[agencySlug]/reservaciones/[reservationId]/payment-receipt-control.tsx",
+    "utf8",
+  );
+  const historyRepository = readFileSync(
+    "lib/payments/admin-payment-list-repository.ts",
+    "utf8",
+  );
+  assert.match(
+    page,
+    /payment\.status === "confirmed" && payment\.receiptStatus !== "available"/,
+  );
   assert.match(page, /Comprobante revocado/);
   assert.match(action, /ensurePaymentReceiptDocument\(/);
-  assert.match(action, /El comprobante solo puede generarse para un pago confirmado/);
-  assert.match(statusAction, /Pago confirmado\. El comprobante no pudo generarse/);
+  assert.match(
+    action,
+    /El comprobante solo puede generarse para un pago confirmado/,
+  );
+  assert.match(
+    statusAction,
+    /Pago confirmado\. El comprobante no pudo generarse/,
+  );
   assert.match(control, /Generar comprobante/);
-  assert.match(historyRepository, /from\("reservation_documents"\)[\s\S]*\.eq\("reservation_id", reservationId\)[\s\S]*\.eq\("agency_id", agencyId\)/);
+  assert.match(
+    historyRepository,
+    /from\("reservation_documents"\)[\s\S]*\.eq\("reservation_id", reservationId\)[\s\S]*\.eq\("agency_id", agencyId\)/,
+  );
   assert.equal(action.includes("storagePath"), false);
   assert.equal(action.includes("signedUrl"), false);
 });
@@ -7156,39 +10262,146 @@ test("reintento de recibo sólo se presenta para pagos confirmed sin receipt vig
 test("documentos cliente se autorizan antes de listar, excluyen revoked y proyectan solamente datos seguros", async () => {
   let queried = false;
   const unauthenticated = createCustomerDocumentListService({
-    async resolveAccess() { return { status: "unauthenticated" } as const; },
+    async resolveAccess() {
+      return { status: "unauthenticated" } as const;
+    },
     repository: {
-      async findLinkedReservation() { queried = true; return false; }, async listAvailableDocuments() { queried = true; return []; }, async findPaymentContexts() { queried = true; return new Map(); },
+      async findLinkedReservation() {
+        queried = true;
+        return false;
+      },
+      async listAvailableDocuments() {
+        queried = true;
+        return [];
+      },
+      async findPaymentContexts() {
+        queried = true;
+        return new Map();
+      },
     },
   });
-  assert.deepEqual(await unauthenticated.list({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId }), { status: "unauthenticated" });
+  assert.deepEqual(
+    await unauthenticated.list({
+      requestedAgencySlug: "furiver",
+      reservationId: customerDetailReservationId,
+    }),
+    { status: "unauthenticated" },
+  );
   assert.equal(queried, false);
   const access = customerAccessFixture({ accounts: [customerAccount()] });
   const list = createCustomerDocumentListService({
     resolveAccess: access.resolver.resolve,
     repository: {
-      async findLinkedReservation({ customerAccountId, agencyId, reservationId }) { return customerAccountId === "customer-furiver" && agencyId === "agency-furiver" && reservationId === customerDetailReservationId; },
+      async findLinkedReservation({
+        customerAccountId,
+        agencyId,
+        reservationId,
+      }) {
+        return (
+          customerAccountId === "customer-furiver" &&
+          agencyId === "agency-furiver" &&
+          reservationId === customerDetailReservationId
+        );
+      },
       async listAvailableDocuments() {
         return [
-          { id: paymentReceiptDocumentId, documentType: "payment_receipt", version: 1, generatedAt: "2026-08-20T12:00:00.000Z", paymentId: adminPaymentId },
-          { id: "5bd3cecf-8f8d-4e55-aa98-16fe38e4e8d1", documentType: "ticket", version: 1, generatedAt: "2026-08-19T12:00:00.000Z", paymentId: null, reservationTravelerId: "74cf2e61-23bd-4d4a-85ca-e1d7a36fc183" },
+          {
+            id: paymentReceiptDocumentId,
+            documentType: "payment_receipt",
+            version: 1,
+            generatedAt: "2026-08-20T12:00:00.000Z",
+            paymentId: adminPaymentId,
+          },
+          {
+            id: "5bd3cecf-8f8d-4e55-aa98-16fe38e4e8d1",
+            documentType: "ticket",
+            version: 1,
+            generatedAt: "2026-08-19T12:00:00.000Z",
+            paymentId: null,
+            reservationTravelerId: "74cf2e61-23bd-4d4a-85ca-e1d7a36fc183",
+          },
         ];
       },
-      async findPaymentContexts() { return new Map([[adminPaymentId, { id: adminPaymentId, amount: 9563.4, currency: "MXN", paidAt: "2026-08-20T11:00:00.000Z" }]]); },
-      async findTicketContexts() { return new Map([["74cf2e61-23bd-4d4a-85ca-e1d7a36fc183", { id: "74cf2e61-23bd-4d4a-85ca-e1d7a36fc183", position: 1, travelerType: "adult", firstName: "Ana", lastName: "Pérez" }]]); },
+      async findPaymentContexts() {
+        return new Map([
+          [
+            adminPaymentId,
+            {
+              id: adminPaymentId,
+              amount: 9563.4,
+              currency: "MXN",
+              paidAt: "2026-08-20T11:00:00.000Z",
+            },
+          ],
+        ]);
+      },
+      async findTicketContexts() {
+        return new Map([
+          [
+            "74cf2e61-23bd-4d4a-85ca-e1d7a36fc183",
+            {
+              id: "74cf2e61-23bd-4d4a-85ca-e1d7a36fc183",
+              position: 1,
+              travelerType: "adult",
+              firstName: "Ana",
+              lastName: "Pérez",
+            },
+          ],
+        ]);
+      },
     },
   });
-  const result = await list.list({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId });
+  const result = await list.list({
+    requestedAgencySlug: "furiver",
+    reservationId: customerDetailReservationId,
+  });
   assert.equal(result.status, "authorized");
   if (result.status === "authorized") {
-    assert.deepEqual(result.documents.map((document) => document.documentType), ["ticket", "payment_receipt"]);
-    assert.deepEqual(result.documents[1].paymentContext, { amount: 9563.4, currency: "MXN", paidAt: "2026-08-20T11:00:00.000Z" });
+    assert.deepEqual(
+      result.documents.map((document) => document.documentType),
+      ["ticket", "payment_receipt"],
+    );
+    assert.deepEqual(result.documents[1].paymentContext, {
+      amount: 9563.4,
+      currency: "MXN",
+      paidAt: "2026-08-20T11:00:00.000Z",
+    });
     const serialized = JSON.stringify(result.documents);
-    assert.equal(serialized.includes("storagePath"), false); assert.equal(serialized.includes("paymentId"), false); assert.equal(serialized.includes("reference"), false); assert.equal(serialized.includes("signedUrl"), false);
+    assert.equal(serialized.includes("storagePath"), false);
+    assert.equal(serialized.includes("paymentId"), false);
+    assert.equal(serialized.includes("reference"), false);
+    assert.equal(serialized.includes("signedUrl"), false);
   }
-  assert.deepEqual(await list.list({ requestedAgencySlug: "crisenix", reservationId: customerDetailReservationId }), { status: "forbidden" });
-  const suspended = createCustomerDocumentListService({ resolveAccess: customerAccessFixture({ accounts: [customerAccount({ status: "suspended" })] }).resolver.resolve, repository: { async findLinkedReservation() { throw new Error(); }, async listAvailableDocuments() { return []; }, async findPaymentContexts() { return new Map(); } } });
-  assert.deepEqual(await suspended.list({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId }), { status: "forbidden" });
+  assert.deepEqual(
+    await list.list({
+      requestedAgencySlug: "crisenix",
+      reservationId: customerDetailReservationId,
+    }),
+    { status: "forbidden" },
+  );
+  const suspended = createCustomerDocumentListService({
+    resolveAccess: customerAccessFixture({
+      accounts: [customerAccount({ status: "suspended" })],
+    }).resolver.resolve,
+    repository: {
+      async findLinkedReservation() {
+        throw new Error();
+      },
+      async listAvailableDocuments() {
+        return [];
+      },
+      async findPaymentContexts() {
+        return new Map();
+      },
+    },
+  });
+  assert.deepEqual(
+    await suspended.list({
+      requestedAgencySlug: "furiver",
+      reservationId: customerDetailReservationId,
+    }),
+    { status: "forbidden" },
+  );
 });
 
 test("apertura de documento reautoriza, usa path del servidor y URL temporal de 60 segundos", async () => {
@@ -7197,112 +10410,469 @@ test("apertura de documento reautoriza, usa path del servidor y URL temporal de 
   const service = createCustomerDocumentAccessService({
     resolveAccess: access.resolver.resolve,
     repository: {
-      async findLinkedReservation({ customerAccountId, agencyId, reservationId }) { requests.push(`link:${customerAccountId}:${agencyId}:${reservationId}`); return true; },
-      async findAvailableDocument({ agencyId, reservationId, documentKey }) { requests.push(`document:${agencyId}:${reservationId}:${documentKey}`); return documentKey === paymentReceiptDocumentId ? { storagePath: "agency-furiver/private/receipt.pdf" } : null; },
+      async findLinkedReservation({
+        customerAccountId,
+        agencyId,
+        reservationId,
+      }) {
+        requests.push(`link:${customerAccountId}:${agencyId}:${reservationId}`);
+        return true;
+      },
+      async findAvailableDocument({ agencyId, reservationId, documentKey }) {
+        requests.push(`document:${agencyId}:${reservationId}:${documentKey}`);
+        return documentKey === paymentReceiptDocumentId
+          ? { storagePath: "agency-furiver/private/receipt.pdf" }
+          : null;
+      },
     },
-    storage: { async createSignedReadUrl({ path, expiresInSeconds }) { requests.push(`storage:${expiresInSeconds}`); assert.equal(path, "agency-furiver/private/receipt.pdf"); return "https://storage.example/temporary"; } },
+    storage: {
+      async createSignedReadUrl({ path, expiresInSeconds }) {
+        requests.push(`storage:${expiresInSeconds}`);
+        assert.equal(path, "agency-furiver/private/receipt.pdf");
+        return "https://storage.example/temporary";
+      },
+    },
   });
-  const ready = await service.get({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId, documentKey: paymentReceiptDocumentId });
-  assert.deepEqual(ready, { status: "ready", signedUrl: "https://storage.example/temporary" });
-  assert.deepEqual(requests.map((item) => item.split(":")[0]), ["link", "document", "storage"]);
-  const revoked = createCustomerDocumentAccessService({ resolveAccess: access.resolver.resolve, repository: { async findLinkedReservation() { return true; }, async findAvailableDocument() { return null; } }, storage: { async createSignedReadUrl() { throw new Error("must not sign revoked"); } } });
-  assert.deepEqual(await revoked.get({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId, documentKey: paymentReceiptDocumentId }), { status: "unavailable" });
-  const failing = createCustomerDocumentAccessService({ resolveAccess: access.resolver.resolve, repository: { async findLinkedReservation() { throw new Error("SQL path"); }, async findAvailableDocument() { return null; } }, storage: { async createSignedReadUrl() { return ""; } } });
-  await assert.rejects(failing.get({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId, documentKey: paymentReceiptDocumentId }), (error: unknown) => error instanceof CustomerDocumentAccessError && !error.message.includes("SQL"));
+  const ready = await service.get({
+    requestedAgencySlug: "furiver",
+    reservationId: customerDetailReservationId,
+    documentKey: paymentReceiptDocumentId,
+  });
+  assert.deepEqual(ready, {
+    status: "ready",
+    signedUrl: "https://storage.example/temporary",
+  });
+  assert.deepEqual(
+    requests.map((item) => item.split(":")[0]),
+    ["link", "document", "storage"],
+  );
+  const revoked = createCustomerDocumentAccessService({
+    resolveAccess: access.resolver.resolve,
+    repository: {
+      async findLinkedReservation() {
+        return true;
+      },
+      async findAvailableDocument() {
+        return null;
+      },
+    },
+    storage: {
+      async createSignedReadUrl() {
+        throw new Error("must not sign revoked");
+      },
+    },
+  });
+  assert.deepEqual(
+    await revoked.get({
+      requestedAgencySlug: "furiver",
+      reservationId: customerDetailReservationId,
+      documentKey: paymentReceiptDocumentId,
+    }),
+    { status: "unavailable" },
+  );
+  const failing = createCustomerDocumentAccessService({
+    resolveAccess: access.resolver.resolve,
+    repository: {
+      async findLinkedReservation() {
+        throw new Error("SQL path");
+      },
+      async findAvailableDocument() {
+        return null;
+      },
+    },
+    storage: {
+      async createSignedReadUrl() {
+        return "";
+      },
+    },
+  });
+  await assert.rejects(
+    failing.get({
+      requestedAgencySlug: "furiver",
+      reservationId: customerDetailReservationId,
+      documentKey: paymentReceiptDocumentId,
+    }),
+    (error: unknown) =>
+      error instanceof CustomerDocumentAccessError &&
+      !error.message.includes("SQL"),
+  );
 });
 
 test("detalle cliente muestra documentos disponibles y apertura bajo demanda sin exponer rutas", () => {
-  const page = readFileSync("app/cuenta/[agencySlug]/reservaciones/[reservationId]/page.tsx", "utf8");
-  const action = readFileSync("app/cuenta/[agencySlug]/reservaciones/[reservationId]/document-actions.ts", "utf8");
-  const button = readFileSync("app/cuenta/[agencySlug]/reservaciones/[reservationId]/document-open-button.tsx", "utf8");
-  const listRepository = readFileSync("lib/documents/customer-document-list-repository.ts", "utf8");
-  const accessRepository = readFileSync("lib/documents/customer-document-access-repository.ts", "utf8");
-  const storage = readFileSync("lib/documents/customer-document-access-storage.ts", "utf8");
-  assert.match(page, /<h2 id="customer-documents-title">Documentos/); assert.match(page, /Documento no fiscal/); assert.match(page, /Aún no hay documentos disponibles/);
-  assert.match(listRepository, /\.eq\("reservation_id", reservationId\)\.eq\("agency_id", agencyId\)\.eq\("status", "available"\)/);
-  assert.match(accessRepository, /\.eq\("id", documentKey\)[\s\S]*\.eq\("reservation_id", reservationId\)[\s\S]*\.eq\("agency_id", agencyId\)[\s\S]*\.eq\("status", "available"\)/);
-  assert.match(storage, /CUSTOMER_DOCUMENTS_BUCKET = "reservation-documents"/); assert.match(storage, /createSignedUrl\(path, expiresInSeconds\)/); assert.match(button, /noopener,noreferrer/);
-  assert.equal(action.includes("export const"), false); assert.equal(action.includes("storagePath"), false); assert.equal(page.includes("storagePath"), false); assert.equal(page.includes("signedUrl"), false);
+  const page = readFileSync(
+    "app/cuenta/[agencySlug]/reservaciones/[reservationId]/page.tsx",
+    "utf8",
+  );
+  const action = readFileSync(
+    "app/cuenta/[agencySlug]/reservaciones/[reservationId]/document-actions.ts",
+    "utf8",
+  );
+  const button = readFileSync(
+    "app/cuenta/[agencySlug]/reservaciones/[reservationId]/document-open-button.tsx",
+    "utf8",
+  );
+  const listRepository = readFileSync(
+    "lib/documents/customer-document-list-repository.ts",
+    "utf8",
+  );
+  const accessRepository = readFileSync(
+    "lib/documents/customer-document-access-repository.ts",
+    "utf8",
+  );
+  const storage = readFileSync(
+    "lib/documents/customer-document-access-storage.ts",
+    "utf8",
+  );
+  assert.match(page, /<h2 id="customer-documents-title">Documentos/);
+  assert.match(page, /Documento no fiscal/);
+  assert.match(page, /Aún no hay documentos disponibles/);
+  assert.match(
+    listRepository,
+    /\.eq\("reservation_id", reservationId\)\.eq\("agency_id", agencyId\)\.eq\("status", "available"\)/,
+  );
+  assert.match(
+    accessRepository,
+    /\.eq\("id", documentKey\)[\s\S]*\.eq\("reservation_id", reservationId\)[\s\S]*\.eq\("agency_id", agencyId\)[\s\S]*\.eq\("status", "available"\)/,
+  );
+  assert.match(storage, /CUSTOMER_DOCUMENTS_BUCKET = "reservation-documents"/);
+  assert.match(storage, /createSignedUrl\(path, expiresInSeconds\)/);
+  assert.match(button, /noopener,noreferrer/);
+  assert.equal(action.includes("export const"), false);
+  assert.equal(action.includes("storagePath"), false);
+  assert.equal(page.includes("storagePath"), false);
+  assert.equal(page.includes("signedUrl"), false);
 });
 
 test("configuración contractual administrativa aísla la agencia, normaliza perfil y versiona borradores en servidor", async () => {
   const access = adminAccessFixture({ memberships: [adminMembership()] });
-  const records: { profiles: unknown[]; drafts: unknown[] } = { profiles: [], drafts: [] };
+  const records: { profiles: unknown[]; drafts: unknown[] } = {
+    profiles: [],
+    drafts: [],
+  };
   const service = createAdminContractSettingsService({
     resolveAccess: access.resolver.resolve,
     repository: {
-      async findLegalProfile() { return null; }, async listTemplates() { return []; },
-      async upsertLegalProfile(input) { records.profiles.push(input); },
-      async getMaxVersion() { return records.drafts.length; },
-      async insertDraft(input) { records.drafts.push(input); },
-      async findTemplate() { return null; }, async updateDraft() { return false; },
+      async findLegalProfile() {
+        return null;
+      },
+      async listTemplates() {
+        return [];
+      },
+      async upsertLegalProfile(input) {
+        records.profiles.push(input);
+      },
+      async getMaxVersion() {
+        return records.drafts.length;
+      },
+      async insertDraft(input) {
+        records.drafts.push(input);
+      },
+      async findTemplate() {
+        return null;
+      },
+      async updateDraft() {
+        return false;
+      },
     },
   });
   const settings = await service.get({ requestedAgencySlug: "furiver" });
   assert.equal(settings.status, "authorized");
-  if (settings.status === "authorized") assert.deepEqual(settings.settings, { legalProfile: null, templates: [] });
-  const saved = await service.saveLegalProfile({ requestedAgencySlug: "furiver", legalName: "  Agencia Real  ", taxId: " ", legalAddress: "", supportEmail: "atencion@example.com ", supportPhone: " ", jurisdiction: " México " });
+  if (settings.status === "authorized")
+    assert.deepEqual(settings.settings, { legalProfile: null, templates: [] });
+  const saved = await service.saveLegalProfile({
+    requestedAgencySlug: "furiver",
+    legalName: "  Agencia Real  ",
+    taxId: " ",
+    legalAddress: "",
+    supportEmail: "atencion@example.com ",
+    supportPhone: " ",
+    jurisdiction: " México ",
+  });
   assert.deepEqual(saved, { status: "saved" });
-  assert.deepEqual(records.profiles[0], { agencyId: "agency-furiver", legalName: "Agencia Real", taxId: null, legalAddress: null, supportEmail: "atencion@example.com", supportPhone: null, jurisdiction: "México" });
-  assert.equal((await service.saveLegalProfile({ requestedAgencySlug: "furiver", legalName: "X", taxId: "", legalAddress: "", supportEmail: "not-an-email", supportPhone: "", jurisdiction: "" })).status, "invalid_input");
-  const draftInput = { requestedAgencySlug: "furiver", title: "  Términos  ", introductoryText: "", termsText: " Condiciones ", paymentPolicyText: "", cancellationPolicyText: "", travelerResponsibilityText: "", jurisdictionText: "", effectiveFrom: "2026-09-01" };
-  assert.deepEqual(await service.createDraft(draftInput), { status: "created", version: 1 });
-  assert.deepEqual(await service.createDraft(draftInput), { status: "created", version: 2 });
-  assert.deepEqual(records.drafts.map((draft) => ({ version: (draft as { version: number }).version, agencyId: (draft as { agencyId: string }).agencyId, createdByUserId: (draft as { createdByUserId: string }).createdByUserId, title: (draft as { title: string }).title })), [{ version: 1, agencyId: "agency-furiver", createdByUserId: "user-verified", title: "Términos" }, { version: 2, agencyId: "agency-furiver", createdByUserId: "user-verified", title: "Términos" }]);
-  assert.deepEqual(await service.createDraft({ ...draftInput, requestedAgencySlug: "crisenix" }), { status: "forbidden" });
-  assert.equal((await service.createDraft({ ...draftInput, title: "<b>HTML</b>" })).status, "invalid_input");
+  assert.deepEqual(records.profiles[0], {
+    agencyId: "agency-furiver",
+    legalName: "Agencia Real",
+    taxId: null,
+    legalAddress: null,
+    supportEmail: "atencion@example.com",
+    supportPhone: null,
+    jurisdiction: "México",
+  });
+  assert.equal(
+    (
+      await service.saveLegalProfile({
+        requestedAgencySlug: "furiver",
+        legalName: "X",
+        taxId: "",
+        legalAddress: "",
+        supportEmail: "not-an-email",
+        supportPhone: "",
+        jurisdiction: "",
+      })
+    ).status,
+    "invalid_input",
+  );
+  const draftInput = {
+    requestedAgencySlug: "furiver",
+    title: "  Términos  ",
+    introductoryText: "",
+    termsText: " Condiciones ",
+    paymentPolicyText: "",
+    cancellationPolicyText: "",
+    travelerResponsibilityText: "",
+    jurisdictionText: "",
+    effectiveFrom: "2026-09-01",
+  };
+  assert.deepEqual(await service.createDraft(draftInput), {
+    status: "created",
+    version: 1,
+  });
+  assert.deepEqual(await service.createDraft(draftInput), {
+    status: "created",
+    version: 2,
+  });
+  assert.deepEqual(
+    records.drafts.map((draft) => ({
+      version: (draft as { version: number }).version,
+      agencyId: (draft as { agencyId: string }).agencyId,
+      createdByUserId: (draft as { createdByUserId: string }).createdByUserId,
+      title: (draft as { title: string }).title,
+    })),
+    [
+      {
+        version: 1,
+        agencyId: "agency-furiver",
+        createdByUserId: "user-verified",
+        title: "Términos",
+      },
+      {
+        version: 2,
+        agencyId: "agency-furiver",
+        createdByUserId: "user-verified",
+        title: "Términos",
+      },
+    ],
+  );
+  assert.deepEqual(
+    await service.createDraft({
+      ...draftInput,
+      requestedAgencySlug: "crisenix",
+    }),
+    { status: "forbidden" },
+  );
+  assert.equal(
+    (await service.createDraft({ ...draftInput, title: "<b>HTML</b>" })).status,
+    "invalid_input",
+  );
 });
 
 test("solo borradores contractuales pueden editarse y conflictos de versión se reintentan sin sobrescribir", async () => {
   const access = adminAccessFixture({ memberships: [adminMembership()] });
-  const draft = { templateKey: "d2175825-1085-4854-a4b5-cd2d4e521f5c", version: 1, status: "draft" as const, title: "v1", introductoryText: null, termsText: "texto", paymentPolicyText: null, cancellationPolicyText: null, travelerResponsibilityText: null, jurisdictionText: null, effectiveFrom: null, activatedAt: null, createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" };
-  let updates = 0; let attempts = 0;
+  const draft = {
+    templateKey: "d2175825-1085-4854-a4b5-cd2d4e521f5c",
+    version: 1,
+    status: "draft" as const,
+    title: "v1",
+    introductoryText: null,
+    termsText: "texto",
+    paymentPolicyText: null,
+    cancellationPolicyText: null,
+    travelerResponsibilityText: null,
+    jurisdictionText: null,
+    effectiveFrom: null,
+    activatedAt: null,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+  };
+  let updates = 0;
+  let attempts = 0;
   const service = createAdminContractSettingsService({
     resolveAccess: access.resolver.resolve,
     repository: {
-      async findLegalProfile() { return null; }, async listTemplates() { return []; }, async upsertLegalProfile() {},
-      async getMaxVersion() { return 4; },
-      async insertDraft() { attempts += 1; if (attempts === 1) { const error = new Error() as Error & { code: string }; error.code = "23505"; throw error; } },
-      async findTemplate({ templateKey }) { return templateKey === draft.templateKey ? draft : { ...draft, status: "active" as const }; },
-      async updateDraft(input) { updates += 1; return input.templateKey === draft.templateKey; },
+      async findLegalProfile() {
+        return null;
+      },
+      async listTemplates() {
+        return [];
+      },
+      async upsertLegalProfile() {},
+      async getMaxVersion() {
+        return 4;
+      },
+      async insertDraft() {
+        attempts += 1;
+        if (attempts === 1) {
+          const error = new Error() as Error & { code: string };
+          error.code = "23505";
+          throw error;
+        }
+      },
+      async findTemplate({ templateKey }) {
+        return templateKey === draft.templateKey
+          ? draft
+          : { ...draft, status: "active" as const };
+      },
+      async updateDraft(input) {
+        updates += 1;
+        return input.templateKey === draft.templateKey;
+      },
     },
   });
-  const values = { requestedAgencySlug: "furiver", templateKey: draft.templateKey, title: "actualizado", introductoryText: "", termsText: "texto actualizado", paymentPolicyText: "", cancellationPolicyText: "", travelerResponsibilityText: "", jurisdictionText: "", effectiveFrom: "" };
-  assert.deepEqual(await service.updateDraft(values), { status: "updated" }); assert.equal(updates, 1);
-  assert.deepEqual(await service.updateDraft({ ...values, templateKey: "c2175825-1085-4854-a4b5-cd2d4e521f5c" }), { status: "immutable_version" });
+  const values = {
+    requestedAgencySlug: "furiver",
+    templateKey: draft.templateKey,
+    title: "actualizado",
+    introductoryText: "",
+    termsText: "texto actualizado",
+    paymentPolicyText: "",
+    cancellationPolicyText: "",
+    travelerResponsibilityText: "",
+    jurisdictionText: "",
+    effectiveFrom: "",
+  };
+  assert.deepEqual(await service.updateDraft(values), { status: "updated" });
+  assert.equal(updates, 1);
+  assert.deepEqual(
+    await service.updateDraft({
+      ...values,
+      templateKey: "c2175825-1085-4854-a4b5-cd2d4e521f5c",
+    }),
+    { status: "immutable_version" },
+  );
   const { templateKey: _templateKey, ...newDraftValues } = values;
-  assert.deepEqual(await service.createDraft(newDraftValues), { status: "created", version: 5 }); assert.equal(attempts, 2);
-  const failing = createAdminContractSettingsService({ resolveAccess: access.resolver.resolve, repository: { async findLegalProfile() { throw new Error("SQL"); }, async listTemplates() { return []; }, async upsertLegalProfile() {}, async getMaxVersion() { return 0; }, async insertDraft() {}, async findTemplate() { return null; }, async updateDraft() { return false; } } });
-  await assert.rejects(failing.get({ requestedAgencySlug: "furiver" }), (error: unknown) => error instanceof AdminContractSettingsError && !error.message.includes("SQL"));
+  assert.deepEqual(await service.createDraft(newDraftValues), {
+    status: "created",
+    version: 5,
+  });
+  assert.equal(attempts, 2);
+  const failing = createAdminContractSettingsService({
+    resolveAccess: access.resolver.resolve,
+    repository: {
+      async findLegalProfile() {
+        throw new Error("SQL");
+      },
+      async listTemplates() {
+        return [];
+      },
+      async upsertLegalProfile() {},
+      async getMaxVersion() {
+        return 0;
+      },
+      async insertDraft() {},
+      async findTemplate() {
+        return null;
+      },
+      async updateDraft() {
+        return false;
+      },
+    },
+  });
+  await assert.rejects(
+    failing.get({ requestedAgencySlug: "furiver" }),
+    (error: unknown) =>
+      error instanceof AdminContractSettingsError &&
+      !error.message.includes("SQL"),
+  );
 });
 
 test("ruta y acciones de contratos usan comandos server-only sin activar ni exponer IDs", () => {
-  const page = readFileSync("app/admin/[agencySlug]/configuracion/contratos/page.tsx", "utf8");
-  const forms = readFileSync("app/admin/[agencySlug]/configuracion/contratos/contract-settings-forms.tsx", "utf8");
-  const actions = readFileSync("app/admin/[agencySlug]/configuracion/contratos/contract-actions.ts", "utf8");
-  const core = readFileSync("lib/contracts/admin-contract-settings-core.ts", "utf8");
-  const repository = readFileSync("lib/contracts/admin-contract-settings-repository.ts", "utf8");
-  assert.match(page, /Datos legales de la agencia/); assert.match(page, /Plantillas de contrato/); assert.match(forms, /Crear nueva versión/);
-  assert.match(core, /status !== "draft"/); assert.match(core, /for \(let attempt = 0; attempt < 3/); assert.match(repository, /created_by_user_id: input\.createdByUserId/);
-  assert.equal(actions.includes("export const"), false); assert.equal(/export\s+(?!async function|type\b)/.test(actions), false); assert.equal(page.includes("templateKey}"), false);
-  assert.equal(forms.includes(">Activar<"), false); assert.equal(repository.includes("reservation_documents"), false);
+  const page = readFileSync(
+    "app/admin/[agencySlug]/configuracion/contratos/page.tsx",
+    "utf8",
+  );
+  const forms = readFileSync(
+    "app/admin/[agencySlug]/configuracion/contratos/contract-settings-forms.tsx",
+    "utf8",
+  );
+  const actions = readFileSync(
+    "app/admin/[agencySlug]/configuracion/contratos/contract-actions.ts",
+    "utf8",
+  );
+  const core = readFileSync(
+    "lib/contracts/admin-contract-settings-core.ts",
+    "utf8",
+  );
+  const repository = readFileSync(
+    "lib/contracts/admin-contract-settings-repository.ts",
+    "utf8",
+  );
+  assert.match(page, /Datos legales de la agencia/);
+  assert.match(page, /Plantillas de contrato/);
+  assert.match(forms, /Crear nueva versión/);
+  assert.match(core, /status !== "draft"/);
+  assert.match(core, /for \(let attempt = 0; attempt < 3/);
+  assert.match(repository, /created_by_user_id: input\.createdByUserId/);
+  assert.equal(actions.includes("export const"), false);
+  assert.equal(/export\s+(?!async function|type\b)/.test(actions), false);
+  assert.equal(page.includes("templateKey}"), false);
+  assert.equal(forms.includes(">Activar<"), false);
+  assert.equal(repository.includes("reservation_documents"), false);
 });
 
 test("activación contractual exige autorización, perfil legal y un draft perteneciente a la agencia", async () => {
   let queried = false;
   const unauthenticated = createAdminContractActivationService({
-    async resolveAccess() { return { status: "unauthenticated" } as const; },
-    repository: { async findTemplate() { queried = true; return null; }, async hasLegalProfile() { queried = true; return false; }, async activate() { queried = true; return { resultStatus: "activated", activatedVersion: 1 }; } },
+    async resolveAccess() {
+      return { status: "unauthenticated" } as const;
+    },
+    repository: {
+      async findTemplate() {
+        queried = true;
+        return null;
+      },
+      async hasLegalProfile() {
+        queried = true;
+        return false;
+      },
+      async activate() {
+        queried = true;
+        return { resultStatus: "activated", activatedVersion: 1 };
+      },
+    },
   });
-  assert.deepEqual(await unauthenticated.activate({ requestedAgencySlug: "furiver", templateKey: "d2175825-1085-4854-a4b5-cd2d4e521f5c", expectedActiveTemplateKey: null }), { status: "unauthenticated" });
+  assert.deepEqual(
+    await unauthenticated.activate({
+      requestedAgencySlug: "furiver",
+      templateKey: "d2175825-1085-4854-a4b5-cd2d4e521f5c",
+      expectedActiveTemplateKey: null,
+    }),
+    { status: "unauthenticated" },
+  );
   assert.equal(queried, false);
   const access = adminAccessFixture({ memberships: [adminMembership()] });
   const withoutLegal = createAdminContractActivationService({
     resolveAccess: access.resolver.resolve,
-    repository: { async findTemplate() { return { templateKey: "d2175825-1085-4854-a4b5-cd2d4e521f5c", status: "draft" as const }; }, async hasLegalProfile() { return false; }, async activate() { throw new Error("must not activate"); } },
+    repository: {
+      async findTemplate() {
+        return {
+          templateKey: "d2175825-1085-4854-a4b5-cd2d4e521f5c",
+          status: "draft" as const,
+        };
+      },
+      async hasLegalProfile() {
+        return false;
+      },
+      async activate() {
+        throw new Error("must not activate");
+      },
+    },
   });
-  assert.deepEqual(await withoutLegal.activate({ requestedAgencySlug: "furiver", templateKey: "d2175825-1085-4854-a4b5-cd2d4e521f5c", expectedActiveTemplateKey: null }), { status: "legal_profile_required" });
-  assert.deepEqual(await withoutLegal.activate({ requestedAgencySlug: "crisenix", templateKey: "d2175825-1085-4854-a4b5-cd2d4e521f5c", expectedActiveTemplateKey: null }), { status: "forbidden" });
+  assert.deepEqual(
+    await withoutLegal.activate({
+      requestedAgencySlug: "furiver",
+      templateKey: "d2175825-1085-4854-a4b5-cd2d4e521f5c",
+      expectedActiveTemplateKey: null,
+    }),
+    { status: "legal_profile_required" },
+  );
+  assert.deepEqual(
+    await withoutLegal.activate({
+      requestedAgencySlug: "crisenix",
+      templateKey: "d2175825-1085-4854-a4b5-cd2d4e521f5c",
+      expectedActiveTemplateKey: null,
+    }),
+    { status: "forbidden" },
+  );
 });
 
 test("activación contractual retira el active esperado, conserva contenido y detecta pantalla obsoleta", async () => {
@@ -7310,176 +10880,927 @@ test("activación contractual retira el active esperado, conserva contenido y de
   const v2 = "b2175825-1085-4854-a4b5-cd2d4e521f5c";
   const v3 = "c2175825-1085-4854-a4b5-cd2d4e521f5c";
   const v4 = "e2175825-1085-4854-a4b5-cd2d4e521f5c";
-  const templates = new Map<string, { status: "draft" | "active" | "retired"; content: string }>([[v2, { status: "active", content: "v2" }], [v3, { status: "draft", content: "v3" }], [v4, { status: "draft", content: "v4" }]]);
+  const templates = new Map<
+    string,
+    { status: "draft" | "active" | "retired"; content: string }
+  >([
+    [v2, { status: "active", content: "v2" }],
+    [v3, { status: "draft", content: "v3" }],
+    [v4, { status: "draft", content: "v4" }],
+  ]);
   const service = createAdminContractActivationService({
     resolveAccess: access.resolver.resolve,
     repository: {
-      async findTemplate({ templateKey }) { const row = templates.get(templateKey); return row ? { templateKey, status: row.status } : null; }, async hasLegalProfile() { return true; },
-      async activate({ templateKey, expectedActiveTemplateKey }) { const active = [...templates.entries()].find(([, row]) => row.status === "active")?.[0] ?? null; if (active !== expectedActiveTemplateKey) return { resultStatus: "conflict", activatedVersion: null }; const target = templates.get(templateKey); if (!target || target.status !== "draft") return { resultStatus: target ? "immutable_version" : "not_found", activatedVersion: null }; if (active) templates.set(active, { ...templates.get(active)!, status: "retired" }); templates.set(templateKey, { ...target, status: "active" }); return { resultStatus: "activated", activatedVersion: templateKey === v3 ? 3 : 4 }; },
+      async findTemplate({ templateKey }) {
+        const row = templates.get(templateKey);
+        return row ? { templateKey, status: row.status } : null;
+      },
+      async hasLegalProfile() {
+        return true;
+      },
+      async activate({ templateKey, expectedActiveTemplateKey }) {
+        const active =
+          [...templates.entries()].find(
+            ([, row]) => row.status === "active",
+          )?.[0] ?? null;
+        if (active !== expectedActiveTemplateKey)
+          return { resultStatus: "conflict", activatedVersion: null };
+        const target = templates.get(templateKey);
+        if (!target || target.status !== "draft")
+          return {
+            resultStatus: target ? "immutable_version" : "not_found",
+            activatedVersion: null,
+          };
+        if (active)
+          templates.set(active, {
+            ...templates.get(active)!,
+            status: "retired",
+          });
+        templates.set(templateKey, { ...target, status: "active" });
+        return {
+          resultStatus: "activated",
+          activatedVersion: templateKey === v3 ? 3 : 4,
+        };
+      },
     },
   });
-  assert.deepEqual(await service.activate({ requestedAgencySlug: "furiver", templateKey: v3, expectedActiveTemplateKey: v2 }), { status: "activated", version: 3 });
-  assert.equal(templates.get(v2)?.status, "retired"); assert.equal(templates.get(v3)?.status, "active"); assert.equal(templates.get(v2)?.content, "v2");
-  assert.deepEqual(await service.activate({ requestedAgencySlug: "furiver", templateKey: v4, expectedActiveTemplateKey: v2 }), { status: "conflict" });
-  assert.equal(templates.get(v3)?.status, "active"); assert.equal(templates.get(v4)?.status, "draft");
-  assert.deepEqual(await service.activate({ requestedAgencySlug: "furiver", templateKey: v3, expectedActiveTemplateKey: v3 }), { status: "immutable_version" });
+  assert.deepEqual(
+    await service.activate({
+      requestedAgencySlug: "furiver",
+      templateKey: v3,
+      expectedActiveTemplateKey: v2,
+    }),
+    { status: "activated", version: 3 },
+  );
+  assert.equal(templates.get(v2)?.status, "retired");
+  assert.equal(templates.get(v3)?.status, "active");
+  assert.equal(templates.get(v2)?.content, "v2");
+  assert.deepEqual(
+    await service.activate({
+      requestedAgencySlug: "furiver",
+      templateKey: v4,
+      expectedActiveTemplateKey: v2,
+    }),
+    { status: "conflict" },
+  );
+  assert.equal(templates.get(v3)?.status, "active");
+  assert.equal(templates.get(v4)?.status, "draft");
+  assert.deepEqual(
+    await service.activate({
+      requestedAgencySlug: "furiver",
+      templateKey: v3,
+      expectedActiveTemplateKey: v3,
+    }),
+    { status: "immutable_version" },
+  );
 });
 
 test("RPC de activación bloquea por agencia, compara el activo esperado y la UI delega al dominio", () => {
-  const migration = readFileSync("supabase/migrations/20260801120000_activate_contract_template.sql", "utf8");
-  const action = readFileSync("app/admin/[agencySlug]/configuracion/contratos/contract-activation-actions.ts", "utf8");
-  const control = readFileSync("app/admin/[agencySlug]/configuracion/contratos/contract-activation-control.tsx", "utf8");
-  const repository = readFileSync("lib/contracts/admin-contract-activation-repository.ts", "utf8");
-  assert.match(migration, /for update/i); assert.match(migration, /is distinct from expected_active_template_id/i); assert.match(migration, /status = 'retired'/); assert.match(migration, /status = 'active'/); assert.match(migration, /set search_path = public, pg_temp/i); assert.match(migration, /to service_role/i);
-  assert.match(action, /activateContractTemplate\(values\)/); assert.equal(/export\s+(?!async function|type\b)/.test(action), false); assert.match(control, /Activar versión/); assert.match(control, /expectedActiveTemplateKey/); assert.match(repository, /activate_agency_contract_template/);
-  assert.equal(migration.includes("reservation_documents"), false); assert.equal(migration.includes("reservation_snapshots"), false);
-  const failing = createAdminContractActivationService({ resolveAccess: adminAccessFixture({ memberships: [adminMembership()] }).resolver.resolve, repository: { async findTemplate() { throw new Error("SQL internal"); }, async hasLegalProfile() { return false; }, async activate() { return { resultStatus: "conflict", activatedVersion: null }; } } });
-  assert.rejects(failing.activate({ requestedAgencySlug: "furiver", templateKey: "d2175825-1085-4854-a4b5-cd2d4e521f5c", expectedActiveTemplateKey: null }), (error: unknown) => error instanceof AdminContractActivationError && !error.message.includes("SQL"));
+  const migration = readFileSync(
+    "supabase/migrations/20260801120000_activate_contract_template.sql",
+    "utf8",
+  );
+  const action = readFileSync(
+    "app/admin/[agencySlug]/configuracion/contratos/contract-activation-actions.ts",
+    "utf8",
+  );
+  const control = readFileSync(
+    "app/admin/[agencySlug]/configuracion/contratos/contract-activation-control.tsx",
+    "utf8",
+  );
+  const repository = readFileSync(
+    "lib/contracts/admin-contract-activation-repository.ts",
+    "utf8",
+  );
+  assert.match(migration, /for update/i);
+  assert.match(migration, /is distinct from expected_active_template_id/i);
+  assert.match(migration, /status = 'retired'/);
+  assert.match(migration, /status = 'active'/);
+  assert.match(migration, /set search_path = public, pg_temp/i);
+  assert.match(migration, /to service_role/i);
+  assert.match(action, /activateContractTemplate\(values\)/);
+  assert.equal(/export\s+(?!async function|type\b)/.test(action), false);
+  assert.match(control, /Activar versión/);
+  assert.match(control, /expectedActiveTemplateKey/);
+  assert.match(repository, /activate_agency_contract_template/);
+  assert.equal(migration.includes("reservation_documents"), false);
+  assert.equal(migration.includes("reservation_snapshots"), false);
+  const failing = createAdminContractActivationService({
+    resolveAccess: adminAccessFixture({ memberships: [adminMembership()] })
+      .resolver.resolve,
+    repository: {
+      async findTemplate() {
+        throw new Error("SQL internal");
+      },
+      async hasLegalProfile() {
+        return false;
+      },
+      async activate() {
+        return { resultStatus: "conflict", activatedVersion: null };
+      },
+    },
+  });
+  assert.rejects(
+    failing.activate({
+      requestedAgencySlug: "furiver",
+      templateKey: "d2175825-1085-4854-a4b5-cd2d4e521f5c",
+      expectedActiveTemplateKey: null,
+    }),
+    (error: unknown) =>
+      error instanceof AdminContractActivationError &&
+      !error.message.includes("SQL"),
+  );
 });
 
 test("instancia contractual congela perfil y plantilla activa, es idempotente y no expone snapshots", async () => {
   const access = adminAccessFixture({ memberships: [adminMembership()] });
-  const state: { current: { status: "prepared"; templateVersion: number; preparedAt: string; legal?: unknown; content?: unknown } | null } = { current: null };
-  const template = { id: "d2175825-1085-4854-a4b5-cd2d4e521f5c", version: 2, status: "active", title: "Contrato v2", introductoryText: null, termsText: "Términos v2", paymentPolicyText: null, cancellationPolicyText: null, travelerResponsibilityText: null, jurisdictionText: null, effectiveFrom: null };
-  const service = createReservationContractService({ resolveAccess: access.resolver.resolve, repository: { async findReservation({ agencyId }) { return agencyId === "agency-furiver"; }, async findCurrent() { return state.current ? { status: state.current.status, templateVersion: state.current.templateVersion, preparedAt: state.current.preparedAt } : null; }, async findLegalProfile() { return { legalName: "Agencia Legal", taxId: null, legalAddress: null, supportEmail: null, supportPhone: null, jurisdiction: null }; }, async findActiveTemplate() { return template; }, async insert(input) { state.current = { status: "prepared", templateVersion: input.template.version, preparedAt: "2026-08-22T00:00:00.000Z", legal: structuredClone(input.legal), content: structuredClone(input.template) }; return { status: state.current.status, templateVersion: state.current.templateVersion, preparedAt: state.current.preparedAt }; } } });
-  const input = { requestedAgencySlug: "furiver", reservationId: customerDetailReservationId };
+  const state: {
+    current: {
+      status: "prepared";
+      templateVersion: number;
+      preparedAt: string;
+      legal?: unknown;
+      content?: unknown;
+    } | null;
+  } = { current: null };
+  const template = {
+    id: "d2175825-1085-4854-a4b5-cd2d4e521f5c",
+    version: 2,
+    status: "active",
+    title: "Contrato v2",
+    introductoryText: null,
+    termsText: "Términos v2",
+    paymentPolicyText: null,
+    cancellationPolicyText: null,
+    travelerResponsibilityText: null,
+    jurisdictionText: null,
+    effectiveFrom: null,
+  };
+  const service = createReservationContractService({
+    resolveAccess: access.resolver.resolve,
+    repository: {
+      async findReservation({ agencyId }) {
+        return agencyId === "agency-furiver";
+      },
+      async findCurrent() {
+        return state.current
+          ? {
+              status: state.current.status,
+              templateVersion: state.current.templateVersion,
+              preparedAt: state.current.preparedAt,
+            }
+          : null;
+      },
+      async findLegalProfile() {
+        return {
+          legalName: "Agencia Legal",
+          taxId: null,
+          legalAddress: null,
+          supportEmail: null,
+          supportPhone: null,
+          jurisdiction: null,
+        };
+      },
+      async findActiveTemplate() {
+        return template;
+      },
+      async insert(input) {
+        state.current = {
+          status: "prepared",
+          templateVersion: input.template.version,
+          preparedAt: "2026-08-22T00:00:00.000Z",
+          legal: structuredClone(input.legal),
+          content: structuredClone(input.template),
+        };
+        return {
+          status: state.current.status,
+          templateVersion: state.current.templateVersion,
+          preparedAt: state.current.preparedAt,
+        };
+      },
+    },
+  });
+  const input = {
+    requestedAgencySlug: "furiver",
+    reservationId: customerDetailReservationId,
+  };
   assert.equal((await service.prepare(input)).status, "prepared");
-  template.version = 3; template.title = "Contrato mutable";
-  const second = await service.prepare(input); assert.equal(second.status, "existing"); if (second.status === "existing") { assert.equal(second.contract.templateVersion, 2); assert.equal(JSON.stringify(second.contract).includes("legal"), false); }
-  assert.equal((state.current?.content as { title: string }).title, "Contrato v2");
-  assert.equal((await service.prepare({ ...input, requestedAgencySlug: "crisenix" })).status, "forbidden");
+  template.version = 3;
+  template.title = "Contrato mutable";
+  const second = await service.prepare(input);
+  assert.equal(second.status, "existing");
+  if (second.status === "existing") {
+    assert.equal(second.contract.templateVersion, 2);
+    assert.equal(JSON.stringify(second.contract).includes("legal"), false);
+  }
+  assert.equal(
+    (state.current?.content as { title: string }).title,
+    "Contrato v2",
+  );
+  assert.equal(
+    (await service.prepare({ ...input, requestedAgencySlug: "crisenix" }))
+      .status,
+    "forbidden",
+  );
 });
 
 test("preparación y PDF contractual no dependen del saldo ni de la elegibilidad de viaje", async () => {
   const access = adminAccessFixture({ memberships: [adminMembership()] });
   const prepared = new Set<string>();
   const repository = {
-    async findReservation() { return true; },
-    async findCurrent({ reservationId }: { reservationId: string }) { return prepared.has(reservationId) ? { status: "prepared" as const, templateVersion: 1, preparedAt: TEST_NOW } : null; },
-    async findLegalProfile() { return { legalName: "Agencia Legal", taxId: null, legalAddress: null, supportEmail: null, supportPhone: null, jurisdiction: null }; },
-    async findActiveTemplate() { return { id: "d2175825-1085-4854-a4b5-cd2d4e521f5c", version: 1, status: "active", title: "Contrato", introductoryText: null, termsText: "Términos", paymentPolicyText: null, cancellationPolicyText: null, travelerResponsibilityText: null, jurisdictionText: null, effectiveFrom: null }; },
-    async insert({ reservationId }: { reservationId: string }) { prepared.add(reservationId); return { status: "prepared" as const, templateVersion: 1, preparedAt: TEST_NOW }; },
+    async findReservation() {
+      return true;
+    },
+    async findCurrent({ reservationId }: { reservationId: string }) {
+      return prepared.has(reservationId)
+        ? {
+            status: "prepared" as const,
+            templateVersion: 1,
+            preparedAt: TEST_NOW,
+          }
+        : null;
+    },
+    async findLegalProfile() {
+      return {
+        legalName: "Agencia Legal",
+        taxId: null,
+        legalAddress: null,
+        supportEmail: null,
+        supportPhone: null,
+        jurisdiction: null,
+      };
+    },
+    async findActiveTemplate() {
+      return {
+        id: "d2175825-1085-4854-a4b5-cd2d4e521f5c",
+        version: 1,
+        status: "active",
+        title: "Contrato",
+        introductoryText: null,
+        termsText: "Términos",
+        paymentPolicyText: null,
+        cancellationPolicyText: null,
+        travelerResponsibilityText: null,
+        jurisdictionText: null,
+        effectiveFrom: null,
+      };
+    },
+    async insert({ reservationId }: { reservationId: string }) {
+      prepared.add(reservationId);
+      return {
+        status: "prepared" as const,
+        templateVersion: 1,
+        preparedAt: TEST_NOW,
+      };
+    },
   };
-  const service = createReservationContractService({ resolveAccess: access.resolver.resolve, repository });
-  const ids = ["a9ce1e1a-5d14-4cff-b2ea-d506aa4c7eb3", "b9ce1e1a-5d14-4cff-b2ea-d506aa4c7eb3", "c9ce1e1a-5d14-4cff-b2ea-d506aa4c7eb3"];
-  for (const reservationId of ids) assert.equal((await service.prepare({ requestedAgencySlug: "furiver", reservationId })).status, "prepared");
-  const withoutLegal = createReservationContractService({ resolveAccess: access.resolver.resolve, repository: { ...repository, async findLegalProfile() { return null; } } });
-  assert.deepEqual(await withoutLegal.inspect({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId }), { status: "legal_profile_required" });
-  const withoutActive = createReservationContractService({ resolveAccess: access.resolver.resolve, repository: { ...repository, async findActiveTemplate() { return null; } } });
-  assert.deepEqual(await withoutActive.inspect({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId }), { status: "active_template_required" });
-  const contractCore = readFileSync("lib/contracts/reservation-contract-core.ts", "utf8");
-  const pdfCore = readFileSync("lib/documents/reservation-contract-document-core.ts", "utf8");
-  const control = readFileSync("app/admin/[agencySlug]/reservaciones/[reservationId]/contract-preparation-control.tsx", "utf8");
+  const service = createReservationContractService({
+    resolveAccess: access.resolver.resolve,
+    repository,
+  });
+  const ids = [
+    "a9ce1e1a-5d14-4cff-b2ea-d506aa4c7eb3",
+    "b9ce1e1a-5d14-4cff-b2ea-d506aa4c7eb3",
+    "c9ce1e1a-5d14-4cff-b2ea-d506aa4c7eb3",
+  ];
+  for (const reservationId of ids)
+    assert.equal(
+      (await service.prepare({ requestedAgencySlug: "furiver", reservationId }))
+        .status,
+      "prepared",
+    );
+  const withoutLegal = createReservationContractService({
+    resolveAccess: access.resolver.resolve,
+    repository: {
+      ...repository,
+      async findLegalProfile() {
+        return null;
+      },
+    },
+  });
+  assert.deepEqual(
+    await withoutLegal.inspect({
+      requestedAgencySlug: "furiver",
+      reservationId: customerDetailReservationId,
+    }),
+    { status: "legal_profile_required" },
+  );
+  const withoutActive = createReservationContractService({
+    resolveAccess: access.resolver.resolve,
+    repository: {
+      ...repository,
+      async findActiveTemplate() {
+        return null;
+      },
+    },
+  });
+  assert.deepEqual(
+    await withoutActive.inspect({
+      requestedAgencySlug: "furiver",
+      reservationId: customerDetailReservationId,
+    }),
+    { status: "active_template_required" },
+  );
+  const contractCore = readFileSync(
+    "lib/contracts/reservation-contract-core.ts",
+    "utf8",
+  );
+  const pdfCore = readFileSync(
+    "lib/documents/reservation-contract-document-core.ts",
+    "utf8",
+  );
+  const control = readFileSync(
+    "app/admin/[agencySlug]/reservaciones/[reservationId]/contract-preparation-control.tsx",
+    "utf8",
+  );
   assert.equal(contractCore.includes("confirmedPayment"), false);
   assert.equal(contractCore.includes("remainingBalance"), false);
   assert.equal(pdfCore.includes("calculateReservationFinancialSummary"), false);
-  assert.match(control, /Completa los datos legales de la agencia antes de preparar el contrato\./);
-  assert.match(control, /Activa una plantilla contractual antes de preparar el contrato\./);
+  assert.match(
+    control,
+    /Completa los datos legales de la agencia antes de preparar el contrato\./,
+  );
+  assert.match(
+    control,
+    /Activa una plantilla contractual antes de preparar el contrato\./,
+  );
   assert.match(control, /Configurar contratos/);
 });
 
 test("migración de instancia contractual aplica FKs, inmutabilidad y RLS sin tocar documentos", () => {
-  const migration = readFileSync("supabase/migrations/20260801130000_reservation_contract_instances.sql", "utf8");
-  const repo = readFileSync("lib/contracts/reservation-contract-repository.ts", "utf8");
-  const page = readFileSync("app/admin/[agencySlug]/reservaciones/[reservationId]/page.tsx", "utf8");
-  const control = readFileSync("app/admin/[agencySlug]/reservaciones/[reservationId]/contract-preparation-control.tsx", "utf8");
-  assert.match(migration, /unique \(id, agency_id\)/); assert.match(migration, /where status in \('prepared', 'accepted'\)/); assert.match(migration, /context is immutable/); assert.match(migration, /has_customer_reservation_access/); assert.match(repo, /legal_profile_snapshot:legal/); assert.match(repo, /contract_content_snapshot/); assert.match(page, /ContractPreparationControl/); assert.match(control, /Contrato aún no preparado/); assert.equal(migration.includes("reservation_documents"), false);
+  const migration = readFileSync(
+    "supabase/migrations/20260801130000_reservation_contract_instances.sql",
+    "utf8",
+  );
+  const repo = readFileSync(
+    "lib/contracts/reservation-contract-repository.ts",
+    "utf8",
+  );
+  const page = readFileSync(
+    "app/admin/[agencySlug]/reservaciones/[reservationId]/page.tsx",
+    "utf8",
+  );
+  const control = readFileSync(
+    "app/admin/[agencySlug]/reservaciones/[reservationId]/contract-preparation-control.tsx",
+    "utf8",
+  );
+  assert.match(migration, /unique \(id, agency_id\)/);
+  assert.match(migration, /where status in \('prepared', 'accepted'\)/);
+  assert.match(migration, /context is immutable/);
+  assert.match(migration, /has_customer_reservation_access/);
+  assert.match(repo, /legal_profile_snapshot:legal/);
+  assert.match(repo, /contract_content_snapshot/);
+  assert.match(page, /ContractPreparationControl/);
+  assert.match(control, /Contrato aún no preparado/);
+  assert.equal(migration.includes("reservation_documents"), false);
 });
 
 const contractInstanceDocumentId = "14cf2e61-23bd-4d4a-85ca-e1d7a36fc183";
 const contractInstanceId = "34cf2e61-23bd-4d4a-85ca-e1d7a36fc183";
 
-function contractDocumentFixture(input: Readonly<{ status?: string; failStorage?: boolean; failDownload?: boolean; failInsert?: boolean; mismatch?: boolean }> = {}) {
+function contractDocumentFixture(
+  input: Readonly<{
+    status?: string;
+    failStorage?: boolean;
+    failDownload?: boolean;
+    failInsert?: boolean;
+    mismatch?: boolean;
+  }> = {},
+) {
   const documents = new Map<string, ReservationContractDocumentRow>();
-  const state = { inserts: [] as ReservationContractDocumentInsert[], uploads: [] as string[], removals: [] as string[], pdfs: [] as Parameters<typeof renderReservationContractPdf>[0][] };
+  const state = {
+    inserts: [] as ReservationContractDocumentInsert[],
+    uploads: [] as string[],
+    removals: [] as string[],
+    pdfs: [] as Parameters<typeof renderReservationContractPdf>[0][],
+  };
   const service = createReservationContractDocumentService({
-    resolveAccess: adminAccessFixture({ memberships: [adminMembership()] }).resolver.resolve,
-    now: () => new Date(TEST_NOW), createDocumentId: () => contractInstanceDocumentId,
-    renderPdf: async (data) => { state.pdfs.push(data); return new TextEncoder().encode("%PDF-1.7 frozen contract"); },
-    repository: {
-      async findReservation({ agencyId }) { return agencyId === "agency-furiver" ? financialReservationRow() : null; },
-      async findLatestInstance() { return { id: contractInstanceId, status: input.status ?? "prepared", contractTemplateVersion: 2, preparedAt: TEST_NOW, legalProfileSnapshot: { legalName: "Agencia Congelada", taxId: null, legalAddress: null, supportEmail: null, supportPhone: null, jurisdiction: "México" }, contractContentSnapshot: { templateVersion: input.mismatch ? 3 : 2, title: "Contrato congelado", introductoryText: "Introducción", termsText: "Términos congelados.", paymentPolicyText: "Política de pagos", cancellationPolicyText: null, travelerResponsibilityText: null, jurisdictionText: "Jurisdicción congelada", effectiveFrom: null } }; },
-      async findExistingDocument({ contractInstanceId: instanceId }) { return documents.get(instanceId) ?? null; },
-      async updateContentSha256({ contractInstanceId: instanceId, contentSha256 }) { const row = documents.get(instanceId); if (!row) throw new Error("missing document"); documents.set(instanceId, { ...row, contentSha256 }); },
-      async insertDocument(document) { state.inserts.push(document); if (input.failInsert) throw new Error("database unavailable"); if (documents.has(document.contractInstanceId)) throw Object.assign(new Error("duplicate"), { code: "23505" }); const row = { status: document.status, version: document.version, generatedAt: document.generatedAt, storagePath: document.storagePath, contentSha256: document.contentSha256 } as const; documents.set(document.contractInstanceId, row); return row; },
+    resolveAccess: adminAccessFixture({ memberships: [adminMembership()] })
+      .resolver.resolve,
+    now: () => new Date(TEST_NOW),
+    createDocumentId: () => contractInstanceDocumentId,
+    renderPdf: async (data) => {
+      state.pdfs.push(data);
+      return new TextEncoder().encode("%PDF-1.7 frozen contract");
     },
-    storage: { async upload({ path }) { if (input.failStorage) throw new Error("storage unavailable"); state.uploads.push(path); }, async download() { if (input.failDownload) throw new Error("storage unavailable"); return new TextEncoder().encode("%PDF-1.7 frozen contract"); }, async remove(path) { state.removals.push(path); } },
+    repository: {
+      async findReservation({ agencyId }) {
+        return agencyId === "agency-furiver" ? financialReservationRow() : null;
+      },
+      async findLatestInstance() {
+        return {
+          id: contractInstanceId,
+          status: input.status ?? "prepared",
+          contractTemplateVersion: 2,
+          preparedAt: TEST_NOW,
+          legalProfileSnapshot: {
+            legalName: "Agencia Congelada",
+            taxId: null,
+            legalAddress: null,
+            supportEmail: null,
+            supportPhone: null,
+            jurisdiction: "México",
+          },
+          contractContentSnapshot: {
+            templateVersion: input.mismatch ? 3 : 2,
+            title: "Contrato congelado",
+            introductoryText: "Introducción",
+            termsText: "Términos congelados.",
+            paymentPolicyText: "Política de pagos",
+            cancellationPolicyText: null,
+            travelerResponsibilityText: null,
+            jurisdictionText: "Jurisdicción congelada",
+            effectiveFrom: null,
+          },
+        };
+      },
+      async findExistingDocument({ contractInstanceId: instanceId }) {
+        return documents.get(instanceId) ?? null;
+      },
+      async updateContentSha256({
+        contractInstanceId: instanceId,
+        contentSha256,
+      }) {
+        const row = documents.get(instanceId);
+        if (!row) throw new Error("missing document");
+        documents.set(instanceId, { ...row, contentSha256 });
+      },
+      async insertDocument(document) {
+        state.inserts.push(document);
+        if (input.failInsert) throw new Error("database unavailable");
+        if (documents.has(document.contractInstanceId))
+          throw Object.assign(new Error("duplicate"), { code: "23505" });
+        const row = {
+          status: document.status,
+          version: document.version,
+          generatedAt: document.generatedAt,
+          storagePath: document.storagePath,
+          contentSha256: document.contentSha256,
+        } as const;
+        documents.set(document.contractInstanceId, row);
+        return row;
+      },
+    },
+    storage: {
+      async upload({ path }) {
+        if (input.failStorage) throw new Error("storage unavailable");
+        state.uploads.push(path);
+      },
+      async download() {
+        if (input.failDownload) throw new Error("storage unavailable");
+        return new TextEncoder().encode("%PDF-1.7 frozen contract");
+      },
+      async remove(path) {
+        state.removals.push(path);
+      },
+    },
   });
   return { service, documents, state };
 }
 
 test("contrato PDF usa exclusivamente la instancia congelada y registra metadata privada idempotente", async () => {
   const fixture = contractDocumentFixture();
-  const input = { requestedAgencySlug: "furiver", reservationId: customerDetailReservationId };
+  const input = {
+    requestedAgencySlug: "furiver",
+    reservationId: customerDetailReservationId,
+  };
   const first = await fixture.service.ensure(input);
-  assert.deepEqual(first.status === "generated" ? first.document : null, { documentType: "contract", documentVersion: 1, contractTemplateVersion: 2, contractStatus: "prepared", generatedAt: TEST_NOW });
-  assert.equal(fixture.state.inserts.length, 1); assert.equal(fixture.state.inserts[0].paymentId, null); assert.equal(fixture.state.inserts[0].contractInstanceId, contractInstanceId);
+  assert.deepEqual(first.status === "generated" ? first.document : null, {
+    documentType: "contract",
+    documentVersion: 1,
+    contractTemplateVersion: 2,
+    contractStatus: "prepared",
+    generatedAt: TEST_NOW,
+  });
+  assert.equal(fixture.state.inserts.length, 1);
+  assert.equal(fixture.state.inserts[0].paymentId, null);
+  assert.equal(fixture.state.inserts[0].contractInstanceId, contractInstanceId);
   assert.match(fixture.state.inserts[0].contentSha256, /^[0-9a-f]{64}$/);
-  assert.equal(fixture.state.inserts[0].contentSha256, calculateContractDocumentSha256(new TextEncoder().encode("%PDF-1.7 frozen contract")));
-  assert.match(fixture.state.inserts[0].storagePath, /^agency-furiver\/[0-9a-f-]+\/contract\/[0-9a-f-]+\/v1\.pdf$/i);
-  assert.equal(fixture.state.pdfs[0].agency.legalName, "Agencia Congelada"); assert.equal(fixture.state.pdfs[0].contract.title, "Contrato congelado"); assert.equal(fixture.state.pdfs[0].reservation.total, 47817); assert.equal("remainingAmount" in fixture.state.pdfs[0].reservation, false);
-  assert.equal(JSON.stringify(first).includes("contractInstanceId"), false); assert.equal(JSON.stringify(first).includes("storagePath"), false);
-  assert.equal((await fixture.service.ensure(input)).status, "existing"); assert.equal(fixture.state.uploads.length, 1);
-  const historical = fixture.documents.get(contractInstanceId)!;
-  fixture.documents.set(contractInstanceId, { ...historical, contentSha256: null });
+  assert.equal(
+    fixture.state.inserts[0].contentSha256,
+    calculateContractDocumentSha256(
+      new TextEncoder().encode("%PDF-1.7 frozen contract"),
+    ),
+  );
+  assert.match(
+    fixture.state.inserts[0].storagePath,
+    /^agency-furiver\/[0-9a-f-]+\/contract\/[0-9a-f-]+\/v1\.pdf$/i,
+  );
+  assert.equal(fixture.state.pdfs[0].agency.legalName, "Agencia Congelada");
+  assert.equal(fixture.state.pdfs[0].contract.title, "Contrato congelado");
+  assert.equal(fixture.state.pdfs[0].reservation.total, 47817);
+  assert.equal("remainingAmount" in fixture.state.pdfs[0].reservation, false);
+  assert.equal(JSON.stringify(first).includes("contractInstanceId"), false);
+  assert.equal(JSON.stringify(first).includes("storagePath"), false);
   assert.equal((await fixture.service.ensure(input)).status, "existing");
-  assert.equal(fixture.documents.get(contractInstanceId)?.contentSha256, historical.contentSha256);
+  assert.equal(fixture.state.uploads.length, 1);
+  const historical = fixture.documents.get(contractInstanceId)!;
+  fixture.documents.set(contractInstanceId, {
+    ...historical,
+    contentSha256: null,
+  });
+  assert.equal((await fixture.service.ensure(input)).status, "existing");
+  assert.equal(
+    fixture.documents.get(contractInstanceId)?.contentSha256,
+    historical.contentSha256,
+  );
   assert.equal(fixture.state.pdfs.length, 1);
 });
 
 test("contrato PDF exige admin e instancia vigente, valida snapshots y recupera errores sin mutar contratos", async () => {
   let queried = false;
-  const unauthenticated = createReservationContractDocumentService({ async resolveAccess() { return { status: "unauthenticated" } as const; }, repository: { async findReservation() { queried = true; return null; }, async findLatestInstance() { queried = true; return null; }, async findExistingDocument() { queried = true; return null; }, async updateContentSha256() { queried = true; }, async insertDocument() { queried = true; throw new Error(); } }, storage: { async upload() { queried = true; }, async download() { queried = true; return new Uint8Array(); }, async remove() { queried = true; } }, renderPdf: async () => new TextEncoder().encode("%PDF") });
-  assert.deepEqual(await unauthenticated.ensure({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId }), { status: "unauthenticated" }); assert.equal(queried, false);
-  assert.deepEqual(await contractDocumentFixture({ status: "superseded" }).service.ensure({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId }), { status: "contract_unavailable" });
-  assert.deepEqual(await contractDocumentFixture({ status: "revoked" }).service.ensure({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId }), { status: "contract_unavailable" });
-  assert.deepEqual(await contractDocumentFixture({ mismatch: true }).service.ensure({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId }), { status: "invalid_structure" });
-  assert.deepEqual(await contractDocumentFixture().service.ensure({ requestedAgencySlug: "crisenix", reservationId: customerDetailReservationId }), { status: "forbidden" });
-  assert.deepEqual(await contractDocumentFixture().service.ensure({ requestedAgencySlug: "furiver", reservationId: "bad" }), { status: "not_found" });
-  const storageFailure = contractDocumentFixture({ failStorage: true }); assert.deepEqual(await storageFailure.service.ensure({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId }), { status: "document_storage_error" }); assert.equal(storageFailure.state.inserts.length, 0);
-  const dbFailure = contractDocumentFixture({ failInsert: true }); await assert.rejects(dbFailure.service.ensure({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId }), (error: unknown) => error instanceof ReservationContractDocumentError && !error.message.includes("database")); assert.equal(dbFailure.state.removals.length, 1);
-  const historicalDownloadFailure = contractDocumentFixture(); await historicalDownloadFailure.service.ensure({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId }); const existing = historicalDownloadFailure.documents.get(contractInstanceId)!; historicalDownloadFailure.documents.set(contractInstanceId, { ...existing, contentSha256: null });
-  const noDownload = createReservationContractDocumentService({ resolveAccess: adminAccessFixture({ memberships: [adminMembership()] }).resolver.resolve, repository: { async findReservation() { return financialReservationRow(); }, async findLatestInstance() { return { id: contractInstanceId, status: "prepared", contractTemplateVersion: 2, preparedAt: TEST_NOW, legalProfileSnapshot: { legalName: "Agencia", taxId: null, legalAddress: null, supportEmail: null, supportPhone: null, jurisdiction: null }, contractContentSnapshot: { templateVersion: 2, title: "Contrato", introductoryText: null, termsText: "Términos", paymentPolicyText: null, cancellationPolicyText: null, travelerResponsibilityText: null, jurisdictionText: null, effectiveFrom: null } }; }, async findExistingDocument() { return { ...existing, contentSha256: null }; }, async updateContentSha256() { throw new Error("must not update"); }, async insertDocument() { throw new Error("must not insert"); } }, storage: { async upload() {}, async download() { throw new Error("storage internal"); }, async remove() {} }, renderPdf: async () => new TextEncoder().encode("%PDF") });
-  assert.deepEqual(await noDownload.ensure({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId }), { status: "document_storage_error" });
+  const unauthenticated = createReservationContractDocumentService({
+    async resolveAccess() {
+      return { status: "unauthenticated" } as const;
+    },
+    repository: {
+      async findReservation() {
+        queried = true;
+        return null;
+      },
+      async findLatestInstance() {
+        queried = true;
+        return null;
+      },
+      async findExistingDocument() {
+        queried = true;
+        return null;
+      },
+      async updateContentSha256() {
+        queried = true;
+      },
+      async insertDocument() {
+        queried = true;
+        throw new Error();
+      },
+    },
+    storage: {
+      async upload() {
+        queried = true;
+      },
+      async download() {
+        queried = true;
+        return new Uint8Array();
+      },
+      async remove() {
+        queried = true;
+      },
+    },
+    renderPdf: async () => new TextEncoder().encode("%PDF"),
+  });
+  assert.deepEqual(
+    await unauthenticated.ensure({
+      requestedAgencySlug: "furiver",
+      reservationId: customerDetailReservationId,
+    }),
+    { status: "unauthenticated" },
+  );
+  assert.equal(queried, false);
+  assert.deepEqual(
+    await contractDocumentFixture({ status: "superseded" }).service.ensure({
+      requestedAgencySlug: "furiver",
+      reservationId: customerDetailReservationId,
+    }),
+    { status: "contract_unavailable" },
+  );
+  assert.deepEqual(
+    await contractDocumentFixture({ status: "revoked" }).service.ensure({
+      requestedAgencySlug: "furiver",
+      reservationId: customerDetailReservationId,
+    }),
+    { status: "contract_unavailable" },
+  );
+  assert.deepEqual(
+    await contractDocumentFixture({ mismatch: true }).service.ensure({
+      requestedAgencySlug: "furiver",
+      reservationId: customerDetailReservationId,
+    }),
+    { status: "invalid_structure" },
+  );
+  assert.deepEqual(
+    await contractDocumentFixture().service.ensure({
+      requestedAgencySlug: "crisenix",
+      reservationId: customerDetailReservationId,
+    }),
+    { status: "forbidden" },
+  );
+  assert.deepEqual(
+    await contractDocumentFixture().service.ensure({
+      requestedAgencySlug: "furiver",
+      reservationId: "bad",
+    }),
+    { status: "not_found" },
+  );
+  const storageFailure = contractDocumentFixture({ failStorage: true });
+  assert.deepEqual(
+    await storageFailure.service.ensure({
+      requestedAgencySlug: "furiver",
+      reservationId: customerDetailReservationId,
+    }),
+    { status: "document_storage_error" },
+  );
+  assert.equal(storageFailure.state.inserts.length, 0);
+  const dbFailure = contractDocumentFixture({ failInsert: true });
+  await assert.rejects(
+    dbFailure.service.ensure({
+      requestedAgencySlug: "furiver",
+      reservationId: customerDetailReservationId,
+    }),
+    (error: unknown) =>
+      error instanceof ReservationContractDocumentError &&
+      !error.message.includes("database"),
+  );
+  assert.equal(dbFailure.state.removals.length, 1);
+  const historicalDownloadFailure = contractDocumentFixture();
+  await historicalDownloadFailure.service.ensure({
+    requestedAgencySlug: "furiver",
+    reservationId: customerDetailReservationId,
+  });
+  const existing = historicalDownloadFailure.documents.get(contractInstanceId)!;
+  historicalDownloadFailure.documents.set(contractInstanceId, {
+    ...existing,
+    contentSha256: null,
+  });
+  const noDownload = createReservationContractDocumentService({
+    resolveAccess: adminAccessFixture({ memberships: [adminMembership()] })
+      .resolver.resolve,
+    repository: {
+      async findReservation() {
+        return financialReservationRow();
+      },
+      async findLatestInstance() {
+        return {
+          id: contractInstanceId,
+          status: "prepared",
+          contractTemplateVersion: 2,
+          preparedAt: TEST_NOW,
+          legalProfileSnapshot: {
+            legalName: "Agencia",
+            taxId: null,
+            legalAddress: null,
+            supportEmail: null,
+            supportPhone: null,
+            jurisdiction: null,
+          },
+          contractContentSnapshot: {
+            templateVersion: 2,
+            title: "Contrato",
+            introductoryText: null,
+            termsText: "Términos",
+            paymentPolicyText: null,
+            cancellationPolicyText: null,
+            travelerResponsibilityText: null,
+            jurisdictionText: null,
+            effectiveFrom: null,
+          },
+        };
+      },
+      async findExistingDocument() {
+        return { ...existing, contentSha256: null };
+      },
+      async updateContentSha256() {
+        throw new Error("must not update");
+      },
+      async insertDocument() {
+        throw new Error("must not insert");
+      },
+    },
+    storage: {
+      async upload() {},
+      async download() {
+        throw new Error("storage internal");
+      },
+      async remove() {},
+    },
+    renderPdf: async () => new TextEncoder().encode("%PDF"),
+  });
+  assert.deepEqual(
+    await noDownload.ensure({
+      requestedAgencySlug: "furiver",
+      reservationId: customerDetailReservationId,
+    }),
+    { status: "document_storage_error" },
+  );
 });
 
 test("render y UI de contrato mantienen estado pendiente, paginación y documentos cliente sin IDs internos", async () => {
-  const bytes = await renderReservationContractPdf({ agency: { legalName: "Agencia Española", taxId: null, legalAddress: null, supportEmail: null, supportPhone: null, jurisdiction: null }, contract: { templateVersion: 2, status: "prepared", preparedAt: TEST_NOW, title: "Contrato", introductoryText: null, termsText: "á é í ó ú ñ ü ".repeat(2200), paymentPolicyText: null, cancellationPolicyText: null, travelerResponsibilityText: null, jurisdictionText: null, effectiveFrom: null }, reservation: { code: "FT-004-260801-D01B4E", tripName: null, tripCode: null, departureDate: null, boarding: null, rooms: null, adults: null, minors: null, travelers: null, currency: "MXN", total: 47817, depositAmount: 9563.4, depositPercent: 20 } });
-  assert.equal(new TextDecoder().decode(bytes.slice(0, 4)), "%PDF"); assert.ok(bytes.length > 0);
-  const core = readFileSync("lib/documents/reservation-contract-document-core.ts", "utf8"); const repository = readFileSync("lib/documents/reservation-contract-document-repository.ts", "utf8"); const page = readFileSync("app/admin/[agencySlug]/reservaciones/[reservationId]/page.tsx", "utf8"); const action = readFileSync("app/admin/[agencySlug]/reservaciones/[reservationId]/contract-actions.ts", "utf8");
-  assert.match(core, /legalProfileSnapshot/); assert.match(core, /contractContentSnapshot/); assert.equal(core.includes("agency_legal_profiles"), false); assert.equal(core.includes("agency_contract_templates"), false);
-  assert.match(repository, /contract_instance_id: document\.contractInstanceId/); assert.match(repository, /payment_id: document\.paymentId/); assert.match(page, /ContractDocumentControl/); assert.match(action, /ensureReservationContractDocument/); assert.equal(/export\s+(?!async function|type\b)/.test(action), false);
-  assert.match(repository, /update\(\{ content_sha256: contentSha256 \}\)/); assert.equal(page.includes("contentSha256"), false); assert.equal(core.includes("contentSha256"), true);
+  const bytes = await renderReservationContractPdf({
+    agency: {
+      legalName: "Agencia Española",
+      taxId: null,
+      legalAddress: null,
+      supportEmail: null,
+      supportPhone: null,
+      jurisdiction: null,
+    },
+    contract: {
+      templateVersion: 2,
+      status: "prepared",
+      preparedAt: TEST_NOW,
+      title: "Contrato",
+      introductoryText: null,
+      termsText: "á é í ó ú ñ ü ".repeat(2200),
+      paymentPolicyText: null,
+      cancellationPolicyText: null,
+      travelerResponsibilityText: null,
+      jurisdictionText: null,
+      effectiveFrom: null,
+    },
+    reservation: {
+      code: "FT-004-260801-D01B4E",
+      tripName: null,
+      tripCode: null,
+      departureDate: null,
+      boarding: null,
+      rooms: null,
+      adults: null,
+      minors: null,
+      travelers: null,
+      currency: "MXN",
+      total: 47817,
+      depositAmount: 9563.4,
+      depositPercent: 20,
+    },
+  });
+  assert.equal(new TextDecoder().decode(bytes.slice(0, 4)), "%PDF");
+  assert.ok(bytes.length > 0);
+  const core = readFileSync(
+    "lib/documents/reservation-contract-document-core.ts",
+    "utf8",
+  );
+  const repository = readFileSync(
+    "lib/documents/reservation-contract-document-repository.ts",
+    "utf8",
+  );
+  const page = readFileSync(
+    "app/admin/[agencySlug]/reservaciones/[reservationId]/page.tsx",
+    "utf8",
+  );
+  const action = readFileSync(
+    "app/admin/[agencySlug]/reservaciones/[reservationId]/contract-actions.ts",
+    "utf8",
+  );
+  assert.match(core, /legalProfileSnapshot/);
+  assert.match(core, /contractContentSnapshot/);
+  assert.equal(core.includes("agency_legal_profiles"), false);
+  assert.equal(core.includes("agency_contract_templates"), false);
+  assert.match(
+    repository,
+    /contract_instance_id: document\.contractInstanceId/,
+  );
+  assert.match(repository, /payment_id: document\.paymentId/);
+  assert.match(page, /ContractDocumentControl/);
+  assert.match(action, /ensureReservationContractDocument/);
+  assert.equal(/export\s+(?!async function|type\b)/.test(action), false);
+  assert.match(repository, /update\(\{ content_sha256: contentSha256 \}\)/);
+  assert.equal(page.includes("contentSha256"), false);
+  assert.equal(core.includes("contentSha256"), true);
 });
 
 test("migración de integridad conserva documentos históricos y restringe SHA-256 a hex lowercase", () => {
-  const migration = readFileSync("supabase/migrations/20260801150000_document_content_hash.sql", "utf8");
-  const customerDocuments = readFileSync("lib/documents/customer-document-list-core.ts", "utf8");
+  const migration = readFileSync(
+    "supabase/migrations/20260801150000_document_content_hash.sql",
+    "utf8",
+  );
+  const customerDocuments = readFileSync(
+    "lib/documents/customer-document-list-core.ts",
+    "utf8",
+  );
   assert.match(migration, /add column content_sha256 text/i);
   assert.match(migration, /content_sha256 is null[\s\S]*\^\[0-9a-f\]\{64\}\$/i);
-  assert.equal(migration.includes("update public.reservation_documents"), false);
+  assert.equal(
+    migration.includes("update public.reservation_documents"),
+    false,
+  );
   assert.equal(customerDocuments.includes("contentSha256"), false);
 });
 
 test("aceptación contractual exige cuenta primary, verifica bytes privados y guarda declaración de servidor", async () => {
-  const access = customerAccessFixture({ accounts: [customerAccount()] }); const calls: string[] = [];
-  const service = createCustomerContractAcceptanceService({ resolveAccess: access.resolver.resolve, repository: { async findPrimaryLink() { calls.push("primary"); return true; }, async findInstance() { return { id: contractInstanceId, status: "prepared" }; }, async findDocument() { return { id: contractInstanceDocumentId, status: "available", version: 1, storagePath: "private.pdf", contentSha256: calculateContractDocumentSha256(new TextEncoder().encode("%PDF contract")) }; }, async updateDocumentHash() { calls.push("hash"); }, async accept(input) { calls.push(input.statementVersion); assert.equal(input.statement, CONTRACT_ACCEPTANCE_STATEMENT); return { status: "accepted", acceptedAt: TEST_NOW }; } }, storage: { async upload() {}, async download() { return new TextEncoder().encode("%PDF contract"); }, async remove() {} } });
-  const result = await service.accept({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId }); assert.equal(result.status, "accepted"); assert.ok(calls.includes(CONTRACT_ACCEPTANCE_STATEMENT_VERSION));
-  const mismatch = createCustomerContractAcceptanceService({ resolveAccess: access.resolver.resolve, repository: { async findPrimaryLink(){return true;},async findInstance(){return{id:contractInstanceId,status:"prepared"};},async findDocument(){return{id:contractInstanceDocumentId,status:"available",version:1,storagePath:"x",contentSha256:"a".repeat(64)};},async updateDocumentHash(){},async accept(){throw new Error("must not accept");} }, storage:{async upload(){},async download(){return new TextEncoder().encode("%PDF changed");},async remove(){}} });
-  assert.deepEqual(await mismatch.accept({requestedAgencySlug:"furiver",reservationId:customerDetailReservationId}),{status:"document_integrity_error"});
-  const migration=readFileSync("supabase/migrations/20260801160000_contract_acceptance.sql","utf8"); assert.match(migration,/for update/i);assert.match(migration,/unique \(contract_instance_id\)/i);assert.match(migration,/to service_role/i); assert.equal(readFileSync("app/cuenta/[agencySlug]/reservaciones/[reservationId]/contract-acceptance-actions.ts","utf8").includes("export const"),false);
+  const access = customerAccessFixture({ accounts: [customerAccount()] });
+  const calls: string[] = [];
+  const service = createCustomerContractAcceptanceService({
+    resolveAccess: access.resolver.resolve,
+    repository: {
+      async findPrimaryLink() {
+        calls.push("primary");
+        return true;
+      },
+      async findInstance() {
+        return { id: contractInstanceId, status: "prepared" };
+      },
+      async findDocument() {
+        return {
+          id: contractInstanceDocumentId,
+          status: "available",
+          version: 1,
+          storagePath: "private.pdf",
+          contentSha256: calculateContractDocumentSha256(
+            new TextEncoder().encode("%PDF contract"),
+          ),
+        };
+      },
+      async updateDocumentHash() {
+        calls.push("hash");
+      },
+      async accept(input) {
+        calls.push(input.statementVersion);
+        assert.equal(input.statement, CONTRACT_ACCEPTANCE_STATEMENT);
+        return { status: "accepted", acceptedAt: TEST_NOW };
+      },
+    },
+    storage: {
+      async upload() {},
+      async download() {
+        return new TextEncoder().encode("%PDF contract");
+      },
+      async remove() {},
+    },
+  });
+  const result = await service.accept({
+    requestedAgencySlug: "furiver",
+    reservationId: customerDetailReservationId,
+  });
+  assert.equal(result.status, "accepted");
+  assert.ok(calls.includes(CONTRACT_ACCEPTANCE_STATEMENT_VERSION));
+  const mismatch = createCustomerContractAcceptanceService({
+    resolveAccess: access.resolver.resolve,
+    repository: {
+      async findPrimaryLink() {
+        return true;
+      },
+      async findInstance() {
+        return { id: contractInstanceId, status: "prepared" };
+      },
+      async findDocument() {
+        return {
+          id: contractInstanceDocumentId,
+          status: "available",
+          version: 1,
+          storagePath: "x",
+          contentSha256: "a".repeat(64),
+        };
+      },
+      async updateDocumentHash() {},
+      async accept() {
+        throw new Error("must not accept");
+      },
+    },
+    storage: {
+      async upload() {},
+      async download() {
+        return new TextEncoder().encode("%PDF changed");
+      },
+      async remove() {},
+    },
+  });
+  assert.deepEqual(
+    await mismatch.accept({
+      requestedAgencySlug: "furiver",
+      reservationId: customerDetailReservationId,
+    }),
+    { status: "document_integrity_error" },
+  );
+  const migration = readFileSync(
+    "supabase/migrations/20260801160000_contract_acceptance.sql",
+    "utf8",
+  );
+  assert.match(migration, /for update/i);
+  assert.match(migration, /unique \(contract_instance_id\)/i);
+  assert.match(migration, /to service_role/i);
+  assert.equal(
+    readFileSync(
+      "app/cuenta/[agencySlug]/reservaciones/[reservationId]/contract-acceptance-actions.ts",
+      "utf8",
+    ).includes("export const"),
+    false,
+  );
 });
 
 test("la migración de constancia vincula acceptance, instancia, reservación y agencia sin tocar documentos históricos", () => {
-  const migration = readFileSync("supabase/migrations/20260801170000_acceptance_certificate_document.sql", "utf8");
+  const migration = readFileSync(
+    "supabase/migrations/20260801170000_acceptance_certificate_document.sql",
+    "utf8",
+  );
   assert.match(migration, /drop constraint reservation_documents_type_check/);
   assert.match(migration, /acceptance_certificate/);
   assert.match(migration, /contract_acceptance_id uuid/);
-  assert.match(migration, /foreign key \(contract_acceptance_id, contract_instance_id, reservation_id, agency_id\)/);
+  assert.match(
+    migration,
+    /foreign key \(contract_acceptance_id, contract_instance_id, reservation_id, agency_id\)/,
+  );
   assert.match(migration, /on delete restrict/);
-  assert.match(migration, /document_type = 'acceptance_certificate'[\s\S]*contract_acceptance_id is not null/);
-  assert.match(migration, /document_type = 'contract'[\s\S]*contract_acceptance_id is null/);
-  assert.match(migration, /document_type = 'payment_receipt'[\s\S]*contract_acceptance_id is null/);
+  assert.match(
+    migration,
+    /document_type = 'acceptance_certificate'[\s\S]*contract_acceptance_id is not null/,
+  );
+  assert.match(
+    migration,
+    /document_type = 'contract'[\s\S]*contract_acceptance_id is null/,
+  );
+  assert.match(
+    migration,
+    /document_type = 'payment_receipt'[\s\S]*contract_acceptance_id is null/,
+  );
   assert.match(migration, /reservation_documents_acceptance_version_unique/);
   assert.equal(migration.includes("insert into"), false);
 });
@@ -7488,152 +11809,540 @@ test("constancia de aceptación usa evidencia congelada, verifica el contrato y 
   const access = customerAccessFixture({ accounts: [customerAccount()] });
   const contractBytes = new TextEncoder().encode("%PDF-1.7 contract accepted");
   const contractHash = calculateContractDocumentSha256(contractBytes);
-  const certificateBytes = new TextEncoder().encode("%PDF-1.7 acceptance certificate");
+  const certificateBytes = new TextEncoder().encode(
+    "%PDF-1.7 acceptance certificate",
+  );
   const certificates: AcceptanceCertificateInsert[] = [];
   let uploaded = 0;
   const service = createAcceptanceCertificateService({
     resolveAccess: access.resolver.resolve,
     repository: {
-      async findPrimaryLink() { return true; },
-      async findReservation() { return financialReservationRow(); },
-      async findInstance() { return { id: contractInstanceId, status: "accepted", contractTemplateVersion: 2, legalProfileSnapshot: { legalName: "Agencia Congelada", taxId: "ABC", legalAddress: null, supportEmail: null, supportPhone: null, jurisdiction: null }, contractContentSnapshot: { templateVersion: 2, title: "Contrato congelado", termsText: "Términos congelados" } }; },
-      async findAcceptance() { return { id: "44cf2e61-23bd-4d4a-85ca-e1d7a36fc183", contractDocumentId: contractInstanceDocumentId, documentContentSha256: contractHash, acceptedAt: TEST_NOW, statementVersion: "contract_acceptance_v1", statement: "Texto histórico" }; },
-      async findContractDocument() { return { id: contractInstanceDocumentId, status: "available", version: 1, generatedAt: TEST_NOW, storagePath: "private/contract.pdf", contentSha256: contractHash }; },
-      async findExistingCertificate({ contractAcceptanceId }) { const row = certificates.find((item) => item.contractAcceptanceId === contractAcceptanceId); return row ? { status: "available", version: 1, generatedAt: row.generatedAt, storagePath: row.storagePath, contentSha256: row.contentSha256 } : null; },
+      async findPrimaryLink() {
+        return true;
+      },
+      async findReservation() {
+        return financialReservationRow();
+      },
+      async findInstance() {
+        return {
+          id: contractInstanceId,
+          status: "accepted",
+          contractTemplateVersion: 2,
+          legalProfileSnapshot: {
+            legalName: "Agencia Congelada",
+            taxId: "ABC",
+            legalAddress: null,
+            supportEmail: null,
+            supportPhone: null,
+            jurisdiction: null,
+          },
+          contractContentSnapshot: {
+            templateVersion: 2,
+            title: "Contrato congelado",
+            termsText: "Términos congelados",
+          },
+        };
+      },
+      async findAcceptance() {
+        return {
+          id: "44cf2e61-23bd-4d4a-85ca-e1d7a36fc183",
+          contractDocumentId: contractInstanceDocumentId,
+          documentContentSha256: contractHash,
+          acceptedAt: TEST_NOW,
+          statementVersion: "contract_acceptance_v1",
+          statement: "Texto histórico",
+        };
+      },
+      async findContractDocument() {
+        return {
+          id: contractInstanceDocumentId,
+          status: "available",
+          version: 1,
+          generatedAt: TEST_NOW,
+          storagePath: "private/contract.pdf",
+          contentSha256: contractHash,
+        };
+      },
+      async findExistingCertificate({ contractAcceptanceId }) {
+        const row = certificates.find(
+          (item) => item.contractAcceptanceId === contractAcceptanceId,
+        );
+        return row
+          ? {
+              status: "available",
+              version: 1,
+              generatedAt: row.generatedAt,
+              storagePath: row.storagePath,
+              contentSha256: row.contentSha256,
+            }
+          : null;
+      },
       async updateExistingHash() {},
-      async insertCertificate(input) { certificates.push(input); return { status: "available", version: 1, generatedAt: input.generatedAt, storagePath: input.storagePath, contentSha256: input.contentSha256 }; },
+      async insertCertificate(input) {
+        certificates.push(input);
+        return {
+          status: "available",
+          version: 1,
+          generatedAt: input.generatedAt,
+          storagePath: input.storagePath,
+          contentSha256: input.contentSha256,
+        };
+      },
     },
-    storage: { async upload() { uploaded += 1; }, async download(path) { return path.includes("contract") ? contractBytes : certificateBytes; }, async remove() {} },
-    renderPdf: async (data) => { assert.equal(data.legalName, "Agencia Congelada"); assert.equal(data.statement, "Texto histórico"); assert.equal(data.contractSha256, contractHash); return certificateBytes; },
-    now: () => new Date(TEST_NOW), createDocumentId: () => "54cf2e61-23bd-4d4a-85ca-e1d7a36fc183",
+    storage: {
+      async upload() {
+        uploaded += 1;
+      },
+      async download(path) {
+        return path.includes("contract") ? contractBytes : certificateBytes;
+    },
+      async remove() {},
+    },
+    renderPdf: async (data) => {
+      assert.equal(data.legalName, "Agencia Congelada");
+      assert.equal(data.statement, "Texto histórico");
+      assert.equal(data.contractSha256, contractHash);
+      return certificateBytes;
+    },
+    now: () => new Date(TEST_NOW),
+    createDocumentId: () => "54cf2e61-23bd-4d4a-85ca-e1d7a36fc183",
   });
-  const input = { requestedAgencySlug: "furiver", reservationId: customerDetailReservationId };
+  const input = {
+    requestedAgencySlug: "furiver",
+    reservationId: customerDetailReservationId,
+  };
   assert.equal((await service.ensure(input)).status, "generated");
-  assert.equal(certificates.length, 1); assert.equal(certificates[0].paymentId, null); assert.equal(certificates[0].contentSha256, calculateContractDocumentSha256(certificateBytes));
-  assert.match(certificates[0].storagePath, /^agency-furiver\/[0-9a-f-]+\/acceptance_certificate\/[0-9a-f-]+\/v1\.pdf$/i);
-  assert.equal((await service.ensure(input)).status, "existing"); assert.equal(uploaded, 1);
-  const mismatch = createAcceptanceCertificateService({ resolveAccess: access.resolver.resolve, repository: { async findPrimaryLink(){return true;},async findReservation(){return financialReservationRow();},async findInstance(){return{id:contractInstanceId,status:"accepted",contractTemplateVersion:2,legalProfileSnapshot:{legalName:"A",taxId:null},contractContentSnapshot:{templateVersion:2,title:"T",termsText:"x"}};},async findAcceptance(){return{id:"44cf2e61-23bd-4d4a-85ca-e1d7a36fc183",contractDocumentId:contractInstanceDocumentId,documentContentSha256:contractHash,acceptedAt:TEST_NOW,statementVersion:"v",statement:"x"};},async findContractDocument(){return{id:contractInstanceDocumentId,status:"available",version:1,generatedAt:TEST_NOW,storagePath:"contract",contentSha256:"a".repeat(64)};},async findExistingCertificate(){return null;},async updateExistingHash(){},async insertCertificate(){throw new Error("must not insert");}}, storage:{async upload(){throw new Error("must not upload");},async download(){return contractBytes;},async remove(){}},renderPdf:async()=>certificateBytes });
-  assert.deepEqual(await mismatch.ensure(input), { status: "invalid_structure" });
-  const pdf = await renderAcceptanceCertificatePdf({ legalName: "Agencia Española", taxId: null, reservationCode: "FT-004-260801-D01B4E", tripName: "Viaje", departureDate: null, contractTemplateVersion: 2, contractDocumentVersion: 1, contractGeneratedAt: TEST_NOW, contractSha256: contractHash, acceptedAt: TEST_NOW, statementVersion: "contract_acceptance_v1", statement: "á é í ó ú ñ ü ".repeat(300) });
+  assert.equal(certificates.length, 1);
+  assert.equal(certificates[0].paymentId, null);
+  assert.equal(
+    certificates[0].contentSha256,
+    calculateContractDocumentSha256(certificateBytes),
+  );
+  assert.match(
+    certificates[0].storagePath,
+    /^agency-furiver\/[0-9a-f-]+\/acceptance_certificate\/[0-9a-f-]+\/v1\.pdf$/i,
+  );
+  assert.equal((await service.ensure(input)).status, "existing");
+  assert.equal(uploaded, 1);
+  const mismatch = createAcceptanceCertificateService({
+    resolveAccess: access.resolver.resolve,
+    repository: {
+      async findPrimaryLink() {
+        return true;
+      },
+      async findReservation() {
+        return financialReservationRow();
+      },
+      async findInstance() {
+        return {
+          id: contractInstanceId,
+          status: "accepted",
+          contractTemplateVersion: 2,
+          legalProfileSnapshot: { legalName: "A", taxId: null },
+          contractContentSnapshot: {
+            templateVersion: 2,
+            title: "T",
+            termsText: "x",
+          },
+        };
+      },
+      async findAcceptance() {
+        return {
+          id: "44cf2e61-23bd-4d4a-85ca-e1d7a36fc183",
+          contractDocumentId: contractInstanceDocumentId,
+          documentContentSha256: contractHash,
+          acceptedAt: TEST_NOW,
+          statementVersion: "v",
+          statement: "x",
+        };
+      },
+      async findContractDocument() {
+        return {
+          id: contractInstanceDocumentId,
+          status: "available",
+          version: 1,
+          generatedAt: TEST_NOW,
+          storagePath: "contract",
+          contentSha256: "a".repeat(64),
+        };
+      },
+      async findExistingCertificate() {
+        return null;
+      },
+      async updateExistingHash() {},
+      async insertCertificate() {
+        throw new Error("must not insert");
+      },
+    },
+    storage: {
+      async upload() {
+        throw new Error("must not upload");
+      },
+      async download() {
+        return contractBytes;
+      },
+      async remove() {},
+    },
+    renderPdf: async () => certificateBytes,
+  });
+  assert.deepEqual(await mismatch.ensure(input), {
+    status: "invalid_structure",
+  });
+  const pdf = await renderAcceptanceCertificatePdf({
+    legalName: "Agencia Española",
+    taxId: null,
+    reservationCode: "FT-004-260801-D01B4E",
+    tripName: "Viaje",
+    departureDate: null,
+    contractTemplateVersion: 2,
+    contractDocumentVersion: 1,
+    contractGeneratedAt: TEST_NOW,
+    contractSha256: contractHash,
+    acceptedAt: TEST_NOW,
+    statementVersion: "contract_acceptance_v1",
+    statement: "á é í ó ú ñ ü ".repeat(300),
+  });
   assert.equal(new TextDecoder().decode(pdf.slice(0, 4)), "%PDF");
 });
 
 test("constancia se integra como documento privado sin exponer hash, acceptance ni rutas", () => {
-  const core = readFileSync("lib/documents/acceptance-certificate-core.ts", "utf8");
-  const repository = readFileSync("lib/documents/acceptance-certificate-repository.ts", "utf8");
-  const customerDocuments = readFileSync("lib/documents/customer-document-list-core.ts", "utf8");
-  const page = readFileSync("app/cuenta/[agencySlug]/reservaciones/[reservationId]/page.tsx", "utf8");
-  assert.match(core, /contractContentSnapshot/); assert.match(core, /documentContentSha256/); assert.match(core, /acceptance_certificate/);
-  assert.equal(core.includes("agency_legal_profiles"), false); assert.equal(core.includes("agency_contract_templates"), false);
-  assert.match(repository, /contract_acceptance_id/); assert.match(customerDocuments, /acceptance_certificate/); assert.match(page, /Constancia de aceptación/);
-  assert.equal(customerDocuments.includes("contentSha256"), false); assert.equal(page.includes("contractAcceptanceId"), false);
+  const core = readFileSync(
+    "lib/documents/acceptance-certificate-core.ts",
+    "utf8",
+  );
+  const repository = readFileSync(
+    "lib/documents/acceptance-certificate-repository.ts",
+    "utf8",
+  );
+  const customerDocuments = readFileSync(
+    "lib/documents/customer-document-list-core.ts",
+    "utf8",
+  );
+  const page = readFileSync(
+    "app/cuenta/[agencySlug]/reservaciones/[reservationId]/page.tsx",
+    "utf8",
+  );
+  assert.match(core, /contractContentSnapshot/);
+  assert.match(core, /documentContentSha256/);
+  assert.match(core, /acceptance_certificate/);
+  assert.equal(core.includes("agency_legal_profiles"), false);
+  assert.equal(core.includes("agency_contract_templates"), false);
+  assert.match(repository, /contract_acceptance_id/);
+  assert.match(customerDocuments, /acceptance_certificate/);
+  assert.match(page, /Constancia de aceptación/);
+  assert.equal(customerDocuments.includes("contentSha256"), false);
+  assert.equal(page.includes("contractAcceptanceId"), false);
 });
 
 test("elegibilidad de voucher y boleto reutiliza ledger, slots, contrato aceptado y basis points", async () => {
   const access = adminAccessFixture({ memberships: [adminMembership()] });
   const snapshot = financialReservationRow();
   const expected = deriveTravelerSlotStructure(snapshot)!;
-  const slots = expected.map((slot, index) => ({ id: `slot-${index}`, position: slot.position, traveler_type: slot.travelerType, status: "complete" }));
+  const slots = expected.map((slot, index) => ({
+    id: `slot-${index}`,
+    position: slot.position,
+    traveler_type: slot.travelerType,
+    status: "complete",
+  }));
   const service = createReservationDocumentEligibilityService({
     resolveAccess: access.resolver.resolve,
     repository: {
-      async findReservation() { return snapshot; },
-      async findPayments() { return [{ amount: 9563.4, currency: "MXN", status: "confirmed" }, { amount: 10000, currency: "MXN", status: "pending" }, { amount: 10000, currency: "MXN", status: "cancelled" }]; },
-      async findTravelerSlots() { return slots; }, async hasAcceptedContract() { return true; },
+      async findReservation() {
+        return snapshot;
+      },
+      async findPayments() {
+        return [
+          { amount: 9563.4, currency: "MXN", status: "confirmed" },
+          { amount: 10000, currency: "MXN", status: "pending" },
+          { amount: 10000, currency: "MXN", status: "cancelled" },
+        ];
+      },
+      async findTravelerSlots() {
+        return slots;
+      },
+      async hasAcceptedContract() {
+        return true;
+    },
     },
   });
-  const result = await service.get({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId });
+  const result = await service.get({
+    requestedAgencySlug: "furiver",
+    reservationId: customerDetailReservationId,
+  });
   assert.equal(result.status, "authorized");
   if (result.status === "authorized") {
     assert.equal(result.eligibility.voucher.eligible, true);
     assert.equal(result.eligibility.ticket.eligible, false);
-    assert.deepEqual(result.eligibility.ticket.blockers, ["payment_threshold_not_met"]);
+    assert.deepEqual(result.eligibility.ticket.blockers, [
+      "payment_threshold_not_met",
+    ]);
     assert.equal(result.eligibility.ticket.requiredPaymentPercent, 75);
     assert.equal(DEFAULT_TICKET_PAYMENT_THRESHOLD_BPS, 7500);
   }
-  const threshold = createReservationDocumentEligibilityService({ resolveAccess: access.resolver.resolve, repository: { async findReservation(){return snapshot;}, async findPayments(){return[{amount:35862.75,currency:"MXN",status:"confirmed"}]},async findTravelerSlots(){return slots;},async hasAcceptedContract(){return true;} } });
-  const atThreshold = await threshold.get({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId });
-  assert.equal(atThreshold.status === "authorized" && atThreshold.eligibility.ticket.eligible, true);
-  const blocked = createReservationDocumentEligibilityService({ async resolveAccess(){return { status: "unauthenticated" } as const;}, repository: { async findReservation(){throw new Error("must not query");},async findPayments(){return[]},async findTravelerSlots(){return[]},async hasAcceptedContract(){return false;} } });
-  assert.deepEqual(await blocked.get({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId }), { status: "unauthenticated" });
-  assert.deepEqual(await service.get({ requestedAgencySlug: "crisenix", reservationId: customerDetailReservationId }), { status: "forbidden" });
-  const page = readFileSync("app/admin/[agencySlug]/reservaciones/[reservationId]/page.tsx", "utf8");
-  assert.match(page, /Documentos de viaje/); assert.match(page, /Pago confirmado:/); assert.match(page, /Listo para generar/); assert.equal(page.includes("Generar voucher"), false);
+  const threshold = createReservationDocumentEligibilityService({
+    resolveAccess: access.resolver.resolve,
+    repository: {
+      async findReservation() {
+        return snapshot;
+      },
+      async findPayments() {
+        return [{ amount: 35862.75, currency: "MXN", status: "confirmed" }];
+      },
+      async findTravelerSlots() {
+        return slots;
+      },
+      async hasAcceptedContract() {
+        return true;
+      },
+    },
+  });
+  const atThreshold = await threshold.get({
+    requestedAgencySlug: "furiver",
+    reservationId: customerDetailReservationId,
+  });
+  assert.equal(
+    atThreshold.status === "authorized" &&
+      atThreshold.eligibility.ticket.eligible,
+    true,
+  );
+  const blocked = createReservationDocumentEligibilityService({
+    async resolveAccess() {
+      return { status: "unauthenticated" } as const;
+    },
+    repository: {
+      async findReservation() {
+        throw new Error("must not query");
+      },
+      async findPayments() {
+        return [];
+      },
+      async findTravelerSlots() {
+        return [];
+      },
+      async hasAcceptedContract() {
+        return false;
+      },
+    },
+  });
+  assert.deepEqual(
+    await blocked.get({
+      requestedAgencySlug: "furiver",
+      reservationId: customerDetailReservationId,
+    }),
+    { status: "unauthenticated" },
+  );
+  assert.deepEqual(
+    await service.get({
+      requestedAgencySlug: "crisenix",
+      reservationId: customerDetailReservationId,
+    }),
+    { status: "forbidden" },
+  );
+  const page = readFileSync(
+    "app/admin/[agencySlug]/reservaciones/[reservationId]/page.tsx",
+    "utf8",
+  );
+  assert.match(page, /Documentos de viaje/);
+  assert.match(page, /Pago confirmado:/);
+  assert.match(page, /Listo para generar/);
+  assert.equal(page.includes("Generar voucher"), false);
 });
 
 test("migración de tickets exige traveler tenant-safe y conserva voucher/documentos generales a nivel reservación", () => {
-  const migration = readFileSync("supabase/migrations/20260801180000_ticket_traveler_provenance.sql", "utf8");
+  const migration = readFileSync(
+    "supabase/migrations/20260801180000_ticket_traveler_provenance.sql",
+    "utf8",
+  );
   assert.match(migration, /add column reservation_traveler_id uuid/i);
   assert.match(migration, /unique \(id, reservation_id, agency_id\)/i);
-  assert.match(migration, /foreign key \(reservation_traveler_id, reservation_id, agency_id\)/i);
-  assert.match(migration, /references public\.reservation_travelers \(id, reservation_id, agency_id\)[\s\S]*on delete restrict/i);
-  assert.match(migration, /drop constraint reservation_documents_acceptance_consistency_check/i);
-  assert.match(migration, /document_type = 'ticket'[\s\S]*reservation_traveler_id is not null/i);
-  assert.match(migration, /document_type = 'voucher'[\s\S]*reservation_traveler_id is null/i);
-  assert.match(migration, /document_type = 'contract'[\s\S]*reservation_traveler_id is null/i);
-  assert.match(migration, /document_type = 'payment_receipt'[\s\S]*reservation_traveler_id is null/i);
-  assert.match(migration, /document_type = 'acceptance_certificate'[\s\S]*reservation_traveler_id is null/i);
-  assert.match(migration, /reservation_documents_ticket_traveler_version_unique/);
+  assert.match(
+    migration,
+    /foreign key \(reservation_traveler_id, reservation_id, agency_id\)/i,
+  );
+  assert.match(
+    migration,
+    /references public\.reservation_travelers \(id, reservation_id, agency_id\)[\s\S]*on delete restrict/i,
+  );
+  assert.match(
+    migration,
+    /drop constraint reservation_documents_acceptance_consistency_check/i,
+  );
+  assert.match(
+    migration,
+    /document_type = 'ticket'[\s\S]*reservation_traveler_id is not null/i,
+  );
+  assert.match(
+    migration,
+    /document_type = 'voucher'[\s\S]*reservation_traveler_id is null/i,
+  );
+  assert.match(
+    migration,
+    /document_type = 'contract'[\s\S]*reservation_traveler_id is null/i,
+  );
+  assert.match(
+    migration,
+    /document_type = 'payment_receipt'[\s\S]*reservation_traveler_id is null/i,
+  );
+  assert.match(
+    migration,
+    /document_type = 'acceptance_certificate'[\s\S]*reservation_traveler_id is null/i,
+  );
+  assert.match(
+    migration,
+    /reservation_documents_ticket_traveler_version_unique/,
+  );
   assert.equal(migration.includes("create policy"), false);
-  assert.equal(migration.includes("update public.reservation_snapshots"), false);
+  assert.equal(
+    migration.includes("update public.reservation_snapshots"),
+    false,
+  );
 });
 
 test("fundación de abordaje conserva credenciales hash, estado operacional y eventos tenant-safe sin QR", () => {
-  const migration = readFileSync("supabase/migrations/20260801210000_boarding_foundation.sql", "utf8");
-  assert.match(migration, /create table public\.traveler_boarding_credentials/i);
+  const migration = readFileSync(
+    "supabase/migrations/20260801210000_boarding_foundation.sql",
+    "utf8",
+  );
+  assert.match(
+    migration,
+    /create table public\.traveler_boarding_credentials/i,
+  );
   assert.match(migration, /token_sha256 text not null/i);
   assert.match(migration, /token_sha256 ~ '\^\[0-9a-f\]\{64\}\$'/i);
   assert.match(migration, /unique \(token_sha256\)/i);
   assert.doesNotMatch(migration, /\braw_token\b|\btoken\s+text\b/i);
   assert.match(migration, /status in \('active', 'revoked'\)/i);
-  assert.match(migration, /foreign key \(reservation_traveler_id, reservation_id, agency_id\)[\s\S]*references public\.reservation_travelers \(id, reservation_id, agency_id\)[\s\S]*on delete restrict/i);
-  assert.match(migration, /foreign key \(ticket_document_id, reservation_traveler_id, reservation_id, agency_id\)[\s\S]*references public\.reservation_documents \(id, reservation_traveler_id, reservation_id, agency_id\)[\s\S]*on delete restrict/i);
-  assert.match(migration, /traveler_boarding_credentials_one_active_traveler_unique[\s\S]*where status = 'active'/i);
+  assert.match(
+    migration,
+    /foreign key \(reservation_traveler_id, reservation_id, agency_id\)[\s\S]*references public\.reservation_travelers \(id, reservation_id, agency_id\)[\s\S]*on delete restrict/i,
+  );
+  assert.match(
+    migration,
+    /foreign key \(ticket_document_id, reservation_traveler_id, reservation_id, agency_id\)[\s\S]*references public\.reservation_documents \(id, reservation_traveler_id, reservation_id, agency_id\)[\s\S]*on delete restrict/i,
+  );
+  assert.match(
+    migration,
+    /traveler_boarding_credentials_one_active_traveler_unique[\s\S]*where status = 'active'/i,
+  );
   assert.match(migration, /create table public\.traveler_boarding_state/i);
-  assert.match(migration, /status = 'pending' and checked_in_at is null and boarded_at is null/i);
-  assert.match(migration, /status = 'checked_in' and checked_in_at is not null and boarded_at is null/i);
-  assert.match(migration, /status = 'boarded' and checked_in_at is not null and boarded_at is not null/i);
+  assert.match(
+    migration,
+    /status = 'pending' and checked_in_at is null and boarded_at is null/i,
+  );
+  assert.match(
+    migration,
+    /status = 'checked_in' and checked_in_at is not null and boarded_at is null/i,
+  );
+  assert.match(
+    migration,
+    /status = 'boarded' and checked_in_at is not null and boarded_at is not null/i,
+  );
   assert.match(migration, /create table public\.traveler_boarding_events/i);
   assert.match(migration, /event_type in \('checked_in', 'boarded'\)/i);
-  assert.match(migration, /traveler_boarding_events_credential_fk[\s\S]*on delete restrict/i);
+  assert.match(
+    migration,
+    /traveler_boarding_events_credential_fk[\s\S]*on delete restrict/i,
+  );
   assert.match(migration, /enable row level security/gi);
-  assert.match(migration, /has_agency_role\(agency_id, array\['owner', 'admin', 'staff'\]/i);
-  assert.match(migration, /revoke all on table public\.traveler_boarding_credentials from public, anon, authenticated/i);
-  assert.match(migration, /revoke all on table public\.traveler_boarding_state from public, anon, authenticated/i);
-  assert.match(migration, /revoke all on table public\.traveler_boarding_events from public, anon, authenticated/i);
+  assert.match(
+    migration,
+    /has_agency_role\(agency_id, array\['owner', 'admin', 'staff'\]/i,
+  );
+  assert.match(
+    migration,
+    /revoke all on table public\.traveler_boarding_credentials from public, anon, authenticated/i,
+  );
+  assert.match(
+    migration,
+    /revoke all on table public\.traveler_boarding_state from public, anon, authenticated/i,
+  );
+  assert.match(
+    migration,
+    /revoke all on table public\.traveler_boarding_events from public, anon, authenticated/i,
+  );
   assert.doesNotMatch(migration, /create (table|function|index) [^;]*\bqr\b/i);
-  assert.doesNotMatch(migration, /insert into public\.(traveler_boarding_credentials|traveler_boarding_state|traveler_boarding_events)/i);
+  assert.doesNotMatch(
+    migration,
+    /insert into public\.(traveler_boarding_credentials|traveler_boarding_state|traveler_boarding_events)/i,
+  );
 });
 
 test("Voucher reutiliza la elegibilidad, genera V1 privada con SHA y reemite V2 sin datos sensibles", async () => {
   const access = adminAccessFixture({ memberships: [adminMembership()] });
-  const travelers = deriveTravelerSlotStructure(financialReservationRow())!.map((slot, index) => ({
+  const travelers = deriveTravelerSlotStructure(financialReservationRow())!.map(
+    (slot, index) => ({
     position: slot.position,
     travelerType: slot.travelerType,
     status: "complete",
     firstName: index ? "Luis" : "Ana",
     lastName: index ? "García" : "Pérez",
-  }));
+    }),
+  );
   const rows: VoucherDocumentRow[] = [];
-  const state = { uploads: [] as string[], removals: [] as string[], inserted: [] as unknown[], pdf: null as Parameters<typeof renderReservationVoucherPdf>[0] | null };
+  const state = {
+    uploads: [] as string[],
+    removals: [] as string[],
+    inserted: [] as unknown[],
+    pdf: null as Parameters<typeof renderReservationVoucherPdf>[0] | null,
+  };
   const bytes = new TextEncoder().encode("%PDF-1.7 voucher privado");
   const service = createReservationVoucherDocumentService({
     resolveAccess: access.resolver.resolve,
-    eligibility: async () => ({ status: "authorized", eligibility: { voucher: { eligible: true, blockers: [] } } }),
+    eligibility: async () => ({
+      status: "authorized",
+      eligibility: { voucher: { eligible: true, blockers: [] } },
+    }),
     repository: {
-      async findReservation() { return financialReservationRow(); },
-      async listTravelers() { return travelers; },
-      async listVouchers() { return rows; },
-      async insertVoucher(input) { state.inserted.push(input); const row = { status: "available", version: input.version, generatedAt: input.generatedAt }; rows.push(row); return row; },
+      async findReservation() {
+        return financialReservationRow();
+      },
+      async listTravelers() {
+        return travelers;
+      },
+      async listVouchers() {
+        return rows;
+      },
+      async insertVoucher(input) {
+        state.inserted.push(input);
+        const row = {
+          status: "available",
+          version: input.version,
+          generatedAt: input.generatedAt,
+        };
+        rows.push(row);
+        return row;
+      },
     },
-    storage: { async upload({ path }) { state.uploads.push(path); }, async remove(path) { state.removals.push(path); }, async download() { return bytes; } },
-    renderPdf: async (data) => { state.pdf = data; return bytes; },
+    storage: {
+      async upload({ path }) {
+        state.uploads.push(path);
+      },
+      async remove(path) {
+        state.removals.push(path);
+      },
+      async download() {
+        return bytes;
+      },
+    },
+    renderPdf: async (data) => {
+      state.pdf = data;
+      return bytes;
+    },
     now: () => new Date(TEST_NOW),
     createDocumentId: () => "64cf2e61-23bd-4d4a-85ca-e1d7a36fc183",
   });
-  const input = { requestedAgencySlug: "furiver", reservationId: customerDetailReservationId };
-  assert.deepEqual(await service.ensure(input), { status: "generated", voucher: { version: 1, generatedAt: TEST_NOW } });
-  assert.match(state.uploads[0], /^agency-furiver\/[0-9a-f-]+\/voucher\/[0-9a-f-]+\/v1\.pdf$/i);
+  const input = {
+    requestedAgencySlug: "furiver",
+    reservationId: customerDetailReservationId,
+  };
+  assert.deepEqual(await service.ensure(input), {
+    status: "generated",
+    voucher: { version: 1, generatedAt: TEST_NOW },
+  });
+  assert.match(
+    state.uploads[0],
+    /^agency-furiver\/[0-9a-f-]+\/voucher\/[0-9a-f-]+\/v1\.pdf$/i,
+  );
   const inserted = state.inserted[0] as Record<string, unknown>;
   assert.equal(inserted.contentSha256, calculateContractDocumentSha256(bytes));
   assert.equal(JSON.stringify(inserted).includes("paymentId"), false);
@@ -7641,25 +12350,86 @@ test("Voucher reutiliza la elegibilidad, genera V1 privada con SHA y reemite V2 
   assert.equal(JSON.stringify(state.pdf).includes("birthDate"), false);
   assert.equal((await service.ensure(input)).status, "existing");
   rows[0] = { ...rows[0], status: "revoked" };
-  assert.deepEqual(await service.ensure(input), { status: "generated", voucher: { version: 2, generatedAt: TEST_NOW } });
+  assert.deepEqual(await service.ensure(input), {
+    status: "generated",
+    voucher: { version: 2, generatedAt: TEST_NOW },
+  });
   assert.equal(state.uploads.length, 2);
 
   const blocked = createReservationVoucherDocumentService({
     resolveAccess: access.resolver.resolve,
-    eligibility: async () => ({ status: "authorized", eligibility: { voucher: { eligible: false, blockers: ["deposit_not_covered"] } } }),
-    repository: { async findReservation() { throw new Error("must not query"); }, async listTravelers() { return []; }, async listVouchers() { return []; }, async insertVoucher() { throw new Error("must not insert"); } },
-    storage: { async upload() { throw new Error("must not upload"); }, async remove() {}, async download() { return new Uint8Array(); } },
+    eligibility: async () => ({
+      status: "authorized",
+      eligibility: {
+        voucher: { eligible: false, blockers: ["deposit_not_covered"] },
+      },
+    }),
+    repository: {
+      async findReservation() {
+        throw new Error("must not query");
+      },
+      async listTravelers() {
+        return [];
+      },
+      async listVouchers() {
+        return [];
+      },
+      async insertVoucher() {
+        throw new Error("must not insert");
+      },
+    },
+    storage: {
+      async upload() {
+        throw new Error("must not upload");
+      },
+      async remove() {},
+      async download() {
+        return new Uint8Array();
+      },
+    },
     renderPdf: async () => bytes,
   });
-  assert.deepEqual(await blocked.ensure(input), { status: "not_eligible", blockers: ["deposit_not_covered"] });
-  await assert.rejects(createReservationVoucherDocumentService({
+  assert.deepEqual(await blocked.ensure(input), {
+    status: "not_eligible",
+    blockers: ["deposit_not_covered"],
+  });
+  await assert.rejects(
+    createReservationVoucherDocumentService({
     resolveAccess: access.resolver.resolve,
-    eligibility: async () => ({ status: "authorized", eligibility: { voucher: { eligible: true, blockers: [] } } }),
-    repository: { async findReservation() { return financialReservationRow(); }, async listTravelers() { return travelers; }, async listVouchers() { return []; }, async insertVoucher() { throw new Error("DB secret"); } },
-    storage: { async upload() {}, async remove(path) { state.removals.push(path); }, async download() { return bytes; } },
+      eligibility: async () => ({
+        status: "authorized",
+        eligibility: { voucher: { eligible: true, blockers: [] } },
+      }),
+      repository: {
+        async findReservation() {
+          return financialReservationRow();
+        },
+        async listTravelers() {
+          return travelers;
+        },
+        async listVouchers() {
+          return [];
+        },
+        async insertVoucher() {
+          throw new Error("DB secret");
+        },
+      },
+      storage: {
+        async upload() {},
+        async remove(path) {
+          state.removals.push(path);
+        },
+        async download() {
+          return bytes;
+        },
+      },
     renderPdf: async () => bytes,
     createDocumentId: () => "64cf2e61-23bd-4d4a-85ca-e1d7a36fc183",
-  }).ensure(input), (error: unknown) => error instanceof ReservationVoucherDocumentError && !error.message.includes("DB"));
+    }).ensure(input),
+    (error: unknown) =>
+      error instanceof ReservationVoucherDocumentError &&
+      !error.message.includes("DB"),
+  );
   assert.ok(state.removals.length > 0);
 });
 
@@ -7668,31 +12438,100 @@ test("ciclo de vida del Voucher revoca sólo tras perder elegibilidad y no revie
   let revoked = 0;
   const ineligible = createVoucherLifecycleService({
     resolveAccess: access.resolver.resolve,
-    eligibility: async () => ({ status: "authorized", eligibility: { voucher: { eligible: false } } }),
-    repository: { async hasAvailableVoucher() { return true; }, async revokeAvailableVoucher() { revoked += 1; } },
+    eligibility: async () => ({
+      status: "authorized",
+      eligibility: { voucher: { eligible: false } },
+    }),
+    repository: {
+      async hasAvailableVoucher() {
+        return true;
+      },
+      async revokeAvailableVoucher() {
+        revoked += 1;
+      },
+    },
   });
-  assert.equal(await ineligible.reconcile({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId }), "revoked");
+  assert.equal(
+    await ineligible.reconcile({
+      requestedAgencySlug: "furiver",
+      reservationId: customerDetailReservationId,
+    }),
+    "revoked",
+  );
   assert.equal(revoked, 1);
   const stillEligible = createVoucherLifecycleService({
     resolveAccess: access.resolver.resolve,
-    eligibility: async () => ({ status: "authorized", eligibility: { voucher: { eligible: true } } }),
-    repository: { async hasAvailableVoucher() { return true; }, async revokeAvailableVoucher() { throw new Error("must not revoke"); } },
+    eligibility: async () => ({
+      status: "authorized",
+      eligibility: { voucher: { eligible: true } },
+    }),
+    repository: {
+      async hasAvailableVoucher() {
+        return true;
+      },
+      async revokeAvailableVoucher() {
+        throw new Error("must not revoke");
+      },
+    },
   });
-  assert.equal(await stillEligible.reconcile({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId }), "not_applicable");
+  assert.equal(
+    await stillEligible.reconcile({
+      requestedAgencySlug: "furiver",
+      reservationId: customerDetailReservationId,
+    }),
+    "not_applicable",
+  );
   const uncertain = createVoucherLifecycleService({
     resolveAccess: access.resolver.resolve,
-    eligibility: async () => { throw new Error("temporary read failure"); },
-    repository: { async hasAvailableVoucher() { return true; }, async revokeAvailableVoucher() { throw new Error("must not revoke"); } },
+    eligibility: async () => {
+      throw new Error("temporary read failure");
+    },
+    repository: {
+      async hasAvailableVoucher() {
+        return true;
+      },
+      async revokeAvailableVoucher() {
+        throw new Error("must not revoke");
+      },
+    },
   });
-  assert.equal(await uncertain.reconcile({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId }), "document_error");
-  const repository = readFileSync("lib/documents/reservation-voucher-document-repository.ts", "utf8");
-  const lifecycleRepository = readFileSync("lib/travel-documents/voucher-lifecycle-repository.ts", "utf8");
-  const action = readFileSync("app/admin/[agencySlug]/reservaciones/[reservationId]/voucher-actions.ts", "utf8");
-  const page = readFileSync("app/admin/[agencySlug]/reservaciones/[reservationId]/page.tsx", "utf8");
-  const control = readFileSync("app/admin/[agencySlug]/reservaciones/[reservationId]/voucher-control.tsx", "utf8");
-  assert.match(repository, /payment_id\s*:\s*null/); assert.match(repository, /contract_instance_id\s*:\s*null/); assert.match(repository, /contract_acceptance_id\s*:\s*null/); assert.match(repository, /reservation_traveler_id\s*:\s*null/);
-  assert.match(lifecycleRepository, /status\s*:\s*"revoked"/); assert.match(action, /ensureReservationVoucherDocument/); assert.equal(/export\s+(?!async function|type\b)/.test(action), false);
-  assert.match(control, /Generar Voucher/); assert.match(page, /reconcileReservationVoucherLifecycle/); assert.match(page, /Voucher disponible/);
+  assert.equal(
+    await uncertain.reconcile({
+      requestedAgencySlug: "furiver",
+      reservationId: customerDetailReservationId,
+    }),
+    "document_error",
+  );
+  const repository = readFileSync(
+    "lib/documents/reservation-voucher-document-repository.ts",
+    "utf8",
+  );
+  const lifecycleRepository = readFileSync(
+    "lib/travel-documents/voucher-lifecycle-repository.ts",
+    "utf8",
+  );
+  const action = readFileSync(
+    "app/admin/[agencySlug]/reservaciones/[reservationId]/voucher-actions.ts",
+    "utf8",
+  );
+  const page = readFileSync(
+    "app/admin/[agencySlug]/reservaciones/[reservationId]/page.tsx",
+    "utf8",
+  );
+  const control = readFileSync(
+    "app/admin/[agencySlug]/reservaciones/[reservationId]/voucher-control.tsx",
+    "utf8",
+  );
+  assert.match(repository, /payment_id\s*:\s*null/);
+  assert.match(repository, /contract_instance_id\s*:\s*null/);
+  assert.match(repository, /contract_acceptance_id\s*:\s*null/);
+  assert.match(repository, /reservation_traveler_id\s*:\s*null/);
+  assert.match(lifecycleRepository, /status\s*:\s*"revoked"/);
+  assert.match(action, /ensureReservationVoucherDocument/);
+  assert.equal(/export\s+(?!async function|type\b)/.test(action), false);
+  assert.match(control, /Generar Voucher/);
+  assert.match(page, /reconcileReservationVoucherLifecycle/);
+  assert.match(page, /Voucher disponible/);
 });
 
 test("Ticket individual reutiliza la elegibilidad global, versiona por traveler y conserva provenance privada", async () => {
@@ -7700,88 +12539,419 @@ test("Ticket individual reutiliza la elegibilidad global, versiona por traveler 
   const travelerOne = "74cf2e61-23bd-4d4a-85ca-e1d7a36fc183";
   const travelerTwo = "84cf2e61-23bd-4d4a-85ca-e1d7a36fc183";
   const travelers = new Map([
-    [travelerOne, { id: travelerOne, position: 1, travelerType: "adult", status: "complete", firstName: "María", lastName: "Pérez" }],
-    [travelerTwo, { id: travelerTwo, position: 2, travelerType: "minor", status: "complete", firstName: "Ana", lastName: "Pérez" }],
+    [
+      travelerOne,
+      {
+        id: travelerOne,
+        position: 1,
+        travelerType: "adult",
+        status: "complete",
+        firstName: "María",
+        lastName: "Pérez",
+      },
+    ],
+    [
+      travelerTwo,
+      {
+        id: travelerTwo,
+        position: 2,
+        travelerType: "minor",
+        status: "complete",
+        firstName: "Ana",
+        lastName: "Pérez",
+      },
+    ],
   ]);
   const tickets = new Map<string, ReservationTicketDocumentRow[]>();
-  const state = { uploads: [] as string[], removals: [] as string[], inserts: [] as unknown[], pdf: null as Parameters<typeof renderReservationTicketPdf>[0] | null };
+  const state = {
+    uploads: [] as string[],
+    removals: [] as string[],
+    inserts: [] as unknown[],
+    pdf: null as Parameters<typeof renderReservationTicketPdf>[0] | null,
+  };
   const credentials = new Set<string>();
   const bytes = new TextEncoder().encode("%PDF-1.7 ticket individual");
-  const credentialMaterial = async () => ({ tokenSha256: "a".repeat(64), qrPng: new Uint8Array([137]) });
+  const credentialMaterial = async () => ({
+    tokenSha256: "a".repeat(64),
+    qrPng: new Uint8Array([137]),
+  });
   const service = createReservationTicketDocumentService({
     resolveAccess: access.resolver.resolve,
-    eligibility: async () => ({ status: "authorized", eligibility: { ticket: { eligible: true, blockers: [] } } }),
+    eligibility: async () => ({
+      status: "authorized",
+      eligibility: { ticket: { eligible: true, blockers: [] } },
+    }),
     repository: {
-      async findReservation() { return financialReservationRow(); },
-      async findTraveler({ travelerKey, agencyId, reservationId }) { return agencyId === "agency-furiver" && reservationId === customerDetailReservationId ? travelers.get(travelerKey) ?? null : null; },
-      async listTickets({ travelerId }) { return tickets.get(travelerId) ?? []; },
-      async hasActiveBoardingCredential({ ticketDocumentId }) { return credentials.has(ticketDocumentId); },
-      async finalizeTicketWithCredential(input) { state.inserts.push(input); const rows = tickets.get(input.travelerId) ?? []; const historical = rows.map((row) => { if (row.status === "available") credentials.delete(row.id); return row.status === "available" ? { ...row, status: "superseded" } : row; }); const row = { id: input.documentId, status: "available", version: input.version, generatedAt: input.generatedAt }; tickets.set(input.travelerId, [...historical, row]); credentials.add(row.id); return { status: "created" as const, version: row.version, generatedAt: row.generatedAt }; },
+      async findReservation() {
+        return financialReservationRow();
+      },
+      async findTraveler({ travelerKey, agencyId, reservationId }) {
+        return agencyId === "agency-furiver" &&
+          reservationId === customerDetailReservationId
+          ? (travelers.get(travelerKey) ?? null)
+          : null;
+      },
+      async listTickets({ travelerId }) {
+        return tickets.get(travelerId) ?? [];
+      },
+      async hasActiveBoardingCredential({ ticketDocumentId }) {
+        return credentials.has(ticketDocumentId);
+      },
+      async finalizeTicketWithCredential(input) {
+        state.inserts.push(input);
+        const rows = tickets.get(input.travelerId) ?? [];
+        const historical = rows.map((row) => {
+          if (row.status === "available") credentials.delete(row.id);
+          return row.status === "available"
+            ? { ...row, status: "superseded" }
+            : row;
+        });
+        const row = {
+          id: input.documentId,
+          status: "available",
+          version: input.version,
+          generatedAt: input.generatedAt,
+        };
+        tickets.set(input.travelerId, [...historical, row]);
+        credentials.add(row.id);
+        return {
+          status: "created" as const,
+          version: row.version,
+          generatedAt: row.generatedAt,
+        };
+      },
     },
-    storage: { async upload({ path }) { state.uploads.push(path); }, async remove(path) { state.removals.push(path); }, async download() { return bytes; } },
-    renderPdf: async (data) => { state.pdf = data; return bytes; },
+    storage: {
+      async upload({ path }) {
+        state.uploads.push(path);
+      },
+      async remove(path) {
+        state.removals.push(path);
+      },
+      async download() {
+        return bytes;
+      },
+    },
+    renderPdf: async (data) => {
+      state.pdf = data;
+      return bytes;
+    },
     createCredentialMaterial: credentialMaterial,
     now: () => new Date(TEST_NOW),
     createDocumentId: () => "94cf2e61-23bd-4d4a-85ca-e1d7a36fc183",
   });
-  const request = { requestedAgencySlug: "furiver", reservationId: customerDetailReservationId, travelerKey: travelerOne };
+  const request = {
+    requestedAgencySlug: "furiver",
+    reservationId: customerDetailReservationId,
+    travelerKey: travelerOne,
+  };
   const first = await service.ensure(request);
-  assert.deepEqual(first.status === "generated" ? first.ticket : null, { travelerPosition: 1, travelerName: "María Pérez", travelerType: "adult", version: 1, generatedAt: TEST_NOW });
-  assert.match(state.uploads[0], /^agency-furiver\/[0-9a-f-]+\/ticket\/[0-9a-f-]+\/[0-9a-f-]+\/v1\.pdf$/i);
+  assert.deepEqual(first.status === "generated" ? first.ticket : null, {
+    travelerPosition: 1,
+    travelerName: "María Pérez",
+    travelerType: "adult",
+    version: 1,
+    generatedAt: TEST_NOW,
+  });
+  assert.match(
+    state.uploads[0],
+    /^agency-furiver\/[0-9a-f-]+\/ticket\/[0-9a-f-]+\/[0-9a-f-]+\/v1\.pdf$/i,
+  );
   const inserted = state.inserts[0] as Record<string, unknown>;
-  assert.equal(inserted.travelerId, travelerOne); assert.equal(inserted.contentSha256, calculateContractDocumentSha256(bytes));
+  assert.equal(inserted.travelerId, travelerOne);
+  assert.equal(inserted.contentSha256, calculateContractDocumentSha256(bytes));
   assert.equal(JSON.stringify(inserted).includes("paymentId"), false);
-  assert.equal(state.pdf?.traveler.firstName, "María"); assert.equal(state.pdf?.traveler.travelerType, "adult");
+  assert.equal(state.pdf?.traveler.firstName, "María");
+  assert.equal(state.pdf?.traveler.travelerType, "adult");
   assert.equal((await service.ensure(request)).status, "existing");
-  assert.equal((await service.ensure({ ...request, travelerKey: travelerTwo })).status, "generated");
-  tickets.set(travelerOne, [{ ...tickets.get(travelerOne)![0], status: "revoked" }]);
-  const reissued = await service.ensure(request); assert.equal(reissued.status === "generated" ? reissued.ticket.version : null, 2);
+  assert.equal(
+    (await service.ensure({ ...request, travelerKey: travelerTwo })).status,
+    "generated",
+  );
+  tickets.set(travelerOne, [
+    { ...tickets.get(travelerOne)![0], status: "revoked" },
+  ]);
+  const reissued = await service.ensure(request);
+  assert.equal(
+    reissued.status === "generated" ? reissued.ticket.version : null,
+    2,
+  );
   const blocked = createReservationTicketDocumentService({
     resolveAccess: access.resolver.resolve,
-    eligibility: async () => ({ status: "authorized", eligibility: { ticket: { eligible: false, blockers: ["payment_threshold_not_met"] } } }),
-    repository: { async findReservation() { throw new Error("must not query"); }, async findTraveler() { throw new Error("must not query"); }, async listTickets() { return []; }, async hasActiveBoardingCredential() { return false; }, async finalizeTicketWithCredential() { throw new Error("must not insert"); } },
-    storage: { async upload() { throw new Error("must not upload"); }, async remove() {}, async download() { return bytes; } }, renderPdf: async () => bytes, createCredentialMaterial: credentialMaterial,
+    eligibility: async () => ({
+      status: "authorized",
+      eligibility: {
+        ticket: { eligible: false, blockers: ["payment_threshold_not_met"] },
+      },
+    }),
+    repository: {
+      async findReservation() {
+        throw new Error("must not query");
+      },
+      async findTraveler() {
+        throw new Error("must not query");
+      },
+      async listTickets() {
+        return [];
+      },
+      async hasActiveBoardingCredential() {
+        return false;
+      },
+      async finalizeTicketWithCredential() {
+        throw new Error("must not insert");
+      },
+    },
+    storage: {
+      async upload() {
+        throw new Error("must not upload");
+      },
+      async remove() {},
+      async download() {
+        return bytes;
+      },
+    },
+    renderPdf: async () => bytes,
+    createCredentialMaterial: credentialMaterial,
   });
-  assert.deepEqual(await blocked.ensure(request), { status: "not_eligible", blockers: ["payment_threshold_not_met"] });
+  assert.deepEqual(await blocked.ensure(request), {
+    status: "not_eligible",
+    blockers: ["payment_threshold_not_met"],
+  });
   const pending = createReservationTicketDocumentService({
-    resolveAccess: access.resolver.resolve, eligibility: async () => ({ status: "authorized", eligibility: { ticket: { eligible: true, blockers: [] } } }),
-    repository: { async findReservation() { return financialReservationRow(); }, async findTraveler() { return { ...travelers.get(travelerOne)!, status: "pending" }; }, async listTickets() { return []; }, async hasActiveBoardingCredential() { return false; }, async finalizeTicketWithCredential() { throw new Error("must not insert"); } },
-    storage: { async upload() { throw new Error("must not upload"); }, async remove() {}, async download() { return bytes; } }, renderPdf: async () => bytes, createCredentialMaterial: credentialMaterial,
+    resolveAccess: access.resolver.resolve,
+    eligibility: async () => ({
+      status: "authorized",
+      eligibility: { ticket: { eligible: true, blockers: [] } },
+    }),
+    repository: {
+      async findReservation() {
+        return financialReservationRow();
+      },
+      async findTraveler() {
+        return { ...travelers.get(travelerOne)!, status: "pending" };
+      },
+      async listTickets() {
+        return [];
+      },
+      async hasActiveBoardingCredential() {
+        return false;
+      },
+      async finalizeTicketWithCredential() {
+        throw new Error("must not insert");
+      },
+    },
+    storage: {
+      async upload() {
+        throw new Error("must not upload");
+      },
+      async remove() {},
+      async download() {
+        return bytes;
+      },
+    },
+    renderPdf: async () => bytes,
+    createCredentialMaterial: credentialMaterial,
   });
-  assert.deepEqual(await pending.ensure(request), { status: "traveler_incomplete" });
-  assert.deepEqual(await service.ensure({ ...request, requestedAgencySlug: "crisenix" }), { status: "forbidden" });
+  assert.deepEqual(await pending.ensure(request), {
+    status: "traveler_incomplete",
+  });
+  assert.deepEqual(
+    await service.ensure({ ...request, requestedAgencySlug: "crisenix" }),
+    { status: "forbidden" },
+  );
 });
 
 test("Ticket recupera fallos y el lifecycle revoca todos sólo al perder la elegibilidad global", async () => {
   const access = adminAccessFixture({ memberships: [adminMembership()] });
   const travelerId = "74cf2e61-23bd-4d4a-85ca-e1d7a36fc183";
   const bytes = new TextEncoder().encode("%PDF-1.7 ticket");
-  const credentialMaterial = async () => ({ tokenSha256: "b".repeat(64), qrPng: new Uint8Array([137]) });
-  const failure = createReservationTicketDocumentService({
-    resolveAccess: access.resolver.resolve, eligibility: async () => ({ status: "authorized", eligibility: { ticket: { eligible: true, blockers: [] } } }),
-    repository: { async findReservation() { return financialReservationRow(); }, async findTraveler() { return { id: travelerId, position: 1, travelerType: "adult", status: "complete", firstName: "Ana", lastName: "Pérez" }; }, async listTickets() { return []; }, async hasActiveBoardingCredential() { return false; }, async finalizeTicketWithCredential() { throw new Error("database private"); } },
-    storage: { async upload() {}, async remove() {}, async download() { return bytes; } }, renderPdf: async () => bytes, createCredentialMaterial: credentialMaterial, createDocumentId: () => "94cf2e61-23bd-4d4a-85ca-e1d7a36fc183",
+  const credentialMaterial = async () => ({
+    tokenSha256: "b".repeat(64),
+    qrPng: new Uint8Array([137]),
   });
-  await assert.rejects(failure.ensure({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId, travelerKey: travelerId }), (error: unknown) => error instanceof ReservationTicketDocumentError && !error.message.includes("database"));
+  const failure = createReservationTicketDocumentService({
+    resolveAccess: access.resolver.resolve,
+    eligibility: async () => ({
+      status: "authorized",
+      eligibility: { ticket: { eligible: true, blockers: [] } },
+    }),
+    repository: {
+      async findReservation() {
+        return financialReservationRow();
+      },
+      async findTraveler() {
+        return {
+          id: travelerId,
+          position: 1,
+          travelerType: "adult",
+          status: "complete",
+          firstName: "Ana",
+          lastName: "Pérez",
+        };
+      },
+      async listTickets() {
+        return [];
+      },
+      async hasActiveBoardingCredential() {
+        return false;
+      },
+      async finalizeTicketWithCredential() {
+        throw new Error("database private");
+      },
+    },
+    storage: {
+      async upload() {},
+      async remove() {},
+      async download() {
+        return bytes;
+      },
+    },
+    renderPdf: async () => bytes,
+    createCredentialMaterial: credentialMaterial,
+    createDocumentId: () => "94cf2e61-23bd-4d4a-85ca-e1d7a36fc183",
+  });
+  await assert.rejects(
+    failure.ensure({
+      requestedAgencySlug: "furiver",
+      reservationId: customerDetailReservationId,
+      travelerKey: travelerId,
+    }),
+    (error: unknown) =>
+      error instanceof ReservationTicketDocumentError &&
+      !error.message.includes("database"),
+  );
   let revoked = 0;
-  const lifecycle = createReservationTicketLifecycleService({ resolveAccess: access.resolver.resolve, eligibility: async () => ({ status: "authorized", eligibility: { ticket: { eligible: false } } }), repository: { async hasAvailableTickets() { return true; }, async revokeAvailableTickets() { revoked += 1; }, async findTravelerByPosition() { return { id: travelerId }; }, async revokeAvailableTicketsForTraveler() { throw new Error("must not run"); } } });
-  assert.equal(await lifecycle.reconcile({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId }), "revoked"); assert.equal(revoked, 1);
-  const retained = createReservationTicketLifecycleService({ resolveAccess: access.resolver.resolve, eligibility: async () => ({ status: "authorized", eligibility: { ticket: { eligible: true } } }), repository: { async hasAvailableTickets() { return true; }, async revokeAvailableTickets() { throw new Error("must not revoke"); }, async findTravelerByPosition() { return null; }, async revokeAvailableTicketsForTraveler() {} } });
-  assert.equal(await retained.reconcile({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId }), "not_applicable");
-  const tinyPng = Uint8Array.from(Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+wwf7WQAAAABJRU5ErkJggg==", "base64"));
-  const pdf = await renderReservationTicketPdf({ agencyName: "Furiver", version: 1, generatedAt: TEST_NOW, boardingQrPng: tinyPng, traveler: { position: 1, firstName: "María", lastName: "Pérez", travelerType: "adult" }, reservation: { code: "FT-004-260801-D01B4E", tripName: "Viaje", tripCode: "FT", departureDate: TEST_NOW, boarding: "Terminal", currency: "MXN" } });
+  const lifecycle = createReservationTicketLifecycleService({
+    resolveAccess: access.resolver.resolve,
+    eligibility: async () => ({
+      status: "authorized",
+      eligibility: { ticket: { eligible: false } },
+    }),
+    repository: {
+      async hasAvailableTickets() {
+        return true;
+      },
+      async revokeAvailableTickets() {
+        revoked += 1;
+      },
+      async findTravelerByPosition() {
+        return { id: travelerId };
+      },
+      async revokeAvailableTicketsForTraveler() {
+        throw new Error("must not run");
+      },
+    },
+  });
+  assert.equal(
+    await lifecycle.reconcile({
+      requestedAgencySlug: "furiver",
+      reservationId: customerDetailReservationId,
+    }),
+    "revoked",
+  );
+  assert.equal(revoked, 1);
+  const retained = createReservationTicketLifecycleService({
+    resolveAccess: access.resolver.resolve,
+    eligibility: async () => ({
+      status: "authorized",
+      eligibility: { ticket: { eligible: true } },
+    }),
+    repository: {
+      async hasAvailableTickets() {
+        return true;
+      },
+      async revokeAvailableTickets() {
+        throw new Error("must not revoke");
+      },
+      async findTravelerByPosition() {
+        return null;
+      },
+      async revokeAvailableTicketsForTraveler() {},
+    },
+  });
+  assert.equal(
+    await retained.reconcile({
+      requestedAgencySlug: "furiver",
+      reservationId: customerDetailReservationId,
+    }),
+    "not_applicable",
+  );
+  const tinyPng = Uint8Array.from(
+    Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+wwf7WQAAAABJRU5ErkJggg==",
+      "base64",
+    ),
+  );
+  const pdf = await renderReservationTicketPdf({
+    agencyName: "Furiver",
+    version: 1,
+    generatedAt: TEST_NOW,
+    boardingQrPng: tinyPng,
+    traveler: {
+      position: 1,
+      firstName: "María",
+      lastName: "Pérez",
+      travelerType: "adult",
+    },
+    reservation: {
+      code: "FT-004-260801-D01B4E",
+      tripName: "Viaje",
+      tripCode: "FT",
+      departureDate: TEST_NOW,
+      boarding: "Terminal",
+      currency: "MXN",
+    },
+  });
   assert.equal(new TextDecoder().decode(pdf.slice(0, 4)), "%PDF");
-  const repository = readFileSync("lib/documents/reservation-ticket-document-repository.ts", "utf8"); const lifecycleRepository = readFileSync("lib/travel-documents/ticket-lifecycle-repository.ts", "utf8"); const action = readFileSync("app/admin/[agencySlug]/reservaciones/[reservationId]/ticket-actions.ts", "utf8");
-  assert.match(repository, /finalize_ticket_with_boarding_credential_atomic/); assert.match(repository, /target_traveler_id: input\.travelerId/); assert.match(repository, /target_content_sha256: input\.contentSha256/); assert.match(repository, /target_token_sha256: input\.tokenSha256/); assert.match(lifecycleRepository, /revoke_available_tickets_with_credentials_atomic/); assert.match(action, /ensureReservationTravelerTicket/); assert.equal(/export\s+(?!async function|type\b)/.test(action), false);
+  const repository = readFileSync(
+    "lib/documents/reservation-ticket-document-repository.ts",
+    "utf8",
+  );
+  const lifecycleRepository = readFileSync(
+    "lib/travel-documents/ticket-lifecycle-repository.ts",
+    "utf8",
+  );
+  const action = readFileSync(
+    "app/admin/[agencySlug]/reservaciones/[reservationId]/ticket-actions.ts",
+    "utf8",
+  );
+  assert.match(repository, /finalize_ticket_with_boarding_credential_atomic/);
+  assert.match(repository, /target_traveler_id: input\.travelerId/);
+  assert.match(repository, /target_content_sha256: input\.contentSha256/);
+  assert.match(repository, /target_token_sha256: input\.tokenSha256/);
+  assert.match(
+    lifecycleRepository,
+    /revoke_available_tickets_with_credentials_atomic/,
+  );
+  assert.match(action, /ensureReservationTravelerTicket/);
+  assert.equal(/export\s+(?!async function|type\b)/.test(action), false);
 });
 
 test("credencial de abordaje emite un QR opaco, finaliza Ticket y credencial de forma atómica y conserva el estado operativo", () => {
-  const migration = readFileSync("supabase/migrations/20260801220000_atomic_ticket_boarding_credential.sql", "utf8");
-  const issuer = readFileSync("lib/documents/ticket-boarding-credential.ts", "utf8");
-  const core = readFileSync("lib/documents/reservation-ticket-document-core.ts", "utf8");
-  const renderer = readFileSync("lib/documents/reservation-ticket-document-pdf.ts", "utf8");
-  const lifecycleRepository = readFileSync("lib/travel-documents/ticket-lifecycle-repository.ts", "utf8");
-  const adminPage = readFileSync("app/admin/[agencySlug]/reservaciones/[reservationId]/page.tsx", "utf8");
+  const migration = readFileSync(
+    "supabase/migrations/20260801220000_atomic_ticket_boarding_credential.sql",
+    "utf8",
+  );
+  const issuer = readFileSync(
+    "lib/documents/ticket-boarding-credential.ts",
+    "utf8",
+  );
+  const core = readFileSync(
+    "lib/documents/reservation-ticket-document-core.ts",
+    "utf8",
+  );
+  const renderer = readFileSync(
+    "lib/documents/reservation-ticket-document-pdf.ts",
+    "utf8",
+  );
+  const lifecycleRepository = readFileSync(
+    "lib/travel-documents/ticket-lifecycle-repository.ts",
+    "utf8",
+  );
+  const adminPage = readFileSync(
+    "app/admin/[agencySlug]/reservaciones/[reservationId]/page.tsx",
+    "utf8",
+  );
   const rawToken = "a-opaque-token-that-is-never-an-id";
   const payload = boardingQrPayload(rawToken);
   assert.equal(payload, `${BOARDING_QR_PREFIX}${rawToken}`);
@@ -7791,12 +12961,30 @@ test("credencial de abordaje emite un QR opaco, finaliza Ticket y credencial de 
   assert.match(issuer, /randomBytes\(32\)\.toString\("base64url"\)/);
   assert.match(issuer, /QRCode\.toDataURL\(boardingQrPayload\(rawToken\)/);
   assert.doesNotMatch(migration, /raw_token|token_raw|token\s+text/i);
-  assert.match(migration, /security definer set search_path = public, pg_temp/i);
-  assert.match(migration, /from public\.reservation_travelers[\s\S]*for update/i);
-  assert.match(migration, /insert into public\.reservation_documents[\s\S]*insert into public\.traveler_boarding_credentials[\s\S]*insert into public\.traveler_boarding_state/i);
-  assert.match(migration, /on conflict \(reservation_traveler_id\) do nothing/i);
-  assert.match(migration, /revoke all on function public\.finalize_ticket_with_boarding_credential_atomic[\s\S]*from public, anon, authenticated/i);
-  assert.match(migration, /grant execute on function public\.finalize_ticket_with_boarding_credential_atomic[\s\S]*to service_role/i);
+  assert.match(
+    migration,
+    /security definer set search_path = public, pg_temp/i,
+  );
+  assert.match(
+    migration,
+    /from public\.reservation_travelers[\s\S]*for update/i,
+  );
+  assert.match(
+    migration,
+    /insert into public\.reservation_documents[\s\S]*insert into public\.traveler_boarding_credentials[\s\S]*insert into public\.traveler_boarding_state/i,
+  );
+  assert.match(
+    migration,
+    /on conflict \(reservation_traveler_id\) do nothing/i,
+  );
+  assert.match(
+    migration,
+    /revoke all on function public\.finalize_ticket_with_boarding_credential_atomic[\s\S]*from public, anon, authenticated/i,
+  );
+  assert.match(
+    migration,
+    /grant execute on function public\.finalize_ticket_with_boarding_credential_atomic[\s\S]*to service_role/i,
+  );
   assert.match(migration, /set status = 'superseded'/i);
   assert.match(migration, /set status = 'revoked', revoked_at = issued_time/i);
   assert.match(core, /hasActiveBoardingCredential/);
@@ -7804,18 +12992,32 @@ test("credencial de abordaje emite un QR opaco, finaliza Ticket y credencial de 
   assert.match(core, /calculateContractDocumentSha256\(bytes\)/);
   assert.match(renderer, /embedPng\(data\.boardingQrPng\)/);
   assert.match(renderer, /Código de abordaje/);
-  assert.match(renderer, /no sustituye los procedimientos de check-in o abordaje/i);
-  assert.match(lifecycleRepository, /revoke_available_tickets_with_credentials_atomic/);
+  assert.match(
+    renderer,
+    /no sustituye los procedimientos de check-in o abordaje/i,
+  );
+  assert.match(
+    lifecycleRepository,
+    /revoke_available_tickets_with_credentials_atomic/,
+  );
   assert.match(adminPage, /Boleto sin credencial de abordaje/);
   assert.match(adminPage, /Credencial de abordaje: Activa/);
 });
 
 test("payload de abordaje genera PNG QR sin incorporar identificadores internos", async () => {
   const rawToken = "hXU3s9YQq8aYlV1Wq7E1F6WqRk8cB2zM-opaque";
-  const dataUrl = await QRCode.toDataURL(boardingQrPayload(rawToken), { type: "image/png", errorCorrectionLevel: "M", margin: 1, width: 240 });
+  const dataUrl = await QRCode.toDataURL(boardingQrPayload(rawToken), {
+    type: "image/png",
+    errorCorrectionLevel: "M",
+    margin: 1,
+    width: 240,
+  });
   assert.match(dataUrl, /^data:image\/png;base64,/);
   assert.equal(boardingQrPayload(rawToken).includes("agency-furiver"), false);
-  assert.equal(boardingQrPayload(rawToken).includes(customerDetailReservationId), false);
+  assert.equal(
+    boardingQrPayload(rawToken).includes(customerDetailReservationId),
+    false,
+  );
 });
 
 test("scanner administrativo valida QR opaco y las transiciones de abordaje son explícitas e idempotentes", async () => {
@@ -7825,117 +13027,440 @@ test("scanner administrativo valida QR opaco y las transiciones de abordaje son 
   const ticketId = "84cf2e61-23bd-4d4a-85ca-e1d7a36fc183";
   let credentialStatus = "active";
   let ticketStatus = "available";
-  let boarding = { status: "pending", checkedInAt: null as string | null, boardedAt: null as string | null };
+  let boarding = {
+    status: "pending",
+    checkedInAt: null as string | null,
+    boardedAt: null as string | null,
+  };
   const events: string[] = [];
   const repository = {
-    async findCredential({ agencyId, tokenSha256 }: { agencyId: string; tokenSha256: string }) { return agencyId === "agency-furiver" && tokenSha256 === hashBoardingToken(rawToken) ? { id: "94cf2e61-23bd-4d4a-85ca-e1d7a36fc183", reservationId: customerDetailReservationId, travelerId, ticketDocumentId: ticketId, status: credentialStatus } : null; },
-    async findTicket() { return { id: ticketId, documentType: "ticket", status: ticketStatus, reservationId: customerDetailReservationId, travelerId }; },
-    async findTraveler() { return { id: travelerId, reservationId: customerDetailReservationId, position: 1, travelerType: "adult", status: "complete", firstName: "María", lastName: "Pérez" }; },
-    async findReservation() { return financialReservationRow(); },
-    async findBoardingState() { return boarding; },
+    async findCredential({
+      agencyId,
+      tokenSha256,
+    }: {
+      agencyId: string;
+      tokenSha256: string;
+    }) {
+      return agencyId === "agency-furiver" &&
+        tokenSha256 === hashBoardingToken(rawToken)
+        ? {
+            id: "94cf2e61-23bd-4d4a-85ca-e1d7a36fc183",
+            reservationId: customerDetailReservationId,
+            travelerId,
+            ticketDocumentId: ticketId,
+            status: credentialStatus,
+          }
+        : null;
+    },
+    async findTicket() {
+      return {
+        id: ticketId,
+        documentType: "ticket",
+        status: ticketStatus,
+        reservationId: customerDetailReservationId,
+        travelerId,
+      };
+    },
+    async findTraveler() {
+      return {
+        id: travelerId,
+        reservationId: customerDetailReservationId,
+        position: 1,
+        travelerType: "adult",
+        status: "complete",
+        firstName: "María",
+        lastName: "Pérez",
+      };
+    },
+    async findReservation() {
+      return financialReservationRow();
+    },
+    async findBoardingState() {
+      return boarding;
+    },
     async checkIn() {
-      if (boarding.status === "boarded") return { status: "already_boarded" as const, checkedInAt: boarding.checkedInAt, boardedAt: boarding.boardedAt };
-      if (boarding.status === "checked_in") return { status: "already_checked_in" as const, checkedInAt: boarding.checkedInAt, boardedAt: null };
-      boarding = { status: "checked_in", checkedInAt: TEST_NOW, boardedAt: null }; events.push("checked_in");
-      return { status: "checked_in" as const, checkedInAt: TEST_NOW, boardedAt: null };
+      if (boarding.status === "boarded")
+        return {
+          status: "already_boarded" as const,
+          checkedInAt: boarding.checkedInAt,
+          boardedAt: boarding.boardedAt,
+        };
+      if (boarding.status === "checked_in")
+        return {
+          status: "already_checked_in" as const,
+          checkedInAt: boarding.checkedInAt,
+          boardedAt: null,
+        };
+      boarding = {
+        status: "checked_in",
+        checkedInAt: TEST_NOW,
+        boardedAt: null,
+      };
+      events.push("checked_in");
+      return {
+        status: "checked_in" as const,
+        checkedInAt: TEST_NOW,
+        boardedAt: null,
+      };
     },
     async board() {
-      if (boarding.status === "pending") return { status: "check_in_required" as const, checkedInAt: null, boardedAt: null };
-      if (boarding.status === "boarded") return { status: "already_boarded" as const, checkedInAt: boarding.checkedInAt, boardedAt: boarding.boardedAt };
-      boarding = { status: "boarded", checkedInAt: TEST_NOW, boardedAt: TEST_NOW }; events.push("boarded");
-      return { status: "boarded" as const, checkedInAt: TEST_NOW, boardedAt: TEST_NOW };
+      if (boarding.status === "pending")
+        return {
+          status: "check_in_required" as const,
+          checkedInAt: null,
+          boardedAt: null,
+        };
+      if (boarding.status === "boarded")
+        return {
+          status: "already_boarded" as const,
+          checkedInAt: boarding.checkedInAt,
+          boardedAt: boarding.boardedAt,
+        };
+      boarding = {
+        status: "boarded",
+        checkedInAt: TEST_NOW,
+        boardedAt: TEST_NOW,
+      };
+      events.push("boarded");
+      return {
+        status: "boarded" as const,
+        checkedInAt: TEST_NOW,
+        boardedAt: TEST_NOW,
+      };
     },
-    async listBoardingStates() { return [boarding]; },
+    async listBoardingStates() {
+      return [boarding];
+    },
   };
-  const service = createBoardingScanService({ resolveAccess: access.resolver.resolve, repository });
-  assert.equal(extractBoardingRawToken(`FUTRAVEL:BOARDING:1:${rawToken}`), rawToken);
-  assert.equal(extractBoardingRawToken(`FUTRAVEL:BOARDING:2:${rawToken}`), null);
+  const service = createBoardingScanService({
+    resolveAccess: access.resolver.resolve,
+    repository,
+  });
+  assert.equal(
+    extractBoardingRawToken(`FUTRAVEL:BOARDING:1:${rawToken}`),
+    rawToken,
+  );
+  assert.equal(
+    extractBoardingRawToken(`FUTRAVEL:BOARDING:2:${rawToken}`),
+    null,
+  );
   assert.equal(extractBoardingRawToken("https://example.com/scan"), null);
-  const scan = await service.resolve({ requestedAgencySlug: "furiver", rawToken });
-  assert.deepEqual(scan.status === "valid" ? scan.preview.traveler : null, { position: 1, name: "María Pérez", travelerType: "adult" });
+  const scan = await service.resolve({
+    requestedAgencySlug: "furiver",
+    rawToken,
+  });
+  assert.deepEqual(scan.status === "valid" ? scan.preview.traveler : null, {
+    position: 1,
+    name: "María Pérez",
+    travelerType: "adult",
+  });
   assert.equal(events.length, 0);
   assert.equal(JSON.stringify(scan).includes(rawToken), false);
-  assert.equal((await service.board({ requestedAgencySlug: "furiver", rawToken })).status, "check_in_required");
-  assert.equal((await service.checkIn({ requestedAgencySlug: "furiver", rawToken })).status, "checked_in");
-  assert.equal((await service.checkIn({ requestedAgencySlug: "furiver", rawToken })).status, "already_checked_in");
+  assert.equal(
+    (await service.board({ requestedAgencySlug: "furiver", rawToken })).status,
+    "check_in_required",
+  );
+  assert.equal(
+    (await service.checkIn({ requestedAgencySlug: "furiver", rawToken }))
+      .status,
+    "checked_in",
+  );
+  assert.equal(
+    (await service.checkIn({ requestedAgencySlug: "furiver", rawToken }))
+      .status,
+    "already_checked_in",
+  );
   assert.equal(events.filter((event) => event === "checked_in").length, 1);
-  assert.equal((await service.board({ requestedAgencySlug: "furiver", rawToken })).status, "boarded");
-  assert.equal((await service.board({ requestedAgencySlug: "furiver", rawToken })).status, "already_boarded");
+  assert.equal(
+    (await service.board({ requestedAgencySlug: "furiver", rawToken })).status,
+    "boarded",
+  );
+  assert.equal(
+    (await service.board({ requestedAgencySlug: "furiver", rawToken })).status,
+    "already_boarded",
+  );
   assert.deepEqual(events, ["checked_in", "boarded"]);
-  assert.equal((await service.resolve({ requestedAgencySlug: "furiver", rawToken })).status, "valid");
-  assert.equal((await service.resolve({ requestedAgencySlug: "furiver", rawToken: "B".repeat(43) })).status, "invalid");
+  assert.equal(
+    (await service.resolve({ requestedAgencySlug: "furiver", rawToken }))
+      .status,
+    "valid",
+  );
+  assert.equal(
+    (
+      await service.resolve({
+        requestedAgencySlug: "furiver",
+        rawToken: "B".repeat(43),
+      })
+    ).status,
+    "invalid",
+  );
   credentialStatus = "revoked";
-  assert.equal((await service.resolve({ requestedAgencySlug: "furiver", rawToken })).status, "credential_unavailable");
+  assert.equal(
+    (await service.resolve({ requestedAgencySlug: "furiver", rawToken }))
+      .status,
+    "credential_unavailable",
+  );
   credentialStatus = "active";
   ticketStatus = "revoked";
-  assert.equal((await service.resolve({ requestedAgencySlug: "furiver", rawToken })).status, "credential_unavailable");
+  assert.equal(
+    (await service.resolve({ requestedAgencySlug: "furiver", rawToken }))
+      .status,
+    "credential_unavailable",
+  );
   ticketStatus = "available";
-  assert.deepEqual(await service.summary({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId, travelerCount: 1 }), { status: "authorized", checkedIn: 1, boarded: 1, travelerCount: 1 });
-  assert.equal((await service.resolve({ requestedAgencySlug: "crisenix", rawToken })).status, "forbidden");
-  assert.equal((await service.resolve({ requestedAgencySlug: "furiver", rawToken: "not-a-token" })).status, "invalid");
-  const migration = readFileSync("supabase/migrations/20260801230000_atomic_boarding_transitions.sql", "utf8");
-  const repositorySource = readFileSync("lib/boarding/boarding-scan-repository.ts", "utf8");
-  const control = readFileSync("app/admin/[agencySlug]/abordaje/boarding-control.tsx", "utf8");
-  assert.match(migration, /traveler_boarding_events_one_transition_per_traveler_unique/);
-  assert.match(migration, /check_in_traveler_atomic[\s\S]*for update[\s\S]*insert into public\.traveler_boarding_events/i);
-  assert.match(migration, /board_traveler_atomic[\s\S]*check_in_required[\s\S]*insert into public\.traveler_boarding_events/i);
-  assert.match(migration, /revoke all on function public\.check_in_traveler_atomic[\s\S]*from public, anon, authenticated/i);
-  assert.match(migration, /grant execute on function public\.board_traveler_atomic[\s\S]*to service_role/i);
+  assert.deepEqual(
+    await service.summary({
+      requestedAgencySlug: "furiver",
+      reservationId: customerDetailReservationId,
+      travelerCount: 1,
+    }),
+    { status: "authorized", checkedIn: 1, boarded: 1, travelerCount: 1 },
+  );
+  assert.equal(
+    (await service.resolve({ requestedAgencySlug: "crisenix", rawToken }))
+      .status,
+    "forbidden",
+  );
+  assert.equal(
+    (
+      await service.resolve({
+        requestedAgencySlug: "furiver",
+        rawToken: "not-a-token",
+      })
+    ).status,
+    "invalid",
+  );
+  const migration = readFileSync(
+    "supabase/migrations/20260801230000_atomic_boarding_transitions.sql",
+    "utf8",
+  );
+  const repositorySource = readFileSync(
+    "lib/boarding/boarding-scan-repository.ts",
+    "utf8",
+  );
+  const control = readFileSync(
+    "app/admin/[agencySlug]/abordaje/boarding-control.tsx",
+    "utf8",
+  );
+  assert.match(
+    migration,
+    /traveler_boarding_events_one_transition_per_traveler_unique/,
+  );
+  assert.match(
+    migration,
+    /check_in_traveler_atomic[\s\S]*for update[\s\S]*insert into public\.traveler_boarding_events/i,
+  );
+  assert.match(
+    migration,
+    /board_traveler_atomic[\s\S]*check_in_required[\s\S]*insert into public\.traveler_boarding_events/i,
+  );
+  assert.match(
+    migration,
+    /revoke all on function public\.check_in_traveler_atomic[\s\S]*from public, anon, authenticated/i,
+  );
+  assert.match(
+    migration,
+    /grant execute on function public\.board_traveler_atomic[\s\S]*to service_role/i,
+  );
   assert.match(repositorySource, /check_in_traveler_atomic/);
   assert.match(repositorySource, /board_traveler_atomic/);
   assert.doesNotMatch(repositorySource, /\.download\(/);
   assert.doesNotMatch(control, /localStorage|sessionStorage|rawToken.*value=/i);
   assert.match(control, /BrowserQRCodeReader/);
   assert.match(control, /Escanear siguiente/);
-  assert.match(readFileSync("app/admin/[agencySlug]/reservaciones/[reservationId]/page.tsx", "utf8"), /Abrir control de abordaje/);
+  assert.match(
+    readFileSync(
+      "app/admin/[agencySlug]/reservaciones/[reservationId]/page.tsx",
+      "utf8",
+    ),
+    /Abrir control de abordaje/,
+  );
 });
 
 test("contexto cliente y cambios de nombre distinguen tickets sin exponer IDs ni revocar otros viajeros", async () => {
   const ticketTravelerId = "74cf2e61-23bd-4d4a-85ca-e1d7a36fc183";
   const list = createCustomerDocumentListService({
-    resolveAccess: customerAccessFixture({ accounts: [customerAccount()] }).resolver.resolve,
-    repository: { async findLinkedReservation() { return true; }, async listAvailableDocuments() { return [{ id: "a4cf2e61-23bd-4d4a-85ca-e1d7a36fc183", documentType: "ticket", version: 1, generatedAt: TEST_NOW, paymentId: null, reservationTravelerId: ticketTravelerId }]; }, async findPaymentContexts() { return new Map(); }, async findTicketContexts() { return new Map([[ticketTravelerId, { id: ticketTravelerId, position: 2, travelerType: "minor", firstName: "Ana", lastName: "Pérez" }]]); } },
+    resolveAccess: customerAccessFixture({ accounts: [customerAccount()] })
+      .resolver.resolve,
+    repository: {
+      async findLinkedReservation() {
+        return true;
+      },
+      async listAvailableDocuments() {
+        return [
+          {
+            id: "a4cf2e61-23bd-4d4a-85ca-e1d7a36fc183",
+            documentType: "ticket",
+            version: 1,
+            generatedAt: TEST_NOW,
+            paymentId: null,
+            reservationTravelerId: ticketTravelerId,
+          },
+        ];
+      },
+      async findPaymentContexts() {
+        return new Map();
+      },
+      async findTicketContexts() {
+        return new Map([
+          [
+            ticketTravelerId,
+            {
+              id: ticketTravelerId,
+              position: 2,
+              travelerType: "minor",
+              firstName: "Ana",
+              lastName: "Pérez",
+            },
+          ],
+        ]);
+      },
+    },
   });
-  const documents = await list.list({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId });
-  assert.deepEqual(documents.status === "authorized" ? documents.documents[0]?.travelerContext : null, { name: "Ana Pérez", travelerType: "minor", position: 2 });
+  const documents = await list.list({
+    requestedAgencySlug: "furiver",
+    reservationId: customerDetailReservationId,
+  });
+  assert.deepEqual(
+    documents.status === "authorized"
+      ? documents.documents[0]?.travelerContext
+      : null,
+    { name: "Ana Pérez", travelerType: "minor", position: 2 },
+  );
   assert.equal(JSON.stringify(documents).includes(ticketTravelerId), false);
   let revokedTraveler: string | null = null;
-  const changed = createChangedTravelerTicketLifecycleService({ resolveAccess: customerAccessFixture({ accounts: [customerAccount()] }).resolver.resolve, repository: { async hasAvailableTickets() { return false; }, async revokeAvailableTickets() {}, async findTravelerByPosition() { return { id: ticketTravelerId }; }, async revokeAvailableTicketsForTraveler({ travelerId }) { revokedTraveler = travelerId; } } });
-  assert.equal(await changed.revokeForNameChange({ requestedAgencySlug: "furiver", reservationId: customerDetailReservationId, position: 2 }), "revoked"); assert.equal(revokedTraveler, ticketTravelerId);
-  const customerDocuments = readFileSync("lib/documents/customer-document-list-core.ts", "utf8"); const customerPage = readFileSync("app/cuenta/[agencySlug]/reservaciones/[reservationId]/page.tsx", "utf8"); const travelerCore = readFileSync("lib/travelers/traveler-data-core.ts", "utf8");
-  assert.match(customerDocuments, /travelerContext/); assert.match(customerPage, /travelerContext\.name/); assert.equal(customerDocuments.includes("birthDate"), false); assert.match(travelerCore, /afterNameChanged/);
+  const changed = createChangedTravelerTicketLifecycleService({
+    resolveAccess: customerAccessFixture({ accounts: [customerAccount()] })
+      .resolver.resolve,
+    repository: {
+      async hasAvailableTickets() {
+        return false;
+      },
+      async revokeAvailableTickets() {},
+      async findTravelerByPosition() {
+        return { id: ticketTravelerId };
+      },
+      async revokeAvailableTicketsForTraveler({ travelerId }) {
+        revokedTraveler = travelerId;
+      },
+    },
+  });
+  assert.equal(
+    await changed.revokeForNameChange({
+      requestedAgencySlug: "furiver",
+      reservationId: customerDetailReservationId,
+      position: 2,
+    }),
+    "revoked",
+  );
+  assert.equal(revokedTraveler, ticketTravelerId);
+  const customerDocuments = readFileSync(
+    "lib/documents/customer-document-list-core.ts",
+    "utf8",
+  );
+  const customerPage = readFileSync(
+    "app/cuenta/[agencySlug]/reservaciones/[reservationId]/page.tsx",
+    "utf8",
+  );
+  const travelerCore = readFileSync(
+    "lib/travelers/traveler-data-core.ts",
+    "utf8",
+  );
+  assert.match(customerDocuments, /travelerContext/);
+  assert.match(customerPage, /travelerContext\.name/);
+  assert.equal(customerDocuments.includes("birthDate"), false);
+  assert.match(travelerCore, /afterNameChanged/);
 });
 
 test("guardar viajero revoca sólo su Ticket cuando cambia nombre o apellido, no por birth_date", async () => {
   const rows: ReservationTravelerDataRow[] = [
-    { position: 1, traveler_type: "adult", status: "complete", first_name: "Maria", last_name: "Perez", birth_date: "1990-01-01" },
-    { position: 2, traveler_type: "adult", status: "complete", first_name: "Juan", last_name: "Pérez", birth_date: "1991-01-01" },
+    {
+      id: "11a10852-8620-4a59-9187-a21b07ce3f05",
+      position: 1,
+      traveler_type: "adult",
+      status: "complete",
+      first_name: "Maria",
+      last_name: "Perez",
+      birth_date: "1990-01-01",
+    },
+    {
+      id: "22a10852-8620-4a59-9187-a21b07ce3f05",
+      position: 2,
+      traveler_type: "adult",
+      status: "complete",
+      first_name: "Juan",
+      last_name: "Pérez",
+      birth_date: "1991-01-01",
+    },
   ];
   const revocations: number[] = [];
   const service = createReservationTravelerDataService({
-    resolveAccess: customerAccessFixture({ accounts: [customerAccount()] }).resolver.resolve,
+    resolveAccess: customerAccessFixture({ accounts: [customerAccount()] })
+      .resolver.resolve,
     repository: {
-      async listAuthorized() { return rows; },
+      async listAuthorized() {
+        return rows;
+      },
       async updateAuthorized(input) {
-        const row = rows.find((item) => item.position === input.position);
+        const row = rows.find(
+          (item) =>
+            item.id === input.travelerId && item.position === input.position,
+        );
         if (!row) return null;
-        const next = { ...row, first_name: input.firstName, last_name: input.lastName, birth_date: input.birthDate, status: "complete" } as const;
+        const next = {
+          ...row,
+          first_name: input.firstName,
+          last_name: input.lastName,
+          birth_date: input.birthDate,
+          status: "complete",
+        } as const;
         rows[rows.indexOf(row)] = next;
         return next;
       },
     },
-    async afterNameChanged({ position }) { revocations.push(position); },
+    async afterNameChanged({ position }) {
+      revocations.push(position);
+    },
   });
-  const base = { requestedAgencySlug: "furiver", reservationId: customerDetailReservationId, position: 1 };
-  assert.equal((await service.save({ ...base, firstName: "María", lastName: "Pérez", birthDate: "1990-01-01" })).status, "saved");
+  const base = {
+    requestedAgencySlug: "furiver",
+    reservationId: customerDetailReservationId,
+    travelerId: rows[0].id,
+    position: 1,
+  };
+  assert.equal(
+    (
+      await service.save({
+        ...base,
+        firstName: "María",
+        lastName: "Pérez",
+        birthDate: "1990-01-01",
+      })
+    ).status,
+    "saved",
+  );
   assert.deepEqual(revocations, [1]);
-  assert.equal((await service.save({ ...base, firstName: "María", lastName: "Pérez", birthDate: "1990-01-02" })).status, "saved");
+  assert.equal(
+    (
+      await service.save({
+        ...base,
+        firstName: "María",
+        lastName: "Pérez",
+        birthDate: "1990-01-02",
+      })
+    ).status,
+    "saved",
+  );
   assert.deepEqual(revocations, [1]);
 });
 
 test("manifiesto de salidas usa la identidad canónica congelada y compone estados operativos en bulk", async () => {
   const access = adminAccessFixture({ memberships: [adminMembership()] });
-  const departureSnapshot = (id: string, reservationCode: string, boardingPoint: string) => ({
+  const departureSnapshot = (
+    id: string,
+    reservationCode: string,
+    boardingPoint: string,
+  ) => ({
     id,
     reservation_code: reservationCode,
     status: "confirmed",
@@ -7943,7 +13468,10 @@ test("manifiesto de salidas usa la identidad canónica congelada y compone estad
     created_at: TEST_NOW,
     snapshot: {
       tour: { id: "tour-cancun", code: "CUN", title: "Cancún · Hotel Xcaret" },
-      departure: { id: "departure-2026-08-28", startDate: "2026-08-28T06:00:00.000Z" },
+      departure: {
+        id: "departure-2026-08-28",
+        startDate: "2026-08-28T06:00:00.000Z",
+      },
       boarding: { pointName: boardingPoint },
       occupancy: { adults: 1, minors: 1, totalTravelers: 2 },
       total: 10000,
@@ -7953,65 +13481,215 @@ test("manifiesto de salidas usa la identidad canónica congelada y compone estad
   });
   const firstId = customerDetailReservationId;
   const secondId = "15cf2e61-23bd-4d4a-85ca-e1d7a36fc183";
-  const snapshots = [departureSnapshot(firstId, "FT-001", "Terminal Norte"), departureSnapshot(secondId, "FT-002", "Hotel Centro")];
+  const snapshots = [
+    departureSnapshot(firstId, "FT-001", "Terminal Norte"),
+    departureSnapshot(secondId, "FT-002", "Hotel Centro"),
+  ];
   const service = createAdminDepartureManifestService({
     resolveAccess: access.resolver.resolve,
     now: () => new Date("2026-08-20T00:00:00.000Z"),
     repository: {
-      async listRecentSnapshots() { return snapshots; },
-      async listDepartureSnapshots({ identity }) { return identity.tourId === "tour-cancun" && identity.departureId === "departure-2026-08-28" ? snapshots : []; },
-      async listTravelers() { return [
-        { id: "traveler-a", reservationId: firstId, position: 1, travelerType: "adult", firstName: "María", lastName: "Pérez" },
-        { id: "traveler-b", reservationId: firstId, position: 2, travelerType: "minor", firstName: "Juan", lastName: "Pérez" },
-        { id: "traveler-c", reservationId: secondId, position: 1, travelerType: "adult", firstName: "Ana", lastName: "López" },
-      ]; },
-      async listTickets() { return [
-        { id: "ticket-a", reservationId: firstId, travelerId: "traveler-a", status: "available" },
-        { id: "ticket-b", reservationId: firstId, travelerId: "traveler-b", status: "revoked" },
-      ]; },
-      async listCredentials() { return [
-        { reservationId: firstId, travelerId: "traveler-a", ticketDocumentId: "ticket-a", status: "active" },
-        { reservationId: firstId, travelerId: "traveler-b", ticketDocumentId: "ticket-b", status: "revoked" },
-      ]; },
-      async listBoardingStates() { return [
-        { reservationId: firstId, travelerId: "traveler-a", status: "checked_in", checkedInAt: TEST_NOW, boardedAt: null },
-        { reservationId: firstId, travelerId: "traveler-b", status: "boarded", checkedInAt: TEST_NOW, boardedAt: TEST_NOW },
-      ]; },
+      async listRecentSnapshots() {
+        return snapshots;
+      },
+      async listDepartureSnapshots({ identity }) {
+        return identity.tourId === "tour-cancun" &&
+          identity.departureId === "departure-2026-08-28"
+          ? snapshots
+          : [];
+      },
+      async listTravelers() {
+        return [
+          {
+            id: "traveler-a",
+            reservationId: firstId,
+            position: 1,
+            travelerType: "adult",
+            firstName: "María",
+            lastName: "Pérez",
+          },
+          {
+            id: "traveler-b",
+            reservationId: firstId,
+            position: 2,
+            travelerType: "minor",
+            firstName: "Juan",
+            lastName: "Pérez",
+          },
+          {
+            id: "traveler-c",
+            reservationId: secondId,
+            position: 1,
+            travelerType: "adult",
+            firstName: "Ana",
+            lastName: "López",
+          },
+        ];
+      },
+      async listTickets() {
+        return [
+          {
+            id: "ticket-a",
+            reservationId: firstId,
+            travelerId: "traveler-a",
+            status: "available",
+          },
+          {
+            id: "ticket-b",
+            reservationId: firstId,
+            travelerId: "traveler-b",
+            status: "revoked",
+          },
+        ];
+      },
+      async listCredentials() {
+        return [
+          {
+            reservationId: firstId,
+            travelerId: "traveler-a",
+            ticketDocumentId: "ticket-a",
+            status: "active",
+          },
+          {
+            reservationId: firstId,
+            travelerId: "traveler-b",
+            ticketDocumentId: "ticket-b",
+            status: "revoked",
+          },
+        ];
+      },
+      async listBoardingStates() {
+        return [
+          {
+            reservationId: firstId,
+            travelerId: "traveler-a",
+            status: "checked_in",
+            checkedInAt: TEST_NOW,
+            boardedAt: null,
+          },
+          {
+            reservationId: firstId,
+            travelerId: "traveler-b",
+            status: "boarded",
+            checkedInAt: TEST_NOW,
+            boardedAt: TEST_NOW,
+          },
+        ];
+      },
     },
   });
   const listed = await service.list({ requestedAgencySlug: "furiver" });
   assert.equal(listed.status, "authorized");
   if (listed.status !== "authorized") return;
   assert.equal(listed.departures.length, 1);
-  assert.deepEqual(listed.departures[0]?.summary, { reservations: 2, travelers: 3, pending: 1, checkInCompleted: 2, boarded: 1 });
+  assert.deepEqual(listed.departures[0]?.summary, {
+    reservations: 2,
+    travelers: 3,
+    pending: 1,
+    checkInCompleted: 2,
+    boarded: 1,
+  });
   const key = listed.departures[0]!.key;
-  assert.equal(key, departureKeyForIdentity({ tourId: "tour-cancun", departureId: "departure-2026-08-28" }));
+  assert.equal(
+    key,
+    departureKeyForIdentity({
+      tourId: "tour-cancun",
+      departureId: "departure-2026-08-28",
+    }),
+  );
   assert.match(key, /^[0-9a-f]{64}$/);
   assert.equal(key.includes("tour-cancun"), false);
-  const manifest = await service.get({ requestedAgencySlug: "furiver", departureKey: key });
+  const manifest = await service.get({
+    requestedAgencySlug: "furiver",
+    departureKey: key,
+  });
   assert.equal(manifest.status, "authorized");
   if (manifest.status !== "authorized") return;
-  assert.deepEqual(manifest.manifest.travelers.map((traveler) => traveler.name), ["Ana López", "María Pérez", "Juan Pérez"]);
+  assert.deepEqual(
+    manifest.manifest.travelers.map((traveler) => traveler.name),
+    ["Ana López", "María Pérez", "Juan Pérez"],
+  );
   assert.equal(manifest.manifest.travelers[1]?.ticketStatus, "available");
   assert.equal(manifest.manifest.travelers[1]?.credentialStatus, "active");
   assert.equal(manifest.manifest.travelers[2]?.ticketStatus, "unavailable");
   assert.equal(manifest.manifest.travelers[0]?.boardingStatus, "pending");
   assert.equal(JSON.stringify(manifest).includes(firstId), false);
   assert.equal(JSON.stringify(manifest).includes("ticket-a"), false);
-  const searched = await service.get({ requestedAgencySlug: "furiver", departureKey: key, search: "María" });
-  assert.deepEqual(searched.status === "authorized" ? searched.visibleTravelers.map((traveler) => traveler.name) : [], ["María Pérez"]);
-  const pending = await service.get({ requestedAgencySlug: "furiver", departureKey: key, filter: "pending" });
-  assert.deepEqual(pending.status === "authorized" ? pending.visibleTravelers.map((traveler) => traveler.name) : [], ["Ana López"]);
-  assert.equal((await service.get({ requestedAgencySlug: "crisenix", departureKey: key })).status, "forbidden");
-  assert.equal((await service.get({ requestedAgencySlug: "furiver", departureKey: "not-a-departure" })).status, "not_found");
+  const searched = await service.get({
+    requestedAgencySlug: "furiver",
+    departureKey: key,
+    search: "María",
+  });
+  assert.deepEqual(
+    searched.status === "authorized"
+      ? searched.visibleTravelers.map((traveler) => traveler.name)
+      : [],
+    ["María Pérez"],
+  );
+  const pending = await service.get({
+    requestedAgencySlug: "furiver",
+    departureKey: key,
+    filter: "pending",
+  });
+  assert.deepEqual(
+    pending.status === "authorized"
+      ? pending.visibleTravelers.map((traveler) => traveler.name)
+      : [],
+    ["Ana López"],
+  );
+  assert.equal(
+    (await service.get({ requestedAgencySlug: "crisenix", departureKey: key }))
+      .status,
+    "forbidden",
+  );
+  assert.equal(
+    (
+      await service.get({
+        requestedAgencySlug: "furiver",
+        departureKey: "not-a-departure",
+      })
+    ).status,
+    "not_found",
+  );
   const unauthenticated = createAdminDepartureManifestService({
     resolveAccess: async () => ({ status: "unauthenticated" }),
-    repository: { async listRecentSnapshots() { throw new Error("must not read"); }, async listDepartureSnapshots() { throw new Error("must not read"); }, async listTravelers() { throw new Error("must not read"); }, async listTickets() { throw new Error("must not read"); }, async listCredentials() { throw new Error("must not read"); }, async listBoardingStates() { throw new Error("must not read"); } },
+    repository: {
+      async listRecentSnapshots() {
+        throw new Error("must not read");
+      },
+      async listDepartureSnapshots() {
+        throw new Error("must not read");
+      },
+      async listTravelers() {
+        throw new Error("must not read");
+      },
+      async listTickets() {
+        throw new Error("must not read");
+      },
+      async listCredentials() {
+        throw new Error("must not read");
+      },
+      async listBoardingStates() {
+        throw new Error("must not read");
+      },
+    },
   });
-  assert.equal((await unauthenticated.list({ requestedAgencySlug: "furiver" })).status, "unauthenticated");
-  const repository = readFileSync("lib/departures/admin-departure-manifest-repository.ts", "utf8");
-  const core = readFileSync("lib/departures/admin-departure-manifest-core.ts", "utf8");
-  const detailPage = readFileSync("app/admin/[agencySlug]/salidas/[departureKey]/page.tsx", "utf8");
+  assert.equal(
+    (await unauthenticated.list({ requestedAgencySlug: "furiver" })).status,
+    "unauthenticated",
+  );
+  const repository = readFileSync(
+    "lib/departures/admin-departure-manifest-repository.ts",
+    "utf8",
+  );
+  const core = readFileSync(
+    "lib/departures/admin-departure-manifest-core.ts",
+    "utf8",
+  );
+  const detailPage = readFileSync(
+    "app/admin/[agencySlug]/salidas/[departureKey]/page.tsx",
+    "utf8",
+  );
   assert.match(repository, /snapshot->tour->>id/);
   assert.match(repository, /snapshot->departure->>id/);
   assert.match(repository, /\.in\("reservation_id"/);
@@ -8022,29 +13700,71 @@ test("manifiesto de salidas usa la identidad canónica congelada y compone estad
 });
 
 test("acciones que cambian viajeros, Ticket, pagos o boarding invalidan el manifiesto operativo", () => {
-  const travelerAction = readFileSync("app/cuenta/[agencySlug]/reservaciones/[reservationId]/traveler-actions.ts", "utf8");
-  const ticketAction = readFileSync("app/admin/[agencySlug]/reservaciones/[reservationId]/ticket-actions.ts", "utf8");
-  const paymentAction = readFileSync("app/admin/[agencySlug]/reservaciones/[reservationId]/payment-actions.ts", "utf8");
-  const paymentStatusAction = readFileSync("app/admin/[agencySlug]/reservaciones/[reservationId]/payment-status-actions.ts", "utf8");
-  const boardingAction = readFileSync("app/admin/[agencySlug]/abordaje/boarding-actions.ts", "utf8");
-  for (const source of [travelerAction, ticketAction, paymentAction, paymentStatusAction, boardingAction]) {
-    assert.match(source, /revalidatePath\(`\/admin\/\$\{encodeURIComponent\([^)]*\)\}\/salidas`, "layout"\)/);
+  const travelerAction = readFileSync(
+    "app/cuenta/[agencySlug]/reservaciones/[reservationId]/traveler-actions.ts",
+    "utf8",
+  );
+  const ticketAction = readFileSync(
+    "app/admin/[agencySlug]/reservaciones/[reservationId]/ticket-actions.ts",
+    "utf8",
+  );
+  const paymentAction = readFileSync(
+    "app/admin/[agencySlug]/reservaciones/[reservationId]/payment-actions.ts",
+    "utf8",
+  );
+  const paymentStatusAction = readFileSync(
+    "app/admin/[agencySlug]/reservaciones/[reservationId]/payment-status-actions.ts",
+    "utf8",
+  );
+  const boardingAction = readFileSync(
+    "app/admin/[agencySlug]/abordaje/boarding-actions.ts",
+    "utf8",
+  );
+  for (const source of [
+    travelerAction,
+    ticketAction,
+    paymentAction,
+    paymentStatusAction,
+    boardingAction,
+  ]) {
+    assert.match(
+      source,
+      /revalidatePath\(`\/admin\/\$\{encodeURIComponent\([^)]*\)\}\/salidas`, "layout"\)/,
+    );
   }
   assert.match(boardingAction, /resolveBoardingScan/);
-  assert.doesNotMatch(boardingAction, /reservation_documents.*download|\.download\(/);
+  assert.doesNotMatch(
+    boardingAction,
+    /reservation_documents.*download|\.download\(/,
+  );
 });
 
 test("migración de primary customer access audita duplicados y limita sólo un primary por reservación tenant-safe", () => {
-  const migration = readFileSync("supabase/migrations/20260801240000_unique_primary_customer_access.sql", "utf8");
-  const acceptanceMigration = readFileSync("supabase/migrations/20260801160000_contract_acceptance.sql", "utf8");
+  const migration = readFileSync(
+    "supabase/migrations/20260801240000_unique_primary_customer_access.sql",
+    "utf8",
+  );
+  const acceptanceMigration = readFileSync(
+    "supabase/migrations/20260801160000_contract_acceptance.sql",
+    "utf8",
+  );
   assert.match(migration, /from public\.reservation_customer_access/);
   assert.match(migration, /where role = 'primary'/);
   assert.match(migration, /group by agency_id, reservation_id/);
   assert.match(migration, /having count\(\*\) > 1/);
   assert.match(migration, /raise exception using/);
-  assert.match(migration, /Resolve duplicate primary reservation_customer_access rows manually/);
-  assert.match(migration, /create unique index reservation_customer_access_one_primary_per_reservation_idx/);
-  assert.match(migration, /on public\.reservation_customer_access \(agency_id, reservation_id\)/);
+  assert.match(
+    migration,
+    /Resolve duplicate primary reservation_customer_access rows manually/,
+  );
+  assert.match(
+    migration,
+    /create unique index reservation_customer_access_one_primary_per_reservation_idx/,
+  );
+  assert.match(
+    migration,
+    /on public\.reservation_customer_access \(agency_id, reservation_id\)/,
+  );
   assert.match(migration, /where role = 'primary'/);
   assert.doesNotMatch(migration, /\b(delete|update|insert)\b/i);
   assert.equal(migration.includes("'traveler'"), false);
@@ -8057,33 +13777,110 @@ test("claim de reservación exige Auth y correo histórico coincidente, crea un 
   let primary: string | null = null;
   let accountCreates = 0;
   const repository = {
-    async findReservation() { return { agencyId: "agency-furiver", bookingEmail: " Cliente@Furiver.Test " }; },
-    async findOrCreateActiveAccount() { accountCreates += 1; return "account-furiver"; },
-    async findPrimaryAccountId() { return primary; },
-    async upsertPrimaryAccess({ customerAccountId }: { customerAccountId: string }) { primary = customerAccountId; },
+    async findReservation() {
+      return {
+        agencyId: "agency-furiver",
+        bookingEmail: " Cliente@Furiver.Test ",
+      };
+    },
+    async findOrCreateActiveAccount() {
+      accountCreates += 1;
+      return "account-furiver";
+    },
+    async findPrimaryAccountId() {
+      return primary;
+    },
+    async upsertPrimaryAccess({
+      customerAccountId,
+    }: {
+      customerAccountId: string;
+    }) {
+      primary = customerAccountId;
+    },
   };
-  const service = createReservationClaimService({ getIdentity: async () => ({ userId: "customer-user", email: "cliente@furiver.test" }), repository });
-  const input = { requestedAgencySlug: "furiver", reservationId: customerDetailReservationId };
-  assert.equal(normalizeCustomerEmail(" Cliente@Furiver.Test "), "cliente@furiver.test");
+  const service = createReservationClaimService({
+    getIdentity: async () => ({
+      userId: "customer-user",
+      email: "cliente@furiver.test",
+    }),
+    repository,
+  });
+  const input = {
+    requestedAgencySlug: "furiver",
+    reservationId: customerDetailReservationId,
+  };
+  assert.equal(
+    normalizeCustomerEmail(" Cliente@Furiver.Test "),
+    "cliente@furiver.test",
+  );
   assert.equal((await service.claim(input)).status, "claimed");
   assert.equal((await service.claim(input)).status, "existing");
   assert.equal(primary, "account-furiver");
   assert.equal(accountCreates, 2);
-  const anonymous = createReservationClaimService({ getIdentity: async () => null, repository });
+  const anonymous = createReservationClaimService({
+    getIdentity: async () => null,
+    repository,
+  });
   assert.equal((await anonymous.claim(input)).status, "unauthenticated");
-  const wrongEmail = createReservationClaimService({ getIdentity: async () => ({ userId: "other", email: "other@furiver.test" }), repository });
+  const wrongEmail = createReservationClaimService({
+    getIdentity: async () => ({ userId: "other", email: "other@furiver.test" }),
+    repository,
+  });
   assert.equal((await wrongEmail.claim(input)).status, "email_mismatch");
-  const claimedByAnother = createReservationClaimService({ getIdentity: async () => ({ userId: "customer-user", email: "cliente@furiver.test" }), repository: { ...repository, async findPrimaryAccountId() { return "other-account"; } } });
-  assert.equal((await claimedByAnother.claim(input)).status, "reservation_already_claimed");
-  assert.deepEqual(parseCustomerReservationClaimNext(`/cuenta/furiver/reservaciones/${customerDetailReservationId}`), { agencySlug: "furiver", reservationId: customerDetailReservationId });
-  assert.equal(parseCustomerReservationClaimNext("https://malicioso.example/cuenta/furiver/reservaciones/x"), null);
+  const claimedByAnother = createReservationClaimService({
+    getIdentity: async () => ({
+      userId: "customer-user",
+      email: "cliente@furiver.test",
+    }),
+    repository: {
+      ...repository,
+      async findPrimaryAccountId() {
+        return "other-account";
+      },
+    },
+  });
+  assert.equal(
+    (await claimedByAnother.claim(input)).status,
+    "reservation_already_claimed",
+  );
+  assert.deepEqual(
+    parseCustomerReservationClaimNext(
+      `/cuenta/furiver/reservaciones/${customerDetailReservationId}`,
+    ),
+    { agencySlug: "furiver", reservationId: customerDetailReservationId },
+  );
+  assert.equal(
+    parseCustomerReservationClaimNext(
+      "https://malicioso.example/cuenta/furiver/reservaciones/x",
+    ),
+    null,
+  );
   const snapshot = finalizedReservationForRepository("contact-snapshot");
-  const withContact = finalizeReservation({ storage: reservationStorage(), input: { ...reservationInput("contact-snapshot"), primaryContact: { firstName: "Juan", lastName: "Pérez", email: "Juan@Example.Test", phone: "55 1234" } }, now: () => "2026-08-01T12:00:00.000Z", suffix: () => "CONTACT" }).reservation;
+  const withContact = finalizeReservation({
+    storage: reservationStorage(),
+    input: {
+      ...reservationInput("contact-snapshot"),
+      primaryContact: {
+        firstName: "Juan",
+        lastName: "Pérez",
+        email: "Juan@Example.Test",
+        phone: "55 1234",
+      },
+    },
+    now: () => "2026-08-01T12:00:00.000Z",
+    suffix: () => "CONTACT",
+  }).reservation;
   assert.equal(withContact.primaryContact?.email, "Juan@Example.Test");
   assert.equal(JSON.stringify(snapshot).includes("Juan@Example.Test"), false);
-  const adminPage = readFileSync("app/admin/[agencySlug]/reservaciones/[reservationId]/page.tsx", "utf8");
+  const adminPage = readFileSync(
+    "app/admin/[agencySlug]/reservaciones/[reservationId]/page.tsx",
+    "utf8",
+  );
   const checkout = readFileSync("components/legacy-travel-app.tsx", "utf8");
-  const claimRepository = readFileSync("lib/customers/reservation-claim-repository.ts", "utf8");
+  const claimRepository = readFileSync(
+    "lib/customers/reservation-claim-repository.ts",
+    "utf8",
+  );
   assert.match(adminPage, /Sin cuenta vinculada/);
   assert.match(adminPage, /Cuenta vinculada/);
   assert.match(checkout, /Ya tengo cuenta/);
@@ -8103,13 +13900,33 @@ test("POST entrega identidad Auth verificada a la persistencia atómica y report
       verifiedUserId = input.verifiedAuthUserId;
       return { ...reservationApiSuccess(), customerLinkStatus: "linked" };
     },
-    revalidateLinkedReservation: async (input) => { revalidated = input; },
+    revalidateLinkedReservation: async (input) => {
+      revalidated = input;
+    },
   });
-  const response = await handler(reservationApiRequest({ ...publicReservationBody(), primaryContact: { firstName: "Juan", lastName: "Pérez", email: "Juan@Example.Test", phone: null } }));
-  const body = await response.json() as { customerLinkStatus?: string };
-  assert.deepEqual(contact, { firstName: "Juan", lastName: "Pérez", email: "Juan@Example.Test", phone: null });
+  const response = await handler(
+    reservationApiRequest({
+      ...publicReservationBody(),
+      primaryContact: {
+        firstName: "Juan",
+        lastName: "Pérez",
+        email: "Juan@Example.Test",
+        phone: null,
+      },
+    }),
+  );
+  const body = (await response.json()) as { customerLinkStatus?: string };
+  assert.deepEqual(contact, {
+    firstName: "Juan",
+    lastName: "Pérez",
+    email: "Juan@Example.Test",
+    phone: null,
+  });
   assert.equal(verifiedUserId, "auth-user-id");
-  assert.deepEqual(revalidated, { agencySlug: "furiver", reservationRowId: reservationApiSuccess().reservation.id });
+  assert.deepEqual(revalidated, {
+    agencySlug: "furiver",
+    reservationRowId: reservationApiSuccess().reservation.id,
+  });
   assert.equal(body.customerLinkStatus, "linked");
 });
 
@@ -8119,21 +13936,41 @@ test("checkout autenticado persiste y revalida usando el UUID real", async () =>
   const handler = createReservationPostHandler({
     resolveVerifiedAuthUserId: async () => "auth-user-id",
     execute: async (input) => ({
-      reservation: { ...reservationApiSuccess().reservation, id: persistedReservationId },
+      reservation: {
+        ...reservationApiSuccess().reservation,
+        id: persistedReservationId,
+      },
       created: true,
-      customerLinkStatus: input.verifiedAuthUserId ? "linked" : "not_authenticated",
+      customerLinkStatus: input.verifiedAuthUserId
+        ? "linked"
+        : "not_authenticated",
     }),
-    revalidateLinkedReservation: async (input) => { revalidationInput = input; },
+    revalidateLinkedReservation: async (input) => {
+      revalidationInput = input;
+    },
   });
 
-  const response = await handler(reservationApiRequest({
+  const response = await handler(
+    reservationApiRequest({
     ...publicReservationBody(),
-    primaryContact: { firstName: "Demo", lastName: null, email: "demo@example.com", phone: null },
-  }));
-  const body = await response.json() as { reservationId: string; customerLinkStatus: string };
+      primaryContact: {
+        firstName: "Demo",
+        lastName: null,
+        email: "demo@example.com",
+        phone: null,
+      },
+    }),
+  );
+  const body = (await response.json()) as {
+    reservationId: string;
+    customerLinkStatus: string;
+  };
   assert.equal(body.reservationId, persistedReservationId);
   assert.equal(body.customerLinkStatus, "linked");
-  assert.deepEqual(revalidationInput, { agencySlug: "furiver", reservationRowId: persistedReservationId });
+  assert.deepEqual(revalidationInput, {
+    agencySlug: "furiver",
+    reservationRowId: persistedReservationId,
+  });
 
   const checkout = readFileSync("components/legacy-travel-app.tsx", "utf8");
   assert.match(checkout, /credentials: "same-origin"/);
@@ -8142,11 +13979,23 @@ test("checkout autenticado persiste y revalida usando el UUID real", async () =>
 });
 
 test("la continuidad checkout → Auth sólo admite retornos internos sin PII y no autoriza por correo anónimo", async () => {
-  assert.equal(safeCustomerAuthReturnTo("/checkout?tenant=furiver&theme=lavella"), "/checkout?tenant=furiver&theme=lavella");
-  assert.equal(safeCustomerAuthReturnTo("/carrito?tenant=furiver&theme=lavella"), "/carrito?tenant=furiver&theme=lavella");
-  assert.equal(safeCustomerAuthReturnTo("https://malicioso.example/checkout"), null);
+  assert.equal(
+    safeCustomerAuthReturnTo("/checkout?tenant=furiver&theme=lavella"),
+    "/checkout?tenant=furiver&theme=lavella",
+  );
+  assert.equal(
+    safeCustomerAuthReturnTo("/carrito?tenant=furiver&theme=lavella"),
+    "/carrito?tenant=furiver&theme=lavella",
+  );
+  assert.equal(
+    safeCustomerAuthReturnTo("https://malicioso.example/checkout"),
+    null,
+  );
   assert.equal(safeCustomerAuthReturnTo("//malicioso.example/checkout"), null);
-  assert.equal(safeCustomerAuthReturnTo("/checkout?email=cliente@example.test"), null);
+  assert.equal(
+    safeCustomerAuthReturnTo("/checkout?email=cliente@example.test"),
+    null,
+  );
   assert.equal(safeCustomerAuthReturnTo("/admin/furiver/reservaciones"), null);
 
   const handler = createReservationPostHandler({
@@ -8156,19 +14005,50 @@ test("la continuidad checkout → Auth sólo admite retornos internos sin PII y 
       return reservationApiSuccess();
     },
   });
-  const response = await handler(reservationApiRequest({ ...publicReservationBody(), primaryContact: { firstName: "Invitado", lastName: null, email: "cliente@example.test", phone: null } }));
-  const body = await response.json() as { customerLinkStatus?: string };
+  const response = await handler(
+    reservationApiRequest({
+      ...publicReservationBody(),
+      primaryContact: {
+        firstName: "Invitado",
+        lastName: null,
+        email: "cliente@example.test",
+        phone: null,
+      },
+    }),
+  );
+  const body = (await response.json()) as { customerLinkStatus?: string };
   assert.equal(body.customerLinkStatus, "not_authenticated");
 });
 
 test("la creación atómica expone estados definitivos y un fallo primary responde 500", async () => {
-  const statuses = ["linked", "already_linked", "email_mismatch", "not_authenticated"] as const;
+  const statuses = [
+    "linked",
+    "already_linked",
+    "email_mismatch",
+    "not_authenticated",
+  ] as const;
   for (const expected of statuses) {
     const handler = createReservationPostHandler({
-      execute: async () => ({ ...reservationApiSuccess(), customerLinkStatus: expected }),
+      execute: async () => ({
+        ...reservationApiSuccess(),
+        customerLinkStatus: expected,
+      }),
     });
-    const response = await handler(reservationApiRequest({ ...publicReservationBody(), primaryContact: { firstName: "Juan", lastName: null, email: "cliente@example.test", phone: null } }));
-    const body = await response.json() as { reservationId?: string; customerLinkStatus?: string };
+    const response = await handler(
+      reservationApiRequest({
+        ...publicReservationBody(),
+        primaryContact: {
+          firstName: "Juan",
+          lastName: null,
+          email: "cliente@example.test",
+          phone: null,
+        },
+      }),
+    );
+    const body = (await response.json()) as {
+      reservationId?: string;
+      customerLinkStatus?: string;
+    };
     assert.equal(body.reservationId, reservationApiSuccess().reservation.id);
     assert.equal(body.customerLinkStatus, expected);
   }
@@ -8178,20 +14058,42 @@ test("la creación atómica expone estados definitivos y un fallo primary respon
       throw new AtomicReservationPersistenceError("primary_access_failed");
     },
   });
-  const response = await unexpectedFailure(reservationApiRequest({ ...publicReservationBody(), primaryContact: { firstName: "Juan", lastName: null, email: "cliente@example.test", phone: null } }));
-  const body = await response.json() as { reservationId?: string; customerLinkStatus?: string };
+  const response = await unexpectedFailure(
+    reservationApiRequest({
+      ...publicReservationBody(),
+      primaryContact: {
+        firstName: "Juan",
+        lastName: null,
+        email: "cliente@example.test",
+        phone: null,
+      },
+    }),
+  );
+  const body = (await response.json()) as {
+    reservationId?: string;
+    customerLinkStatus?: string;
+  };
   assert.equal(response.status, 500);
   assert.equal(body.reservationId, undefined);
   assert.equal(body.customerLinkStatus, undefined);
 });
 
 test("el journey Lavella ofrece cuenta temprana, conserva retorno y muestra recuperación explícita del enlace", () => {
-  const storefrontHeader = readFileSync("components/themes/lavella/lavella-header.tsx", "utf8");
+  const storefrontHeader = readFileSync(
+    "components/themes/lavella/lavella-header.tsx",
+    "utf8",
+  );
   const checkout = readFileSync("components/legacy-travel-app.tsx", "utf8");
   const login = readFileSync("app/cuenta/login/page.tsx", "utf8");
-  const registration = readFileSync("app/cuenta/registro/registration-actions.ts", "utf8");
+  const registration = readFileSync(
+    "app/cuenta/registro/registration-actions.ts",
+    "utf8",
+  );
   const callback = readFileSync("app/cuenta/auth/callback/route.ts", "utf8");
-  const confirmationStyles = readFileSync("app/themes/lavella-commerce.css", "utf8");
+  const confirmationStyles = readFileSync(
+    "app/themes/lavella-commerce.css",
+    "utf8",
+  );
   assert.match(storefrontHeader, /Mi cuenta/);
   assert.match(storefrontHeader, /Crear una cuenta/);
   assert.match(checkout, /¿Ya tienes cuenta\?/);
@@ -8209,8 +14111,14 @@ test("el journey Lavella ofrece cuenta temprana, conserva retorno y muestra recu
 test("la cuenta cliente reutiliza el modal Lavella y el shell sin alterar los flujos de reservación", () => {
   const modal = readFileSync("app/cuenta/customer-auth-modal.tsx", "utf8");
   const loginForm = readFileSync("app/cuenta/login/login-form.tsx", "utf8");
-  const registrationForm = readFileSync("app/cuenta/registro/registration-form.tsx", "utf8");
-  const storefrontHeader = readFileSync("components/themes/lavella/lavella-header.tsx", "utf8");
+  const registrationForm = readFileSync(
+    "app/cuenta/registro/registration-form.tsx",
+    "utf8",
+  );
+  const storefrontHeader = readFileSync(
+    "components/themes/lavella/lavella-header.tsx",
+    "utf8",
+  );
   const checkout = readFileSync("components/legacy-travel-app.tsx", "utf8");
   const shell = readFileSync("app/cuenta/customer-shell.tsx", "utf8");
   const dashboard = readFileSync("app/cuenta/page.tsx", "utf8");
@@ -8232,19 +14140,31 @@ test("la cuenta cliente reutiliza el modal Lavella y el shell sin alterar los fl
   assert.match(dashboard, /Próxima reservación/);
   assert.match(dashboard, /Aún no tienes reservaciones/);
   assert.match(dashboard, /listCustomerReservations/);
-  assert.doesNotMatch(modal, /customerAccountId|tokenSha256|reservationTravelerId/);
+  assert.doesNotMatch(
+    modal,
+    /customerAccountId|tokenSha256|reservationTravelerId/,
+  );
 });
 
 test("el chrome del tema acompaña checkout y cuenta sin aplicar Lavella sobre Explorer", () => {
   const tenancy = readFileSync("lib/tenancy/index.ts", "utf8");
   const commerce = readFileSync("components/legacy-travel-app.tsx", "utf8");
-  const customerFrame = readFileSync("app/cuenta/customer-theme-shell.tsx", "utf8");
-  const customerChrome = readFileSync("app/cuenta/customer-theme-chrome.tsx", "utf8");
+  const customerFrame = readFileSync(
+    "app/cuenta/customer-theme-shell.tsx",
+    "utf8",
+  );
+  const customerChrome = readFileSync(
+    "app/cuenta/customer-theme-chrome.tsx",
+    "utf8",
+  );
   const customerStyles = readFileSync("app/cuenta/cuenta.module.css", "utf8");
   const login = readFileSync("app/cuenta/login/page.tsx", "utf8");
   const registration = readFileSync("app/cuenta/registro/page.tsx", "utf8");
 
-  assert.match(tenancy, /return isValidTheme\(requested\) \? requested : agency\.theme/);
+  assert.match(
+    tenancy,
+    /return isValidTheme\(requested\) \? requested : agency\.theme/,
+  );
   assert.match(commerce, /theme === "lavella" \? <LavellaHeader/);
   assert.match(commerce, /theme === "lavella" \? <LavellaFooter/);
   assert.match(customerFrame, /resolveTenant\(/);
@@ -8260,27 +14180,65 @@ test("el chrome del tema acompaña checkout y cuenta sin aplicar Lavella sobre E
 });
 
 test("checkout autenticado usa el UUID real, perfil tenant-safe y CTA visible sin alterar snapshots históricos", async () => {
-  const accountProfile = { firstName: "Ana", lastName: "López", phone: "55 0101 0101" };
+  const accountProfile = {
+    firstName: "Ana",
+    lastName: "López",
+    phone: "55 0101 0101",
+  };
   const updated: unknown[] = [];
   const profileService = createCustomerProfileService({
-    resolveAccess: async ({ requestedAgencySlug }) => requestedAgencySlug === "furiver"
+    resolveAccess: async ({ requestedAgencySlug }) =>
+      requestedAgencySlug === "furiver"
       ? {
           status: "authorized",
           identity: { userId: "customer-user", email: "ana@example.test" },
-          account: { customerAccountId: "customer-account", agencyId: "agency-furiver", agencySlug: "furiver", agencyName: "Furiver", ...accountProfile },
+            account: {
+              customerAccountId: "customer-account",
+              agencyId: "agency-furiver",
+              agencySlug: "furiver",
+              agencyName: "Furiver",
+              ...accountProfile,
+            },
           accounts: [],
         }
       : { status: "forbidden" },
     repository: {
       async updateOwnProfile(input) {
         updated.push(input);
-        return input.customerAccountId === "customer-account" && input.agencyId === "agency-furiver" && input.userId === "customer-user";
+        return (
+          input.customerAccountId === "customer-account" &&
+          input.agencyId === "agency-furiver" &&
+          input.userId === "customer-user"
+        );
       },
     },
   });
-  assert.deepEqual(normalizeCustomerProfileInput({ firstName: " Ana ", lastName: " López ", phone: "55 0101 0101" }), accountProfile);
-  assert.equal((await profileService.update({ requestedAgencySlug: "furiver", ...accountProfile })).status, "updated");
-  assert.equal((await profileService.update({ requestedAgencySlug: "crisenix", ...accountProfile })).status, "forbidden");
+  assert.deepEqual(
+    normalizeCustomerProfileInput({
+      firstName: " Ana ",
+      lastName: " López ",
+      phone: "55 0101 0101",
+    }),
+    accountProfile,
+  );
+  assert.equal(
+    (
+      await profileService.update({
+        requestedAgencySlug: "furiver",
+        ...accountProfile,
+      })
+    ).status,
+    "updated",
+  );
+  assert.equal(
+    (
+      await profileService.update({
+        requestedAgencySlug: "crisenix",
+        ...accountProfile,
+      })
+    ).status,
+    "forbidden",
+  );
   assert.equal(updated.length, 1);
 
   const persistedReservationId = "46a10852-8620-4a59-9187-a21b07ce3f05";
@@ -8289,41 +14247,88 @@ test("checkout autenticado usa el UUID real, perfil tenant-safe y CTA visible si
     execute: async (input) => {
       assert.equal(input.verifiedAuthUserId, "customer-user");
       return {
-        reservation: { ...reservationApiSuccess().reservation, id: persistedReservationId },
+        reservation: {
+          ...reservationApiSuccess().reservation,
+          id: persistedReservationId,
+        },
         created: true,
         customerLinkStatus: "linked",
       };
     },
   });
-  const response = await reservationHandler(reservationApiRequest({
+  const response = await reservationHandler(
+    reservationApiRequest({
     ...publicReservationBody(),
-    primaryContact: { firstName: accountProfile.firstName, lastName: accountProfile.lastName, email: "ana@example.test", phone: accountProfile.phone },
-  }));
-  const responseBody = await response.json() as { reservationId: string; customerLinkStatus: string };
+      primaryContact: {
+        firstName: accountProfile.firstName,
+        lastName: accountProfile.lastName,
+        email: "ana@example.test",
+        phone: accountProfile.phone,
+      },
+    }),
+  );
+  const responseBody = (await response.json()) as {
+    reservationId: string;
+    customerLinkStatus: string;
+  };
   assert.equal(responseBody.reservationId, persistedReservationId);
   assert.equal(responseBody.customerLinkStatus, "linked");
 
-  const migration = readFileSync("supabase/migrations/20260801260000_customer_account_profile.sql", "utf8");
-  const profileRepository = readFileSync("lib/customers/customer-profile-repository.ts", "utf8");
+  const migration = readFileSync(
+    "supabase/migrations/20260801260000_customer_account_profile.sql",
+    "utf8",
+  );
+  const profileRepository = readFileSync(
+    "lib/customers/customer-profile-repository.ts",
+    "utf8",
+  );
   const checkout = readFileSync("components/legacy-travel-app.tsx", "utf8");
-  const snapshotRepository = readFileSync("lib/reservations/supabase-repository.ts", "utf8");
+  const snapshotRepository = readFileSync(
+    "lib/reservations/supabase-repository.ts",
+    "utf8",
+  );
   const dashboard = readFileSync("app/cuenta/page.tsx", "utf8");
-  const listingRepository = readFileSync("lib/customers/customer-reservations-repository.ts", "utf8");
+  const listingRepository = readFileSync(
+    "lib/customers/customer-reservations-repository.ts",
+    "utf8",
+  );
   const commerce = readFileSync("app/themes/lavella-commerce.css", "utf8");
   assert.match(migration, /add column first_name text null/);
   assert.match(migration, /add column last_name text null/);
   assert.match(migration, /add column phone text null/);
-  assert.match(profileRepository, /\.eq\("id", customerAccountId\)[\s\S]*\.eq\("agency_id", agencyId\)[\s\S]*\.eq\("user_id", userId\)/);
-  assert.match(checkout, /current\.firstName \|\| customerProfile\?\.firstName/);
+  assert.match(
+    profileRepository,
+    /\.eq\("id", customerAccountId\)[\s\S]*\.eq\("agency_id", agencyId\)[\s\S]*\.eq\("user_id", userId\)/,
+  );
+  assert.match(
+    checkout,
+    /current\.firstName \|\| customerProfile\?\.firstName/,
+  );
   assert.match(checkout, /current\.email \|\| customerProfile\?\.email/);
   assert.match(checkout, /Ir a mi reserva/);
   assert.doesNotMatch(checkout, /Vincular mi reservación/);
-  assert.match(snapshotRepository, /snapshot: \{ \.\.\.row\.snapshot, id: row\.id \}/);
+  assert.match(
+    snapshotRepository,
+    /snapshot: \{ \.\.\.row\.snapshot, id: row\.id \}/,
+  );
   assert.match(dashboard, /CustomerProfileForm/);
   assert.match(listingRepository, /reservation_customer_access/);
   assert.match(commerce, /theme-v2-explorer \.reservation-account-cta/);
   assert.match(commerce, /lavella-commerce \.reservation-account-cta/);
-  const historical = finalizeReservation({ storage: reservationStorage(), input: { ...reservationInput("profile-history"), primaryContact: { firstName: "Antes", lastName: "Histórico", email: "ana@example.test", phone: "55 0000 0000" } }, now: () => TEST_NOW, suffix: () => "PROFILE" }).reservation;
+  const historical = finalizeReservation({
+    storage: reservationStorage(),
+    input: {
+      ...reservationInput("profile-history"),
+      primaryContact: {
+        firstName: "Antes",
+        lastName: "Histórico",
+        email: "ana@example.test",
+        phone: "55 0000 0000",
+      },
+    },
+    now: () => TEST_NOW,
+    suffix: () => "PROFILE",
+  }).reservation;
   assert.equal(historical.primaryContact?.firstName, "Antes");
   assert.equal(historical.primaryContact?.phone, "55 0000 0000");
 });
@@ -8334,30 +14339,45 @@ test("la creación de reservación y primary comparte una frontera PostgreSQL at
     "utf8",
   );
   const route = readFileSync("app/api/reservations/route.ts", "utf8");
-  const serverCommand = readFileSync("lib/reservations/server-command.ts", "utf8");
+  const serverCommand = readFileSync(
+    "lib/reservations/server-command.ts",
+    "utf8",
+  );
   const repository = readFileSync(
     "lib/reservations/atomic-customer-access-repository.ts",
     "utf8",
   );
 
-  assert.match(migration, /create function public\.create_reservation_with_customer_access_atomic/);
+  assert.match(
+    migration,
+    /create function public\.create_reservation_with_customer_access_atomic/,
+  );
   assert.match(migration, /security definer/);
   assert.match(migration, /set search_path = public, pg_temp/);
   assert.match(migration, /from auth\.users/);
   assert.match(migration, /lower\(btrim\(auth_user\.email\)\)/);
-  assert.match(migration, /from public\.reservation_snapshots[\s\S]*for update/);
+  assert.match(
+    migration,
+    /from public\.reservation_snapshots[\s\S]*for update/,
+  );
   assert.match(migration, /insert into public\.reservation_snapshots/);
   assert.match(migration, /insert into public\.agency_customer_accounts/);
   assert.match(migration, /insert into public\.reservation_customer_access/);
   assert.match(migration, /primary_count <> 1/);
-  assert.match(migration, /raise exception using errcode = 'P0001', message = 'primary_access_failed'/);
+  assert.match(
+    migration,
+    /raise exception using errcode = 'P0001', message = 'primary_access_failed'/,
+  );
   assert.match(migration, /from public, anon, authenticated/);
   assert.match(migration, /to service_role/);
   assert.match(serverCommand, /createAtomicReservationPersistenceClient/);
   assert.match(repository, /create_reservation_with_customer_access_atomic/);
   assert.match(repository, /id: row\.reservation_row_id/);
   assert.match(route, /resolveVerifiedAuthUserId/);
-  assert.doesNotMatch(route, /claimReservationForAuthenticatedCustomer|linkCustomerReservation/);
+  assert.doesNotMatch(
+    route,
+    /claimReservationForAuthenticatedCustomer|linkCustomerReservation/,
+  );
 });
 
 test("el POST no devuelve 201 cuando falla la identidad o el primary atómico", async () => {
@@ -8381,7 +14401,8 @@ test("el POST no devuelve 201 cuando falla la identidad o el primary atómico", 
       throw new AtomicReservationPersistenceError("primary_access_failed");
     },
   });
-  const primaryResponse = await primaryFailure(reservationApiRequest({
+  const primaryResponse = await primaryFailure(
+    reservationApiRequest({
     ...publicReservationBody(),
     primaryContact: {
       firstName: "Demo",
@@ -8389,8 +14410,12 @@ test("el POST no devuelve 201 cuando falla la identidad o el primary atómico", 
       email: "demo@example.test",
       phone: null,
     },
-  }));
-  const primaryBody = await primaryResponse.json() as { reservationId?: string; error?: string };
+    }),
+  );
+  const primaryBody = (await primaryResponse.json()) as {
+    reservationId?: string;
+    error?: string;
+  };
   assert.equal(primaryResponse.status, 500);
   assert.equal(primaryBody.reservationId, undefined);
   assert.equal(primaryBody.error, "No fue posible registrar la reservación.");
@@ -8405,7 +14430,10 @@ test("la reconciliación de huérfanas es dry-run, exige frase exacta y usa RPC 
     "confirmed",
   );
   assert.throws(() => parseOrphanCustomerAccessArgs(["--confirm=force"]));
-  assert.equal(normalizeMaintenanceEmail(" Same@Example.Test "), "same@example.test");
+  assert.equal(
+    normalizeMaintenanceEmail(" Same@Example.Test "),
+    "same@example.test",
+  );
 
   const script = readFileSync(
     "scripts/reconcile-orphan-customer-access.ts",
@@ -8423,12 +14451,21 @@ test("la reconciliación de huérfanas es dry-run, exige frase exacta y usa RPC 
   assert.match(script, /access\.length !== 0/);
   assert.match(script, /account\.status === "active"/);
   assert.match(script, /reconcile_orphan_customer_access_atomic/);
-  assert.doesNotMatch(script, /\.from\("reservation_customer_access"\)\.insert/);
-  assert.match(migration, /create function public\.reconcile_orphan_customer_access_atomic/);
+  assert.doesNotMatch(
+    script,
+    /\.from\("reservation_customer_access"\)\.insert/,
+  );
+  assert.match(
+    migration,
+    /create function public\.reconcile_orphan_customer_access_atomic/,
+  );
   assert.match(migration, /matching_auth_users <> 1/);
   assert.match(migration, /reservation_already_claimed/);
   assert.match(databaseHarness, /forced_primary_failure/);
-  assert.match(databaseHarness, /primary insert failure rolls back the new reservation/);
+  assert.match(
+    databaseHarness,
+    /primary insert failure rolls back the new reservation/,
+  );
   assert.match(databaseHarness, /already_linked/);
 });
 
@@ -8440,7 +14477,9 @@ test("el reset de demo es dry-run por defecto, exige confirmación exacta y atri
   };
   assert.equal(parseDemoReservationResetArgs([]), "dry-run");
   assert.equal(
-    parseDemoReservationResetArgs([`--confirm=${DEMO_RESERVATIONS_RESET_CONFIRMATION}`]),
+    parseDemoReservationResetArgs([
+      `--confirm=${DEMO_RESERVATIONS_RESET_CONFIRMATION}`,
+    ]),
     "confirmed",
   );
   assert.throws(() => parseDemoReservationResetArgs(["--confirm=force"]));
@@ -8464,8 +14503,14 @@ test("el reset de demo es dry-run por defecto, exige confirmación exacta y atri
 
 test("el reset de demo conserva configuración, usa la RPC privada y elimina dependencias en orden FK", () => {
   const script = readFileSync("scripts/reset-demo-reservations.ts", "utf8");
-  const foundation = readFileSync("supabase/migrations/20260801000000_reservation_foundation.sql", "utf8");
-  const maintenanceMigration = readFileSync("supabase/migrations/20260801250000_reservation_maintenance_purge.sql", "utf8");
+  const foundation = readFileSync(
+    "supabase/migrations/20260801000000_reservation_foundation.sql",
+    "utf8",
+  );
+  const maintenanceMigration = readFileSync(
+    "supabase/migrations/20260801250000_reservation_maintenance_purge.sql",
+    "utf8",
+  );
   assert.deepEqual(RESERVATION_RESET_DELETE_ORDER, [
     "traveler_boarding_events",
     "traveler_boarding_credentials",
@@ -8482,7 +14527,10 @@ test("el reset de demo conserva configuración, usa la RPC privada y elimina dep
   ]);
   assert.match(script, /createClient\(url, serviceRoleKey/);
   assert.match(script, /select\("\*", \{ count: "exact", head: true \}\)/);
-  assert.doesNotMatch(script, /select\("id", \{ count: "exact", head: true \}\)/);
+  assert.doesNotMatch(
+    script,
+    /select\("id", \{ count: "exact", head: true \}\)/,
+  );
   assert.match(script, /payment-evidence/);
   assert.match(script, /reservation-documents/);
   assert.match(script, /--confirm=DELETE-DEMO-RESERVATIONS/);
@@ -8492,16 +14540,37 @@ test("el reset de demo conserva configuración, usa la RPC privada y elimina dep
   assert.doesNotMatch(script, /\.from\([^)]*\)\.delete/);
   assert.doesNotMatch(script, /from\("agency_customer_accounts"\)\.delete/);
   assert.doesNotMatch(script, /from\("agencies"\)\.delete/);
-  assert.match(foundation, /before update or delete on public\.reservation_snapshots/);
-  assert.match(maintenanceMigration, /create or replace function public\.prevent_reservation_snapshot_mutation/);
-  assert.match(maintenanceMigration, /if tg_op = 'DELETE'[\s\S]*current_setting\('app\.reservation_maintenance_delete', true\) = 'enabled'[\s\S]*return old;[\s\S]*raise exception 'Reservation snapshots are immutable'/);
-  assert.match(maintenanceMigration, /set_config\('app\.reservation_maintenance_delete', 'enabled', true\)/);
+  assert.match(
+    foundation,
+    /before update or delete on public\.reservation_snapshots/,
+  );
+  assert.match(
+    maintenanceMigration,
+    /create or replace function public\.prevent_reservation_snapshot_mutation/,
+  );
+  assert.match(
+    maintenanceMigration,
+    /if tg_op = 'DELETE'[\s\S]*current_setting\('app\.reservation_maintenance_delete', true\) = 'enabled'[\s\S]*return old;[\s\S]*raise exception 'Reservation snapshots are immutable'/,
+  );
+  assert.match(
+    maintenanceMigration,
+    /set_config\('app\.reservation_maintenance_delete', 'enabled', true\)/,
+  );
   assert.match(maintenanceMigration, /security definer/i);
   assert.match(maintenanceMigration, /set search_path = public, pg_temp/i);
   assert.match(maintenanceMigration, /for update/i);
   assert.match(maintenanceMigration, /from public, anon, authenticated/i);
   assert.match(maintenanceMigration, /to service_role/i);
-  assert.match(maintenanceMigration, /delete from public\.traveler_boarding_events[\s\S]*delete from public\.traveler_boarding_credentials[\s\S]*delete from public\.traveler_boarding_state/);
-  assert.match(maintenanceMigration, /delete from public\.reservation_contract_acceptances[\s\S]*delete from public\.reservation_documents[\s\S]*delete from public\.reservation_contract_instances/);
-  assert.match(maintenanceMigration, /delete from public\.reservation_snapshots/);
+  assert.match(
+    maintenanceMigration,
+    /delete from public\.traveler_boarding_events[\s\S]*delete from public\.traveler_boarding_credentials[\s\S]*delete from public\.traveler_boarding_state/,
+  );
+  assert.match(
+    maintenanceMigration,
+    /delete from public\.reservation_contract_acceptances[\s\S]*delete from public\.reservation_documents[\s\S]*delete from public\.reservation_contract_instances/,
+  );
+  assert.match(
+    maintenanceMigration,
+    /delete from public\.reservation_snapshots/,
+  );
 });

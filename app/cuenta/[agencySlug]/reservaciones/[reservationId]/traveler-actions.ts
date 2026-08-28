@@ -30,6 +30,7 @@ export async function saveTravelerDataAction(
 ): Promise<TravelerDataFormState> {
   const requestedAgencySlug = fieldValue(formData, "requestedAgencySlug");
   const reservationId = fieldValue(formData, "reservationId");
+  const travelerId = fieldValue(formData, "travelerId");
   const position = Number(fieldValue(formData, "position"));
   const values = {
     firstName: fieldValue(formData, "firstName"),
@@ -41,6 +42,7 @@ export async function saveTravelerDataAction(
     const result = await saveReservationTravelerData({
       requestedAgencySlug,
       reservationId,
+      travelerId,
       position,
       ...values,
     });

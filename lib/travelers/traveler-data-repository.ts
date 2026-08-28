@@ -33,7 +33,7 @@ export function createSupabaseTravelerDataRepository(
       if (!await hasAuthorizedReservation(supabase, input)) return null;
       const { data, error } = await supabase
         .from("reservation_travelers")
-        .select("position, traveler_type, status, first_name, last_name, birth_date")
+        .select("id, position, traveler_type, status, first_name, last_name, birth_date")
         .eq("reservation_id", input.reservationId)
         .eq("agency_id", input.agencyId)
         .order("position", { ascending: true });
@@ -53,8 +53,9 @@ export function createSupabaseTravelerDataRepository(
         })
         .eq("reservation_id", input.reservationId)
         .eq("agency_id", input.agencyId)
+        .eq("id", input.travelerId)
         .eq("position", input.position)
-        .select("position, traveler_type, status, first_name, last_name, birth_date")
+        .select("id, position, traveler_type, status, first_name, last_name, birth_date")
         .maybeSingle();
       if (error) throw new Error("No fue posible guardar los datos del viajero.");
       return data ? data as ReservationTravelerDataRow : null;

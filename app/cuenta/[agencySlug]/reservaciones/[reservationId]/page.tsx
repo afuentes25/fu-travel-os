@@ -6,7 +6,7 @@ import {
   CustomerReservationDetailError,
   getCustomerReservationDetail,
 } from "@/lib/customers/customer-reservation-detail";
-import { ensureReservationTravelerSlots } from "@/lib/travelers/traveler-slots";
+import { buildTravelerSlotStructure } from "@/lib/travelers/traveler-slots-core";
 import { getReservationTravelerData } from "@/lib/travelers/traveler-data";
 import { getReservationFinancialSummary } from "@/lib/payments/reservation-financial";
 import { getCustomerTransferReportability } from "@/lib/payments/customer-transfer";
@@ -211,21 +211,21 @@ export default async function CustomerReservationDetailPage({
     return <CustomerThemeShell agencySlug={agencySlug}><section className={styles.stateCard}><h1>Reservación no disponible</h1><p>No encontramos una reservación disponible para tu cuenta.</p></section></CustomerThemeShell>;
   }
 
-  let travelerSlots: Awaited<ReturnType<typeof ensureReservationTravelerSlots>>;
+  let travelerData: Awaited<ReturnType<typeof getReservationTravelerData>> | null;
   try {
-    travelerSlots = await ensureReservationTravelerSlots({
+    travelerData = await getReservationTravelerData({
       requestedAgencySlug: agencySlug,
       reservationId,
     });
   } catch {
-    travelerSlots = { status: "invalid_structure" };
+    travelerData = null;
   }
 
-  if (travelerSlots.status === "unauthenticated") {
+  if (travelerData?.status === "unauthenticated") {
     redirect(`/cuenta/login?next=${encodeURIComponent(`/cuenta/${agencySlug}/reservaciones/${reservationId}`)}`);
   }
-  if (travelerSlots.status === "selection_required") redirect("/cuenta");
-  if (travelerSlots.status === "forbidden" || travelerSlots.status === "not_found") {
+  if (travelerData?.status === "selection_required") redirect("/cuenta");
+  if (travelerData?.status === "forbidden" || travelerData?.status === "not_found") {
     return (
       <CustomerThemeShell agencySlug={agencySlug}>
         <section className={styles.stateCard}>
@@ -248,38 +248,29 @@ export default async function CustomerReservationDetailPage({
   let contractAccepted = false;
   let contractPrimary = false;
   if (contractDocument) try { const acceptanceRepository = createSupabaseCustomerContractAcceptanceRepository(); contractPrimary = await acceptanceRepository.findPrimaryLink({ customerAccountId: detail.account.customerAccountId, agencyId: detail.account.agencyId, reservationId }); const instance = await acceptanceRepository.findInstance({ agencyId: detail.account.agencyId, reservationId }); contractAccepted = instance?.status === "accepted"; } catch { contractPrimary = false; }
-  const slots = travelerSlots.status === "ready" ? travelerSlots.slots : [];
-  let travelerData: Awaited<ReturnType<typeof getReservationTravelerData>> | null = null;
-  if (travelerSlots.status === "ready") {
-    try {
-      travelerData = await getReservationTravelerData({
-        requestedAgencySlug: agencySlug,
-        reservationId,
-      });
-    } catch {
-      travelerData = null;
-    }
-  }
-  if (travelerData?.status === "unauthenticated") {
-    redirect(`/cuenta/login?next=${encodeURIComponent(`/cuenta/${agencySlug}/reservaciones/${reservationId}`)}`);
-  }
-  if (travelerData?.status === "selection_required") redirect("/cuenta");
-  if (travelerData?.status === "forbidden" || travelerData?.status === "not_found") {
-    return (
-      <CustomerThemeShell agencySlug={agencySlug}>
-        <section className={styles.stateCard}>
-          <h1>Reservación no disponible</h1>
-          <p>No encontramos una reservación disponible para tu cuenta.</p>
-        </section>
-      </CustomerThemeShell>
-    );
-  }
-  const travelersByPosition = new Map(
-    travelerData?.status === "authorized"
-      ? travelerData.travelers.map((traveler) => [traveler.position, traveler])
-      : [],
-  );
-  const travelerDataComplete = slots.length > 0 && slots.every((slot) => slot.status === "complete");
+  const canonicalTravelers = travelerData?.status === "authorized"
+    ? travelerData.travelers
+    : [];
+  const expectedTravelerSlots =
+    Number.isInteger(reservation.occupancy.adults) &&
+    Number.isInteger(reservation.occupancy.minors) &&
+    (reservation.occupancy.adults ?? 0) > 0 &&
+    (reservation.occupancy.minors ?? 0) >= 0
+      ? buildTravelerSlotStructure({
+          adults: reservation.occupancy.adults as number,
+          minors: reservation.occupancy.minors as number,
+        })
+      : [];
+  const travelerStructureReady =
+    expectedTravelerSlots.length > 0 &&
+    canonicalTravelers.length === expectedTravelerSlots.length &&
+    expectedTravelerSlots.every((expected, index) => {
+      const traveler = canonicalTravelers[index];
+      return traveler?.position === expected.position &&
+        traveler.travelerType === expected.travelerType;
+    });
+  const travelerDataComplete = travelerStructureReady &&
+    canonicalTravelers.every((traveler) => traveler.status === "complete");
   const depositCovered = financialSummary?.balance.depositCovered === true;
   return (
     <CustomerThemeShell account={detail.account}>
@@ -324,9 +315,9 @@ export default async function CustomerReservationDetailPage({
         </section>
 
         <section className={styles.customerSection} aria-labelledby="customer-travelers-title">
-          <div className={styles.sectionHeading}><div><span className={styles.sectionEyebrow}>Pasajeros</span><h2 id="customer-travelers-title">Viajeros</h2></div>{travelerSlots.status === "ready" && <p className={travelerDataComplete ? styles.summaryComplete : styles.summaryPending} role="status">{travelerDataComplete ? "Datos de viajeros completos" : "Datos de viajeros pendientes de completar"}</p>}</div>
+          <div className={styles.sectionHeading}><div><span className={styles.sectionEyebrow}>Pasajeros</span><h2 id="customer-travelers-title">Viajeros</h2></div>{travelerStructureReady && <p className={travelerDataComplete ? styles.summaryComplete : styles.summaryPending} role="status">{travelerDataComplete ? "Datos de viajeros completos" : "Datos de viajeros pendientes de completar"}</p>}</div>
           <p className={styles.travelerIntro}>Completa los datos de las personas que viajarán en esta reservación.</p>
-          {travelerSlots.status === "invalid_structure" || travelerData === null ? <p className={styles.travelerNotice} role="alert">No fue posible preparar los datos de viajeros de esta reservación. Contacta a la agencia para recibir asistencia.</p> : <div className={styles.travelerSlotGrid}>{slots.map((slot) => { const traveler = travelersByPosition.get(slot.position); return <article className={styles.travelerSlot} key={slot.id}><div className={styles.travelerSlotHeader}><strong>Viajero {slot.position}</strong><span className={styles.travelerType}>{slot.travelerType === "adult" ? "Adulto" : "Menor"}</span><span className={slot.status === "complete" ? styles.travelerComplete : styles.travelerPending}>{slot.status === "complete" ? "Datos completos" : "Datos pendientes"}</span></div>{traveler && <TravelerDataForm requestedAgencySlug={detail.account.agencySlug} reservationId={reservationId} position={traveler.position} firstName={traveler.firstName} lastName={traveler.lastName} birthDate={traveler.birthDate} complete={traveler.status === "complete"} />}</article>; })}</div>}
+          {!travelerStructureReady ? <p className={styles.travelerNotice} role="alert">No fue posible preparar los datos de viajeros de esta reservación. Contacta a la agencia para recibir asistencia.</p> : <div className={styles.travelerSlotGrid}>{canonicalTravelers.map((traveler) => <article className={styles.travelerSlot} key={traveler.travelerId}><div className={styles.travelerSlotHeader}><strong>Viajero {traveler.position}</strong><span className={styles.travelerType}>{traveler.travelerType === "adult" ? "Adulto" : "Menor"}</span><span className={traveler.status === "complete" ? styles.travelerComplete : styles.travelerPending}>{traveler.status === "complete" ? "Datos completos" : "Datos pendientes"}</span></div><TravelerDataForm requestedAgencySlug={detail.account.agencySlug} reservationId={reservationId} travelerId={traveler.travelerId} position={traveler.position} firstName={traveler.firstName} lastName={traveler.lastName} birthDate={traveler.birthDate} complete={traveler.status === "complete"} /></article>)}</div>}
         </section>
 
         <section className={styles.customerSection} aria-labelledby="customer-payments-title">

@@ -374,10 +374,11 @@ export function createReservationServerCommand(
 export async function executeReservationServerCommand(
   input: AtomicReservationServerCommandInput,
 ): Promise<AtomicReservationServerCommandResult> {
-  const [reservationRepository, atomicRepository, agencyRepository] = await Promise.all([
+  const [reservationRepository, atomicRepository, agencyRepository, travelerMaterialization] = await Promise.all([
     import("@/lib/reservations/supabase-repository"),
     import("@/lib/reservations/atomic-customer-access-repository"),
     import("@/lib/agencies/supabase-repository"),
+    import("@/lib/travelers/traveler-materialization"),
   ]);
   const atomicPersistence = atomicRepository.createAtomicReservationPersistenceClient();
   let customerLinkStatus: ReservationCustomerLinkStatus | null = null;
@@ -390,6 +391,11 @@ export async function executeReservationServerCommand(
       const persisted = await atomicPersistence.persist({
         ...persistenceInput,
         verifiedAuthUserId: input.verifiedAuthUserId,
+      });
+      await travelerMaterialization.materializeReservationTravelers({
+        agencyId: persistenceInput.agencyId,
+        reservationId: persisted.reservation.id,
+        snapshot: persisted.reservation,
       });
       customerLinkStatus = persisted.customerLinkStatus;
       return persisted;
