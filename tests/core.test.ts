@@ -267,6 +267,12 @@ import {
 } from "../app/cuenta/customer-utils";
 import { runCustomerLoginFlow } from "../app/cuenta/customer-login-core";
 import {
+  classifyCustomerSignup,
+  customerRegistrationCallbackContext,
+  CUSTOMER_CONFIRMATION_RESEND_COOLDOWN_SECONDS,
+  resolveCustomerRegistrationContinuation,
+} from "../app/cuenta/registro/registration-core";
+import {
   customerReservationHref,
   customerReservationDetailNextStep,
   customerReservationNextStep,
@@ -13976,6 +13982,105 @@ test("checkout autenticado persiste y revalida usando el UUID real", async () =>
   assert.match(checkout, /credentials: "same-origin"/);
   assert.match(checkout, /Reservación asociada a tu cuenta/);
   assert.doesNotMatch(checkout, /Vincular mi reservación/);
+});
+
+test("el registro customer distingue una sesión lista de una identidad que aún debe verificarse", () => {
+  assert.equal(
+    classifyCustomerSignup({
+      user: { identities: [{}] },
+      session: { access_token: "session-in-memory" },
+    }),
+    "authenticated",
+  );
+  assert.equal(
+    classifyCustomerSignup({ user: { identities: [{}] }, session: null }),
+    "verification_required",
+  );
+  assert.equal(
+    classifyCustomerSignup({ user: { identities: [] }, session: null }),
+    "account_exists_or_login_required",
+  );
+  assert.equal(
+    classifyCustomerSignup({ user: null, session: null }),
+    "signup_failed",
+  );
+  assert.equal(CUSTOMER_CONFIRMATION_RESEND_COOLDOWN_SECONDS, 60);
+
+  assert.equal(
+    customerRegistrationCallbackContext({
+      next: "/cuenta",
+      returnTo: null,
+      claim: false,
+    }),
+    "next=%2Fcuenta",
+  );
+  assert.equal(
+    customerRegistrationCallbackContext({
+      next: "/cuenta/furiver/reservaciones/46a10852-8620-4a59-9187-a21b07ce3f05",
+      returnTo: "/checkout?tenant=furiver&theme=lavella",
+      claim: true,
+    }),
+    "next=%2Fcuenta%2Ffuriver%2Freservaciones%2F46a10852-8620-4a59-9187-a21b07ce3f05&returnTo=%2Fcheckout%3Ftenant%3Dfuriver%26theme%3Dlavella&claim=1",
+  );
+  assert.deepEqual(
+    resolveCustomerRegistrationContinuation({
+      next: "/cuenta",
+      returnTo: null,
+      inline: false,
+      claimDestination: null,
+    }),
+    { status: "redirect", destination: "/cuenta" },
+  );
+  assert.deepEqual(
+    resolveCustomerRegistrationContinuation({
+      next: "/cuenta",
+      returnTo: "/checkout?tenant=furiver&theme=lavella",
+      inline: true,
+      claimDestination: null,
+    }),
+    { status: "authenticated" },
+  );
+  assert.deepEqual(
+    resolveCustomerRegistrationContinuation({
+      next: "/cuenta",
+      returnTo: "/checkout?tenant=furiver&theme=lavella",
+      inline: false,
+      claimDestination: null,
+    }),
+    { status: "redirect", destination: "/checkout?tenant=furiver&theme=lavella" },
+  );
+  assert.deepEqual(
+    resolveCustomerRegistrationContinuation({
+      next: "/cuenta",
+      returnTo: null,
+      inline: false,
+      claimDestination: "/cuenta/furiver/reservaciones/46a10852-8620-4a59-9187-a21b07ce3f05",
+    }),
+    {
+      status: "redirect",
+      destination: "/cuenta/furiver/reservaciones/46a10852-8620-4a59-9187-a21b07ce3f05",
+    },
+  );
+});
+
+test("el registro customer conserva destinos seguros y no convierte redirects de Next en errores", () => {
+  const registrationAction = readFileSync(
+    "app/cuenta/registro/registration-actions.ts",
+    "utf8",
+  );
+  const registrationForm = readFileSync(
+    "app/cuenta/registro/registration-form.tsx",
+    "utf8",
+  );
+  const callback = readFileSync("app/cuenta/auth/callback/route.ts", "utf8");
+
+  assert.match(registrationAction, /customerRegistrationCallbackContext/);
+  assert.match(registrationAction, /redirect\(continuation\.destination\)/);
+  assert.doesNotMatch(registrationAction, /if \(data\.session && claim\)[\s\S]{0,500}redirect/);
+  assert.match(registrationForm, /verification_required/);
+  assert.match(registrationForm, /resendCustomerRegistrationConfirmationAction/);
+  assert.match(callback, /loginFallback/);
+  assert.match(callback, /returnTo/);
 });
 
 test("la continuidad checkout → Auth sólo admite retornos internos sin PII y no autoriza por correo anónimo", async () => {

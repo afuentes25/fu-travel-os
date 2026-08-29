@@ -15,6 +15,7 @@
 .loginPage :global(.customer-login-form button:disabled){opacity:.65;cursor:wait}
 .loginPage :global(.customer-form-error){margin:0;padding:11px 12px;background:#fff0ed;color:#8b3320;font-size:.9rem;line-height:1.4}
 .loginPage :global(.customer-auth-switch){margin:2px 0 0;color:#62707b;font-size:.92rem;line-height:1.5}.loginPage :global(.customer-auth-switch a){color:#b85d13;font-weight:800}
+.loginPage :global(.customer-auth-text-button){border:0!important;background:transparent!important;color:#b85d13!important;padding:0!important;font:inherit!important;font-weight:800!important;text-decoration:underline;cursor:pointer}
 .customerPageShell{min-height:100dvh;background:#f7f7f6;color:#3e4559}
 .customerTopbar{min-height:72px;display:flex;align-items:center;gap:18px;padding:12px max(3vw,24px);background:#111a37;color:#fff;border-bottom:2px solid #ff7f00}
 .customerBrand{color:#fff;text-decoration:none;font-weight:900;letter-spacing:.12em}
@@ -50,12 +51,13 @@
 .customerAuthModal :global(.customer-login-form){display:grid;gap:18px;margin-top:24px}
 .customerAuthModal :global(.customer-login-form label){display:grid;gap:8px;color:#3e4559;font-size:.76rem;font-weight:800;letter-spacing:.08em;text-transform:uppercase}
 .customerAuthModal :global(.customer-login-form input){min-height:48px;border:1px solid #dedede;background:#fff;color:#3e4559;padding:0 12px;font:inherit;letter-spacing:normal;text-transform:none}
-.customerAuthModal :global(.customer-login-form>button[type=submit]){min-height:50px;border:0;background:#ff7f00;color:#fff;font:inherit;font-size:.9rem;font-weight:800;cursor:pointer}
+.customerAuthModal :global(.customer-login-form>button){min-height:50px;border:0;background:#ff7f00;color:#fff;font:inherit;font-size:.9rem;font-weight:800;cursor:pointer}
 .customerAuthModal :global(.customer-login-form>button:disabled){opacity:.65;cursor:wait}
 .customerAuthModal :global(.customer-form-error),.customerAuthModal :global(.customer-form-success){margin:0;padding:11px 12px;font-size:.9rem;line-height:1.45}
 .customerAuthModal :global(.customer-form-error){background:#fff0ed;color:#8b3320}.customerAuthModal :global(.customer-form-success){border-left:3px solid #397053;background:#eff8f1;color:#286343}
 .customerAuthModal :global(.customer-auth-switch){margin:2px 0 0;color:#818693;font-size:.92rem;line-height:1.5}
 .customerAuthModal :global(.customer-auth-switch a),.customerAuthModal :global(.customer-auth-text-button){border:0;background:transparent;color:#b85d13;padding:0;font:inherit;font-weight:800;text-decoration:underline;cursor:pointer}
+.loginPage :global(.customer-password-field),.customerAuthModal :global(.customer-password-field){display:flex;align-items:stretch}.loginPage :global(.customer-password-field input),.customerAuthModal :global(.customer-password-field input){min-width:0;flex:1}.loginPage :global(.customer-password-field button),.customerAuthModal :global(.customer-password-field button){min-height:48px;border:1px solid #dedede;border-left:0;background:#fff;color:#b85d13;padding:0 12px;font:inherit;font-weight:800;cursor:pointer}
 .customerAuthModal :is(button,input,a):focus-visible{outline:3px solid #e6883b;outline-offset:3px}
 
 /* Customer shell: operationally small, editorially aligned with Lavella. */

@@ -5,6 +5,17 @@ import { claimReservationForAuthenticatedCustomer } from "@/lib/customers/reserv
 import { getSupabasePublicEnvironment } from "@/lib/supabase/auth-env";
 import { parseCustomerReservationClaimNext, safeCustomerAuthReturnTo, safeCustomerNext } from "../../customer-utils";
 
+function loginFallback(request: NextRequest, input: Readonly<{
+  next: string;
+  returnTo: string | null;
+  claim: boolean;
+}>) {
+  const params = new URLSearchParams({ next: input.next });
+  if (input.returnTo) params.set("returnTo", input.returnTo);
+  if (input.claim) params.set("claim", "1");
+  return new URL(`/cuenta/login?${params.toString()}`, request.url);
+}
+
 export async function GET(request: NextRequest) {
   const next = safeCustomerNext(request.nextUrl.searchParams.get("next")) ?? "/cuenta";
   const returnTo = safeCustomerAuthReturnTo(request.nextUrl.searchParams.get("returnTo"));
@@ -13,9 +24,10 @@ export async function GET(request: NextRequest) {
   const { url, publishableKey } = getSupabasePublicEnvironment();
   const auth = createServerClient(url, publishableKey, { cookies: { getAll: () => request.cookies.getAll(), setAll: (items) => items.forEach(({ name, value, options }) => response.cookies.set(name, value, options)) } });
   const code = request.nextUrl.searchParams.get("code");
-  if (!code) return NextResponse.redirect(new URL("/cuenta/login", request.url));
+  const callbackInput = { next, returnTo, claim: Boolean(claim) };
+  if (!code) return NextResponse.redirect(loginFallback(request, callbackInput));
   const { error } = await auth.auth.exchangeCodeForSession(code);
-  if (error) return NextResponse.redirect(new URL("/cuenta/login", request.url));
+  if (error) return NextResponse.redirect(loginFallback(request, callbackInput));
   if (claim) {
     const claimed = await claimReservationForAuthenticatedCustomer({ requestedAgencySlug: claim.agencySlug, reservationId: claim.reservationId }, auth);
     if (claimed.status === "claimed" || claimed.status === "existing") return NextResponse.redirect(new URL(`/cuenta/${encodeURIComponent(claim.agencySlug)}/reservaciones/${encodeURIComponent(claim.reservationId)}`, request.url), { headers: response.headers });

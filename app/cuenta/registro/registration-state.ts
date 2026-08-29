@@ -1,6 +1,7 @@
-export type CustomerRegistrationState = Readonly<{
-  error?: string;
-  success?: string;
-  authenticated?: boolean;
-}>;
-export const initialCustomerRegistrationState: CustomerRegistrationState = {};
+import type { CustomerRegistrationState } from "./registration-core";
+
+export type { CustomerRegistrationState } from "./registration-core";
+
+export const initialCustomerRegistrationState: CustomerRegistrationState = {
+  status: "idle",
+};

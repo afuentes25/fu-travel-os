@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useActionState, useEffect } from "react";
+import { useActionState, useEffect, useState } from "react";
 import { useFormStatus } from "react-dom";
 
 import { loginCustomerAction } from "../actions";
@@ -32,6 +32,7 @@ export function CustomerLoginForm({
   onAuthenticated?: () => void;
 }>) {
   const [state, action] = useActionState(loginCustomerAction, initialCustomerLoginState);
+  const [passwordVisible, setPasswordVisible] = useState(false);
   useEffect(() => {
     if (state.authenticated) onAuthenticated?.();
   }, [onAuthenticated, state.authenticated]);
@@ -48,14 +49,17 @@ export function CustomerLoginForm({
       </label>
       <label htmlFor="customer-password">
         Contraseña
-        <input
-          id="customer-password"
-          name="password"
-          type="password"
-          autoComplete="current-password"
-          minLength={8}
-          required
-        />
+        <div className="customer-password-field">
+          <input
+            id="customer-password"
+            name="password"
+            type={passwordVisible ? "text" : "password"}
+            autoComplete="current-password"
+            minLength={8}
+            required
+          />
+          <button type="button" className="customer-auth-text-button" onClick={() => setPasswordVisible((visible) => !visible)}>{passwordVisible ? "Ocultar" : "Mostrar"}</button>
+        </div>
       </label>
       {state.error && <p className="customer-form-error" role="alert">{state.error}</p>}
       <SubmitButton />
