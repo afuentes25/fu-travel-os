@@ -4,10 +4,10 @@ import { useEffect, useId, useRef, type RefObject } from "react";
 import { useRouter } from "next/navigation";
 
 import { CustomerLoginForm } from "./login/login-form";
-import { CustomerRegistrationForm } from "./registro/registration-form";
+import { CustomerOtpForm } from "./customer-otp-form";
 import styles from "./cuenta.module.css";
 
-export type CustomerAuthMode = "login" | "register";
+export type CustomerAuthMode = "otp" | "password";
 
 function focusableControls(container: HTMLElement) {
   return [...container.querySelectorAll<HTMLElement>(
@@ -18,6 +18,7 @@ function focusableControls(container: HTMLElement) {
 export function CustomerAuthModal({
   open,
   mode,
+  agencySlug,
   next = null,
   returnTo = null,
   claim = false,
@@ -27,6 +28,7 @@ export function CustomerAuthModal({
 }: Readonly<{
   open: boolean;
   mode: CustomerAuthMode;
+  agencySlug: string;
   next?: string | null;
   returnTo?: string | null;
   claim?: boolean;
@@ -74,11 +76,12 @@ export function CustomerAuthModal({
   }, [onClose, open, triggerRef]);
 
   if (!open) return null;
-  const onAuthenticated = () => {
+  const onAuthenticated = ({ destination }: Readonly<{ destination: string | null }>) => {
     onClose();
     router.refresh();
+    if (destination) router.push(destination);
   };
-  const login = mode === "login";
+  const password = mode === "password";
   return (
     <div
       className={styles.customerAuthBackdrop}
@@ -96,17 +99,17 @@ export function CustomerAuthModal({
         <div className={styles.customerAuthModalHeader}>
           <div>
             <span className={styles.kicker}>FU TRAVEL OS · MI CUENTA</span>
-            <h2 id={titleId}>{login ? "Inicia sesión" : "Crea tu cuenta"}</h2>
-            <p>{login ? "Consulta y administra tus reservaciones, viajeros, pagos y documentos." : "Administra tus viajes desde un solo lugar."}</p>
+            <h2 id={titleId}>{password ? "Acceder con contraseña" : "Accede a tu cuenta"}</h2>
+            <p>{password ? "Usa tu contraseña si ya la tienes configurada." : "Consulta tus reservaciones, pagos y documentos."}</p>
           </div>
           <button className={styles.customerAuthClose} type="button" onClick={onClose} aria-label="Cerrar acceso a mi cuenta">×</button>
         </div>
         {returnTo && <p className={styles.authContext}>Después de continuar volverás a tu reservación.</p>}
         <div className={styles.customerAuthModalBody}>
-          {login ? (
-            <CustomerLoginForm next={next} returnTo={returnTo} claim={claim} inline={inline} onRegister={() => onModeChange("register")} onAuthenticated={onAuthenticated} />
+          {password ? (
+            <CustomerLoginForm next={next} returnTo={returnTo} claim={claim} inline={inline} onOtp={() => onModeChange("otp")} onAuthenticated={() => onAuthenticated({ destination: inline ? null : next })} />
           ) : (
-            <CustomerRegistrationForm next={next} returnTo={returnTo} claim={claim} inline={inline} onLogin={() => onModeChange("login")} onAuthenticated={onAuthenticated} />
+            <CustomerOtpForm agencySlug={agencySlug} next={next} returnTo={returnTo} claim={claim} inline={inline} onPassword={() => onModeChange("password")} onAuthenticated={onAuthenticated} />
           )}
         </div>
       </div>

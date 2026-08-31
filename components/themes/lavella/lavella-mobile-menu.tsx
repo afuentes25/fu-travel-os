@@ -95,7 +95,7 @@ export function LavellaMobileMenu({
         </nav>
         <div className={styles.mobileContact}>
           <div className={styles.mobileAccount}>
-            {customerEmail ? <Link href="/cuenta">Mi cuenta</Link> : <><button type="button" onClick={() => onOpenAccount("login")}>Iniciar sesión</button><button type="button" onClick={() => onOpenAccount("register")}>Crear una cuenta</button></>}
+            {customerEmail ? <Link href="/cuenta">Mi cuenta</Link> : <button type="button" onClick={() => onOpenAccount("otp")}>Mi cuenta</button>}
           </div>
           <button onClick={() => go("/carrito")}>
             <FaCartShopping /> Carrito <b>{cartCount}</b>

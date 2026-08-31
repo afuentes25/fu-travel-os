@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 
 import { claimReservationForAuthenticatedCustomer } from "@/lib/customers/reservation-claim";
 import { createSupabaseAuthServerClient } from "@/lib/supabase/auth-server";
+import { resolveCustomerAuthSiteOrigin } from "@/lib/supabase/auth-site-url";
 
 import { parseCustomerReservationClaimNext, safeCustomerAuthReturnTo, safeCustomerNext, validateCustomerLoginCredentials } from "../customer-utils";
 import {
@@ -21,8 +22,11 @@ function callbackUrl(input: Readonly<{
   returnTo: string | null;
   claim: boolean;
 }>) {
-  if (!input.origin || !/^https?:\/\//.test(input.origin)) return undefined;
-  return `${input.origin}/cuenta/auth/callback?${customerRegistrationCallbackContext(input)}`;
+  const origin = resolveCustomerAuthSiteOrigin({
+    configuredSiteUrl: process.env.NEXT_PUBLIC_SITE_URL,
+    requestOrigin: input.origin,
+  });
+  return origin ? `${origin}/cuenta/auth/callback?${customerRegistrationCallbackContext(input)}` : undefined;
 }
 
 function registrationInput(formData: FormData) {

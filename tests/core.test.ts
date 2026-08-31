@@ -79,6 +79,13 @@ import {
   createCustomerProfileService,
   normalizeCustomerProfileInput,
 } from "../lib/customers/customer-profile-core";
+import { createCustomerAccountOnboardingService } from "../lib/customers/customer-account-onboarding-core";
+import {
+  CUSTOMER_OTP_RESEND_COOLDOWN_SECONDS,
+  resetCustomerOtpDraft,
+  validateCustomerOtpEmail,
+  validateCustomerOtpToken,
+} from "../lib/customers/customer-otp-core";
 import {
   DEMO_RESERVATIONS_RESET_CONFIRMATION,
   getSupabaseProjectRef,
@@ -267,6 +274,10 @@ import {
 } from "../app/cuenta/customer-utils";
 import { runCustomerLoginFlow } from "../app/cuenta/customer-login-core";
 import {
+  customerOtpAuthenticatedDestination,
+  parseCustomerOtpContinuation,
+} from "../app/cuenta/customer-otp-actions-core";
+import {
   classifyCustomerSignup,
   customerRegistrationCallbackContext,
   CUSTOMER_CONFIRMATION_RESEND_COOLDOWN_SECONDS,
@@ -280,6 +291,7 @@ import {
   parseCustomerReservationPage,
 } from "../app/cuenta/customer-reservation-utils";
 import { getSupabasePublicEnvironment } from "../lib/supabase/auth-env";
+import { resolveCustomerAuthSiteOrigin } from "../lib/supabase/auth-site-url";
 import { resolveVerifiedSupabaseIdentity } from "../lib/supabase/auth-identity-core";
 import { isReservedInternalPath } from "../lib/routing/public-route-guard";
 import { getSupabaseServerEnvironment } from "../lib/supabase/env";
@@ -13889,8 +13901,8 @@ test("claim de reservación exige Auth y correo histórico coincidente, crea un 
   );
   assert.match(adminPage, /Sin cuenta vinculada/);
   assert.match(adminPage, /Cuenta vinculada/);
-  assert.match(checkout, /Ya tengo cuenta/);
-  assert.match(checkout, /Crear mi cuenta/);
+  assert.match(checkout, /Acceder a mi cuenta/);
+  assert.match(checkout, /código enviado a tu correo/);
   assert.match(claimRepository, /reservation_customer_access/);
   assert.match(claimRepository, /role: "primary"/);
 });
@@ -14063,6 +14075,91 @@ test("el registro customer distingue una sesión lista de una identidad que aún
   );
 });
 
+test("OTP customer mantiene una máquina de estados explícita y no conserva secretos fuera de memoria", () => {
+  assert.equal(validateCustomerOtpEmail(" Cliente@Example.Test "), "cliente@example.test");
+  assert.equal(validateCustomerOtpEmail("no-es-correo"), null);
+  assert.equal(validateCustomerOtpToken("123456"), "123456");
+  assert.equal(validateCustomerOtpToken("ABC123"), "ABC123");
+  assert.equal(validateCustomerOtpToken("bad token"), null);
+  assert.equal(CUSTOMER_OTP_RESEND_COOLDOWN_SECONDS, 60);
+  assert.deepEqual(resetCustomerOtpDraft(), { email: "", token: "", cooldown: 0, step: "email" });
+
+  const checkout = parseCustomerOtpContinuation({
+    next: "/cuenta",
+    returnTo: "/checkout?tenant=furiver&theme=lavella",
+    inline: true,
+  });
+  assert.equal(checkout.returnTo, "/checkout?tenant=furiver&theme=lavella");
+  assert.equal(customerOtpAuthenticatedDestination(checkout, null), null);
+  const header = parseCustomerOtpContinuation({ next: "/cuenta" });
+  assert.equal(customerOtpAuthenticatedDestination(header, null), "/cuenta");
+  const confirmation = parseCustomerOtpContinuation({
+    next: `/cuenta/furiver/reservaciones/${customerDetailReservationId}`,
+    claim: true,
+  });
+  assert.equal(
+    customerOtpAuthenticatedDestination(confirmation, `/cuenta/furiver/reservaciones/${customerDetailReservationId}`),
+    `/cuenta/furiver/reservaciones/${customerDetailReservationId}`,
+  );
+});
+
+test("onboarding OTP crea la cuenta de agencia únicamente después de identidad Auth verificada", async () => {
+  let creates = 0;
+  let existing: { customerAccountId: string; status: string } | null = null;
+  const repository = {
+    async findAccount() { return existing; },
+    async createActiveAccount() {
+      creates += 1;
+      existing = { customerAccountId: "account-furiver", status: "active" };
+      return existing;
+    },
+  };
+  const anonymous = createCustomerAccountOnboardingService({
+    getIdentity: async () => null,
+    repository,
+  });
+  assert.deepEqual(await anonymous.inspect({ agencyId: "agency-furiver" }), { status: "unauthenticated" });
+  assert.equal(creates, 0);
+
+  const verified = createCustomerAccountOnboardingService({
+    getIdentity: async () => ({ userId: "auth-user", email: "cliente@example.test" }),
+    repository,
+  });
+  assert.deepEqual(await verified.inspect({ agencyId: "agency-furiver" }), {
+    status: "profile_required",
+    email: "cliente@example.test",
+  });
+  assert.equal(creates, 0);
+  assert.deepEqual(await verified.complete({
+    agencyId: "agency-furiver",
+    profile: { firstName: "Cliente", lastName: null, phone: null },
+  }), { status: "created", email: "cliente@example.test" });
+  assert.equal(creates, 1);
+  assert.deepEqual(await verified.inspect({ agencyId: "agency-furiver" }), {
+    status: "existing",
+    email: "cliente@example.test",
+  });
+  assert.equal(creates, 1);
+});
+
+test("OTP y callbacks de contraseña no permiten localhost ni origins de petición en producción", () => {
+  assert.equal(resolveCustomerAuthSiteOrigin({
+    configuredSiteUrl: "http://localhost:3000",
+    requestOrigin: "https://attacker.example",
+    production: true,
+  }), null);
+  assert.equal(resolveCustomerAuthSiteOrigin({
+    configuredSiteUrl: "https://travel.fu.land",
+    requestOrigin: "https://attacker.example",
+    production: true,
+  }), "https://travel.fu.land");
+  assert.equal(resolveCustomerAuthSiteOrigin({
+    configuredSiteUrl: null,
+    requestOrigin: "http://localhost:3000",
+    production: false,
+  }), "http://localhost:3000");
+});
+
 test("el registro customer conserva destinos seguros y no convierte redirects de Next en errores", () => {
   const registrationAction = readFileSync(
     "app/cuenta/registro/registration-actions.ts",
@@ -14200,7 +14297,7 @@ test("el journey Lavella ofrece cuenta temprana, conserva retorno y muestra recu
     "utf8",
   );
   assert.match(storefrontHeader, /Mi cuenta/);
-  assert.match(storefrontHeader, /Crear una cuenta/);
+  assert.match(storefrontHeader, /CustomerAuthModal/);
   assert.match(checkout, /¿Ya tienes cuenta\?/);
   assert.match(checkout, /Esta reservación se asociará a tu cuenta/);
   assert.doesNotMatch(checkout, /link_failed/);
@@ -14215,6 +14312,8 @@ test("el journey Lavella ofrece cuenta temprana, conserva retorno y muestra recu
 
 test("la cuenta cliente reutiliza el modal Lavella y el shell sin alterar los flujos de reservación", () => {
   const modal = readFileSync("app/cuenta/customer-auth-modal.tsx", "utf8");
+  const otpForm = readFileSync("app/cuenta/customer-otp-form.tsx", "utf8");
+  const otpActions = readFileSync("app/cuenta/customer-otp-actions.ts", "utf8");
   const loginForm = readFileSync("app/cuenta/login/login-form.tsx", "utf8");
   const registrationForm = readFileSync(
     "app/cuenta/registro/registration-form.tsx",
@@ -14231,8 +14330,15 @@ test("la cuenta cliente reutiliza el modal Lavella y el shell sin alterar los fl
   assert.match(modal, /role="dialog"/);
   assert.match(modal, /aria-modal="true"/);
   assert.match(modal, /Escape/);
+  assert.match(modal, /CustomerOtpForm/);
   assert.match(modal, /CustomerLoginForm/);
-  assert.match(modal, /CustomerRegistrationForm/);
+  assert.match(otpForm, /one-time-code/);
+  assert.match(otpForm, /Reenviar código/);
+  assert.match(otpForm, /Usar otro correo/);
+  assert.match(otpActions, /signInWithOtp/);
+  assert.match(otpActions, /verifyOtp/);
+  assert.match(otpActions, /shouldCreateUser: true/);
+  assert.doesNotMatch(otpForm, /localStorage|sessionStorage/);
   assert.match(loginForm, /inline/);
   assert.match(registrationForm, /inline/);
   assert.match(storefrontHeader, /CustomerAuthModal/);

@@ -171,7 +171,7 @@ function DemoBar({
 function Header({ agency, cartCount, theme, customerEmail }: { agency: Agency; cartCount: number; theme: TravelTheme; customerEmail: string | null }) {
   const [open, setOpen] = useState(false);
   const [authOpen, setAuthOpen] = useState(false);
-  const [authMode, setAuthMode] = useState<CustomerAuthMode>("login");
+  const [authMode, setAuthMode] = useState<CustomerAuthMode>("otp");
   return (
     <header className="site-header">
       <button className="brand" onClick={() => go("/")}>
@@ -205,7 +205,7 @@ function Header({ agency, cartCount, theme, customerEmail }: { agency: Agency; c
         </button>
         {customerEmail ? (
           <Link className="customer-account-link" href="/cuenta">Mi cuenta</Link>
-        ) : theme === "lavella" ? <button className="customer-account-link" type="button" onClick={() => { setAuthMode("login"); setAuthOpen(true); }}>Mi cuenta</button> : <details className="customer-account-menu"><summary>Mi cuenta</summary><div><a href={customerAuthHref("/carrito", agency, theme, "/cuenta/login")}>Iniciar sesión</a><a href={customerAuthHref("/carrito", agency, theme, "/cuenta/registro")}>Crear una cuenta</a></div></details>}
+        ) : theme === "lavella" ? <button className="customer-account-link" type="button" onClick={() => { setAuthMode("otp"); setAuthOpen(true); }}>Mi cuenta</button> : <details className="customer-account-menu"><summary>Mi cuenta</summary><div><a href={customerAuthHref("/carrito", agency, theme, "/cuenta/login")}>Iniciar sesión</a><a href={customerAuthHref("/carrito", agency, theme, "/cuenta/registro")}>Crear una cuenta</a></div></details>}
         <button
           className="menu"
           onClick={() => setOpen(!open)}
@@ -215,7 +215,7 @@ function Header({ agency, cartCount, theme, customerEmail }: { agency: Agency; c
           <Icon name="menu" />
         </button>
       </div>
-      <CustomerAuthModal open={authOpen} mode={authMode} next="/cuenta" onClose={() => setAuthOpen(false)} onModeChange={setAuthMode} />
+      <CustomerAuthModal open={authOpen} mode={authMode} agencySlug={agency.slug} next="/cuenta" onClose={() => setAuthOpen(false)} onModeChange={setAuthMode} />
     </header>
   );
 }
@@ -1436,7 +1436,7 @@ type BookingPrimaryContact = Readonly<{ firstName: string; lastName: string; ema
 function BookingContactStep({ contact, error, onChange, authenticatedEmail, onOpenAuth, theme, accountReturnTo }: Readonly<{ contact: BookingPrimaryContact; error: string; onChange: (contact: BookingPrimaryContact) => void; authenticatedEmail: string | null; onOpenAuth: (mode: CustomerAuthMode) => void; theme: TravelTheme; accountReturnTo: string }>) {
   const invalid = error.includes("datos del titular");
   const sameEmail = Boolean(authenticatedEmail && contact.email.trim().toLowerCase() === authenticatedEmail.trim().toLowerCase());
-  return <section className="traveler-step" aria-labelledby="booking-contact-title"><header><div><h2 id="booking-contact-title">Datos del titular</h2><p>Usaremos estos datos para identificar tu reservación y ayudarte a vincularla con tu cuenta.</p></div></header>{authenticatedEmail ? <aside className="checkout-account-state" role="status"><strong>✓ Sesión iniciada</strong><span>{authenticatedEmail}</span><p>{sameEmail ? "Esta reservación se asociará a tu cuenta." : "Esta reservación podrá asociarse a tu cuenta cuando el correo del titular coincida."}</p></aside> : <aside className="checkout-account-gate"><span className="eyebrow">MI CUENTA</span><h3>¿Ya tienes cuenta?</h3><p>Inicia sesión para asociar automáticamente esta reservación y administrarla después desde tu cuenta.</p><div>{theme === "lavella" ? <><button type="button" onClick={() => onOpenAuth("login")}>Iniciar sesión</button><button type="button" onClick={() => onOpenAuth("register")}>Crear una cuenta</button></> : <><a href={`/cuenta/login?returnTo=${encodeURIComponent(accountReturnTo)}`}>Iniciar sesión</a><a href={`/cuenta/registro?returnTo=${encodeURIComponent(accountReturnTo)}`}>Crear una cuenta</a></>}</div><small>o <b>continúa como invitado</b></small></aside>}<div className="traveler-grid"><label>Nombre<input value={contact.firstName} autoComplete="given-name" required aria-invalid={invalid} onChange={(event) => onChange({ ...contact, firstName: event.target.value })} /></label><label>Apellidos <small>(opcional)</small><input value={contact.lastName} autoComplete="family-name" onChange={(event) => onChange({ ...contact, lastName: event.target.value })} /></label><label>Correo electrónico<input type="email" value={contact.email} autoComplete="email" required aria-invalid={invalid} onChange={(event) => onChange({ ...contact, email: event.target.value })} /></label><label>WhatsApp <small>(opcional)</small><input type="tel" value={contact.phone} autoComplete="tel" onChange={(event) => onChange({ ...contact, phone: event.target.value })} /></label></div>{authenticatedEmail && contact.email.trim() && !sameEmail && <p className="checkout-account-warning" role="status">Esta reservación se realizará con un correo diferente al de tu cuenta y no se asociará automáticamente.</p>}{invalid && <p className="traveler-error" role="alert">Captura un nombre y un correo electrónico válido.</p>}</section>;
+  return <section className="traveler-step" aria-labelledby="booking-contact-title"><header><div><h2 id="booking-contact-title">Datos del titular</h2><p>Usaremos estos datos para identificar tu reservación y ayudarte a vincularla con tu cuenta.</p></div></header>{authenticatedEmail ? <aside className="checkout-account-state" role="status"><strong>✓ Sesión iniciada</strong><span>{authenticatedEmail}</span><p>{sameEmail ? "Esta reservación se asociará a tu cuenta." : "Esta reservación podrá asociarse a tu cuenta cuando el correo del titular coincida."}</p></aside> : <aside className="checkout-account-gate"><span className="eyebrow">MI CUENTA</span><h3>¿Ya tienes cuenta?</h3><p>Usa un código enviado a tu correo para asociar automáticamente esta reservación y administrarla después desde tu cuenta.</p><div>{theme === "lavella" ? <button type="button" onClick={() => onOpenAuth("otp")}>Acceder a mi cuenta</button> : <a href={`/cuenta/login?returnTo=${encodeURIComponent(accountReturnTo)}`}>Acceder a mi cuenta</a>}</div><small>o <b>continúa como invitado</b></small></aside>}<div className="traveler-grid"><label>Nombre<input value={contact.firstName} autoComplete="given-name" required aria-invalid={invalid} onChange={(event) => onChange({ ...contact, firstName: event.target.value })} /></label><label>Apellidos <small>(opcional)</small><input value={contact.lastName} autoComplete="family-name" onChange={(event) => onChange({ ...contact, lastName: event.target.value })} /></label><label>Correo electrónico<input type="email" value={contact.email} autoComplete="email" required aria-invalid={invalid} onChange={(event) => onChange({ ...contact, email: event.target.value })} /></label><label>WhatsApp <small>(opcional)</small><input type="tel" value={contact.phone} autoComplete="tel" onChange={(event) => onChange({ ...contact, phone: event.target.value })} /></label></div>{authenticatedEmail && contact.email.trim() && !sameEmail && <p className="checkout-account-warning" role="status">Esta reservación se realizará con un correo diferente al de tu cuenta y no se asociará automáticamente.</p>}{invalid && <p className="traveler-error" role="alert">Captura un nombre y un correo electrónico válido.</p>}</section>;
 }
 
 function LavellaReservationConfirmation({
@@ -1642,7 +1642,7 @@ function LavellaReservationConfirmation({
         >
           Enviar folio por WhatsApp
         </a>
-        {customerLinkStatus === "linked" || customerLinkStatus === "already_linked" ? <Link className="primary reservation-account-cta" href={`/cuenta/${reservation.tenant}/reservaciones/${reservation.id}`}>Ir a mi reserva</Link> : <><button type="button" onClick={() => onOpenAuth("login")}>Ya tengo cuenta</button><button type="button" onClick={() => onOpenAuth("register")}>Crear mi cuenta</button></>}
+        {customerLinkStatus === "linked" || customerLinkStatus === "already_linked" ? <Link className="primary reservation-account-cta" href={`/cuenta/${reservation.tenant}/reservaciones/${reservation.id}`}>Ir a mi reserva</Link> : <button type="button" onClick={() => onOpenAuth("otp")}>Acceder a mi cuenta</button>}
         <button type="button" onClick={onContinue}>
           Volver a viajes
         </button>
@@ -1698,7 +1698,7 @@ function Checkout({
   const [reservation, setReservation] = useState<ReservationSnapshot>();
   const [customerLinkStatus, setCustomerLinkStatus] = useState<ReservationCustomerLinkStatus | null>(null);
   const [authOpen, setAuthOpen] = useState(false);
-  const [authMode, setAuthMode] = useState<CustomerAuthMode>("login");
+  const [authMode, setAuthMode] = useState<CustomerAuthMode>("otp");
   const [primaryContact, setPrimaryContact] = useState<BookingPrimaryContact>(() => ({
     firstName: customerProfile?.firstName ?? "",
     lastName: customerProfile?.lastName ?? "",
@@ -2795,6 +2795,7 @@ function Checkout({
     <CustomerAuthModal
       open={authOpen}
       mode={authMode}
+      agencySlug={agency.slug}
       next={confirmationNext}
       returnTo={reservation ? null : checkoutReturnTo}
       claim={Boolean(reservation && customerLinkStatus !== "linked" && customerLinkStatus !== "already_linked")}

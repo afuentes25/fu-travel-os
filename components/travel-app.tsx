@@ -331,7 +331,7 @@ export function ExplorerHeader({ agency, cartCount, onNavigate, customerEmail }:
   const [open, setOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
-  const [authMode, setAuthMode] = useState<CustomerAuthMode>("login");
+  const [authMode, setAuthMode] = useState<CustomerAuthMode>("otp");
   const triggerRef = useRef<HTMLButtonElement>(null);
   const drawerRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -412,7 +412,7 @@ export function ExplorerHeader({ agency, cartCount, onNavigate, customerEmail }:
         {customerEmail ? (
           <Link className="outline-cta explorer-account-button" href="/cuenta">Mi cuenta</Link>
         ) : (
-          <button className="outline-cta explorer-account-button" type="button" onClick={() => { setAuthMode("login"); setAccountOpen(true); }}>Mi cuenta</button>
+          <button className="outline-cta explorer-account-button" type="button" onClick={() => { setAuthMode("otp"); setAccountOpen(true); }}>Mi cuenta</button>
         )}
         <button
           ref={triggerRef}
@@ -457,7 +457,7 @@ export function ExplorerHeader({ agency, cartCount, onNavigate, customerEmail }:
             {customerEmail ? (
               <Link href="/cuenta"><small>07</small>Mi cuenta<span>↗</span></Link>
             ) : (
-              <button onClick={() => { setOpen(false); setAuthMode("login"); setAccountOpen(true); }}><small>07</small>Mi cuenta<span>↗</span></button>
+              <button onClick={() => { setOpen(false); setAuthMode("otp"); setAccountOpen(true); }}><small>07</small>Mi cuenta<span>↗</span></button>
             )}
             <button onClick={() => go("/carrito")}>
               <small>08</small>Carrito ({cartCount})<span>↗</span>
@@ -491,7 +491,7 @@ export function ExplorerHeader({ agency, cartCount, onNavigate, customerEmail }:
         </div>
       )}
     </header>
-    <CustomerAuthModal open={accountOpen} mode={authMode} next="/cuenta" onClose={() => setAccountOpen(false)} onModeChange={setAuthMode} />
+    <CustomerAuthModal open={accountOpen} mode={authMode} agencySlug={agency.slug} next="/cuenta" onClose={() => setAccountOpen(false)} onModeChange={setAuthMode} />
     </>
   );
 }

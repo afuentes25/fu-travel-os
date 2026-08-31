@@ -33,7 +33,7 @@ export function LavellaHeader({
   const [solid, setSolid] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
-  const [authMode, setAuthMode] = useState<CustomerAuthMode>("login");
+  const [authMode, setAuthMode] = useState<CustomerAuthMode>("otp");
   const triggerRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     const update = () => setSolid(scrollY > 44);
@@ -94,7 +94,7 @@ export function LavellaHeader({
               </button>
               {customerEmail ? (
                 <Link className={styles.accountButton} href="/cuenta">Mi cuenta</Link>
-              ) : <button className={styles.accountButton} type="button" aria-label="Mi cuenta: Iniciar sesión o Crear una cuenta" onClick={() => { setAuthMode("login"); setAccountOpen(true); }}>Mi cuenta</button>}
+              ) : <button className={styles.accountButton} type="button" aria-label="Acceder a mi cuenta" onClick={() => { setAuthMode("otp"); setAccountOpen(true); }}>Mi cuenta</button>}
               <button
                 ref={triggerRef}
                 className={styles.menuButton}
@@ -127,7 +127,7 @@ export function LavellaHeader({
           }}
         />
       </div>
-      <CustomerAuthModal open={accountOpen} mode={authMode} next="/cuenta" onClose={() => setAccountOpen(false)} onModeChange={setAuthMode} />
+      <CustomerAuthModal open={accountOpen} mode={authMode} agencySlug={agency.slug} next="/cuenta" onClose={() => setAccountOpen(false)} onModeChange={setAuthMode} />
     </>
   );
 }

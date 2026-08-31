@@ -22,6 +22,7 @@ export function CustomerLoginForm({
   claim,
   inline = false,
   onRegister,
+  onOtp,
   onAuthenticated,
 }: Readonly<{
   next: string | null;
@@ -29,6 +30,7 @@ export function CustomerLoginForm({
   claim: boolean;
   inline?: boolean;
   onRegister?: () => void;
+  onOtp?: () => void;
   onAuthenticated?: () => void;
 }>) {
   const [state, action] = useActionState(loginCustomerAction, initialCustomerLoginState);
@@ -63,9 +65,9 @@ export function CustomerLoginForm({
       </label>
       {state.error && <p className="customer-form-error" role="alert">{state.error}</p>}
       <SubmitButton />
-      <p className="customer-auth-switch">
+      {onOtp ? <p className="customer-auth-switch">¿Prefieres un código? <button type="button" className="customer-auth-text-button" onClick={onOtp}>Acceder con código</button></p> : <p className="customer-auth-switch">
         ¿Aún no tienes cuenta? {onRegister ? <button type="button" className="customer-auth-text-button" onClick={onRegister}>Crear una cuenta</button> : <Link href={registerHref}>Crear una cuenta</Link>}
-      </p>
+      </p>}
     </form>
   );
 }
